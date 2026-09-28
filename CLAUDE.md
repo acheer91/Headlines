@@ -140,6 +140,8 @@ web/src/                  Scoreboard.tsx (B), GamePage.tsx (C1 / C2 / D), GameCa
 
 ## Next phases (don't start without Adam's go-ahead)
 3. Temporal: ScheduleSync, GameWorkflow (one per game, ID = league + ESPN id; saves the line early, grades on final), Headlines.
+   Also move the nightly backup (`scripts/backup_db.sh`, now cron) into Temporal for retries and visibility (Adam, 2026-09-28).
+   Until then a failed backup alerts no one: glance at `~/backups/backup.log` on the server once a week.
 4. AI text (Claude Haiku-class): extract facts, then write in house voice. 8-day article rule is hard.
 5. NCAAF (major conferences + Notre Dame, no FCS, plus favorites), NBA, EPL, MLS (scores only).
    Needs a date-window query: NBA and soccer have no weeks.
