@@ -20,6 +20,10 @@ at https://technologic.tailca897c.ts.net (tailnet only).
 github.com/acheer91/Headlines with a read-only deploy key `~/.ssh/scores_deploy`). Served at
 https://scores.tailca897c.ts.net (tailnet only). Phase 1 15/15 and Phase 2 14/14 passed there; survives a reboot.
 Updates: `git pull && docker compose up -d --build` on the server. Temporal UI on :8443 comes with Phase 3.
+**Backups** (PRD: nightly dump stored off the server): `scripts/backup_db.sh` runs from the server's crontab at 11:00 UTC,
+keeps 14 dumps in `~/backups` and 30 in the Oracle Object Storage bucket `scores-backups` (always free; the server
+authenticates as itself, no keys on disk). Log: `~/backups/backup.log`. Restore steps are in the script's header.
+OS security updates install daily (Ubuntu unattended-upgrades). The laptop copy is retired (`docker compose down`).
 
 ## Stack
 - `api/` FastAPI + psycopg 3, plain SQL (no ORM). Python 3.12.
