@@ -10,6 +10,7 @@ from __future__ import annotations
 import functools
 import logging
 import re
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any, Callable
 
 from .espn import _float, _get, _home_spread, _int, _ml, is_completed
@@ -281,6 +282,112 @@ def current_line(p: dict) -> dict | None:
         "away_ml": _ml(_get(pc, "awayTeamOdds", "moneyLine")),
     }
     return line if any(line[k] is not None for k in ("home_spread", "total", "home_ml", "away_ml")) else None
+
+
+# ---------- top fantasy performer per team (C2 so far, D final) ----------
+
+# Half-PPR (Adam, 2026-09-27), from ESPN's player box score. Offense only: kicker scoring needs
+# field-goal distances the box score doesn't have, and two-point conversions aren't in it either,
+# so neither is counted (never fake a field). Weights are per unit of each box-score stat.
+HALF_PPR: dict[tuple[str, str], Decimal] = {
+    ("passing", "passingYards"): Decimal("0.04"),          # 1 point per 25 yards
+    ("passing", "passingTouchdowns"): Decimal(4),
+    ("passing", "interceptions"): Decimal(-2),
+    ("rushing", "rushingYards"): Decimal("0.1"),
+    ("rushing", "rushingTouchdowns"): Decimal(6),
+    ("receiving", "receptions"): Decimal("0.5"),
+    ("receiving", "receivingYards"): Decimal("0.1"),
+    ("receiving", "receivingTouchdowns"): Decimal(6),
+    ("fumbles", "fumblesLost"): Decimal(-2),
+    ("kickReturns", "kickReturnTouchdowns"): Decimal(6),
+    ("puntReturns", "puntReturnTouchdowns"): Decimal(6),
+}
+
+
+def _dec(v: Any) -> Decimal:
+    """A box-score number; anything else ('--', '', 'NaN', None) counts as 0."""
+    try:
+        d = Decimal(str(v).strip())
+    except (InvalidOperation, ValueError):
+        return Decimal(0)
+    return d if d.is_finite() else Decimal(0)
+
+
+def _yds(v: Any) -> str:
+    return f"{v} yd" if _dec(v) in (1, -1) else f"{v} yds"
+
+
+def _statline(s: dict[str, dict[str, str]]) -> str:
+    """'20/34, 226 yds, 1 TD, 1 INT · 4 car, 17 yds' from the player's box-score rows."""
+    parts = []
+    p = s.get("passing")
+    if p:
+        bits = [p.get("completions/passingAttempts", ""), _yds(p.get('passingYards', '0'))]
+        if _dec(p.get("passingTouchdowns")):
+            bits.append(f"{p['passingTouchdowns']} TD")
+        if _dec(p.get("interceptions")):
+            bits.append(f"{p['interceptions']} INT")
+        parts.append(", ".join(b for b in bits if b))
+    r = s.get("rushing")
+    if r and (_dec(r.get("rushingAttempts")) or _dec(r.get("rushingYards"))):
+        bits = [f"{r.get('rushingAttempts', '0')} car", _yds(r.get('rushingYards', '0'))]
+        if _dec(r.get("rushingTouchdowns")):
+            bits.append(f"{r['rushingTouchdowns']} TD")
+        parts.append(", ".join(bits))
+    c = s.get("receiving")
+    if c and (_dec(c.get("receptions")) or _dec(c.get("receivingYards"))):
+        bits = [f"{c.get('receptions', '0')} rec", _yds(c.get('receivingYards', '0'))]
+        if _dec(c.get("receivingTouchdowns")):
+            bits.append(f"{c['receivingTouchdowns']} TD")
+        parts.append(", ".join(bits))
+    return " · ".join(parts)
+
+
+@_safe(dict)
+def fantasy_top(p: dict) -> dict:
+    """Per side, the player with the most half-PPR points in this game's box score:
+    {name, position, points (Decimal, exact), points_text ('19.4'), statline}. A side is missing
+    when ESPN sent no player box score for it. Position comes from the leaders block when the same
+    player is listed there; otherwise it's left out rather than guessed."""
+    sides = {t.get("abbr"): side for side, t in teams(p).items()}
+    positions = {}
+    for team in p.get("leaders") or []:
+        for cat in team.get("leaders") or []:
+            for ld in cat.get("leaders") or []:
+                a = ld.get("athlete") or {}
+                if a.get("id") and _get(a, "position", "abbreviation"):
+                    positions[str(a["id"])] = a["position"]["abbreviation"]
+    out = {}
+    for team in _get(p, "boxscore", "players") or []:
+        side = sides.get(_get(team, "team", "abbreviation"))
+        if not side:
+            continue
+        players: dict[str, dict] = {}
+        for cat in team.get("statistics") or []:
+            keys = cat.get("keys") or []
+            for row in cat.get("athletes") or []:
+                a = row.get("athlete") or {}
+                pid = str(a.get("id") or a.get("displayName") or "")
+                if not pid:
+                    continue
+                pl = players.setdefault(pid, {"name": a.get("displayName"), "points": Decimal(0), "stats": {}})
+                vals = dict(zip(keys, row.get("stats") or []))
+                pl["stats"][cat.get("name")] = vals
+                for (cname, key), w in HALF_PPR.items():
+                    if cname == cat.get("name") and key in vals:
+                        pl["points"] += _dec(vals[key]) * w
+        if not players:
+            continue
+        # Highest points; ties go to the player listed first by ESPN (dicts keep insertion order).
+        pid, top = max(players.items(), key=lambda kv: kv[1]["points"])
+        out[side] = {
+            "name": top["name"],
+            "position": positions.get(pid),
+            "points": top["points"],
+            "points_text": f"{top['points'].quantize(Decimal('0.1'), rounding=ROUND_HALF_UP):f}",
+            "statline": _statline(top["stats"]),
+        }
+    return out
 
 
 # ---------- live one-liner (template; Phase 4 replaces it with AI text) ----------

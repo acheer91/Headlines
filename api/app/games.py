@@ -279,6 +279,22 @@ def _bets_live(home_score, away_score, lines: dict[str, grading.Line], home: str
     return out
 
 
+def _fantasy(p: dict, screen: str) -> dict | None:
+    """Top half-PPR performer per team, shown with the bets on C2 ('so far') and D. None on C1, and
+    None when the summary is behind the game (game_p is then empty), like the other box-score blocks."""
+    if screen not in ("C2", "D"):
+        return None
+    top = summary.fantasy_top(p)
+    if not top:
+        return None
+    return {
+        "scoring": "Half-PPR",
+        "so_far": screen == "C2",
+        **{side: {k: v for k, v in top[side].items() if k != "points"} | {"points": float(top[side]["points"])}
+           for side in ("home", "away") if side in top},
+    }
+
+
 def detail(conn, card: dict, stored: dict | None, *, stale: bool, error: str | None,
            team_season: dict[str, dict] | None = None) -> dict:
     """One response per screen, parsed from the stored summary on read."""
@@ -309,6 +325,7 @@ def detail(conn, card: dict, stored: dict | None, *, stale: bool, error: str | N
         "time_valid": card.get("time_valid", True),
         "injuries": (summary.injuries(p) if stored else None) if screen == "C1" else None,
         "one_liner": summary.one_liner(game_p) if screen == "C2" else None,
+        "fantasy": _fantasy(game_p, screen) if stored else None,
         "bets": None,
         "placeholders": PLACEHOLDERS[screen],
         "summary_available": stored is not None,

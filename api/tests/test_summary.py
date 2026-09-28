@@ -131,3 +131,57 @@ def test_one_liner_keeps_negative_yards():
             if cat["name"] == "rushingYards":
                 cat["leaders"][0]["displayValue"] = "3 CAR, -4 YDS"
     assert summary.one_liner(p).endswith("-4 yds")
+
+
+# ---------- top fantasy performer (half-PPR) ----------
+
+PLAYERS = json.loads((FIX / "boxscore_players_post.json").read_text())
+
+
+def _with_players(base, players=PLAYERS):
+    p = json.loads(json.dumps(base))
+    p.setdefault("boxscore", {})["players"] = json.loads(json.dumps(players))
+    return p
+
+
+def test_fantasy_top_matches_hand_check():
+    # LAC @ BUF, 2026-09-27, hand-checked from the raw box score:
+    # Cook 154 rush yds x0.1 + 1 TD x6 - 1 fumble lost x2 = 19.4
+    # Herbert 226/25 + 1 TD x4 - 1 INT x2 + 17 rush yds x0.1 = 12.74
+    top = summary.fantasy_top(_with_players(POST))
+    home, away = top["home"], top["away"]
+    assert (home["name"], str(home["points"]), home["points_text"]) == ("James Cook III", "19.4", "19.4")
+    assert home["statline"] == "24 car, 154 yds, 1 TD" and home["position"] == "RB"
+    assert (away["name"], str(away["points"]), away["points_text"]) == ("Justin Herbert", "12.74", "12.7")
+    assert away["statline"] == "20/34, 226 yds, 1 TD, 1 INT · 4 car, 17 yds" and away["position"] == "QB"
+
+
+def test_fantasy_counts_every_category_for_one_player():
+    # Josh Allen: 204/25 - 2 INT x2 + 22 rush x0.1 + 2 rush TD x6 + 1 rec x0.5 + 1 yd x0.1 - 1 fumble x2 = 16.96
+    players = json.loads(json.dumps(PLAYERS))
+    for team in players:
+        if team["team"]["abbreviation"] == "BUF":
+            for cat in team["statistics"]:
+                cat["athletes"] = [a for a in cat["athletes"] if a["athlete"]["displayName"] == "Josh Allen"]
+    top = summary.fantasy_top(_with_players(POST, players))
+    assert top["home"]["name"] == "Josh Allen" and str(top["home"]["points"]) == "16.96"
+    assert top["home"]["statline"] == "16/26, 204 yds, 2 INT · 8 car, 22 yds, 2 TD · 1 rec, 1 yd"
+
+
+def test_fantasy_missing_or_broken_box_score():
+    assert summary.fantasy_top(POST) == {}                          # trimmed fixture: no player box score
+    p = _with_players(POST)
+    p["boxscore"]["players"][0]["statistics"][0]["athletes"][0]["stats"] = ["x", "NaN", "Infinity", "--"]
+    top = summary.fantasy_top(p)                                     # junk values count as 0, never raise
+    assert set(top) == {"home", "away"}
+
+
+def test_fantasy_return_touchdown_counts():
+    players = [{"team": {"abbreviation": "BUF"}, "statistics": [
+        {"name": "kickReturns", "keys": ["kickReturns", "kickReturnYards", "yardsPerKickReturn", "longKickReturn", "kickReturnTouchdowns"],
+         "athletes": [{"athlete": {"id": "9", "displayName": "Returner"}, "stats": ["1", "100", "100.0", "100", "1"]}]},
+        {"name": "receiving", "keys": ["receptions", "receivingYards", "yardsPerReception", "receivingTouchdowns", "longReception", "receivingTargets"],
+         "athletes": [{"athlete": {"id": "8", "displayName": "Catcher"}, "stats": ["2", "30", "15.0", "0", "20", "3"]}]}]}]
+    top = summary.fantasy_top(_with_players(POST, players))
+    # Returner: 1 kick-return TD = 6. Catcher: 2 rec x0.5 + 30 yds x0.1 = 4. The return TD is counted and wins.
+    assert top["home"]["name"] == "Returner" and top["home"]["points_text"] == "6.0"

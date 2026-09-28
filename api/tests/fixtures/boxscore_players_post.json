@@ -1,0 +1,1064 @@
+[
+ {
+  "team": {
+   "abbreviation": "LAC",
+   "id": "24"
+  },
+  "statistics": [
+   {
+    "keys": [
+     "completions/passingAttempts",
+     "passingYards",
+     "yardsPerPassAttempt",
+     "passingTouchdowns",
+     "interceptions",
+     "sacks-sackYardsLost",
+     "adjQBR",
+     "QBRating"
+    ],
+    "name": "passing",
+    "text": "Los Angeles Passing",
+    "labels": [
+     "C/ATT",
+     "YDS",
+     "AVG",
+     "TD",
+     "INT",
+     "SACKS",
+     "QBR",
+     "RTG"
+    ],
+    "totals": [
+     "20/34",
+     "217",
+     "6.6",
+     "1",
+     "1",
+     "2-9",
+     "--",
+     "76.3"
+    ],
+    "athletes": [
+     {
+      "stats": [
+       "20/34",
+       "226",
+       "6.6",
+       "1",
+       "1",
+       "2-9",
+       "24.7",
+       "76.3"
+      ],
+      "athlete": {
+       "id": "4038941",
+       "jersey": "10",
+       "lastName": "Herbert",
+       "firstName": "Justin",
+       "displayName": "Justin Herbert"
+      }
+     }
+    ],
+    "descriptions": [
+     "Completions/Attempts",
+     "Yards",
+     "Yards Per Pass Attempt",
+     "Touchdowns",
+     "Interceptions",
+     "Sacks",
+     "Adjusted QBR",
+     "Passer Rating"
+    ]
+   },
+   {
+    "keys": [
+     "rushingAttempts",
+     "rushingYards",
+     "yardsPerRushAttempt",
+     "rushingTouchdowns",
+     "longRushing"
+    ],
+    "name": "rushing",
+    "text": "Los Angeles Rushing",
+    "labels": [
+     "CAR",
+     "YDS",
+     "AVG",
+     "TD",
+     "LONG"
+    ],
+    "totals": [
+     "28",
+     "131",
+     "4.7",
+     "0",
+     "17"
+    ],
+    "athletes": [
+     {
+      "stats": [
+       "15",
+       "56",
+       "3.7",
+       "0",
+       "10"
+      ],
+      "athlete": {
+       "id": "4685382",
+       "jersey": "8",
+       "lastName": "Hampton",
+       "firstName": "Omarion",
+       "displayName": "Omarion Hampton"
+      }
+     },
+     {
+      "stats": [
+       "8",
+       "52",
+       "6.5",
+       "0",
+       "17"
+      ],
+      "athlete": {
+       "id": "4596334",
+       "jersey": "34",
+       "lastName": "Mitchell",
+       "firstName": "Keaton",
+       "displayName": "Keaton Mitchell"
+      }
+     },
+     {
+      "stats": [
+       "4",
+       "17",
+       "4.3",
+       "0",
+       "7"
+      ],
+      "athlete": {
+       "id": "4038941",
+       "jersey": "10",
+       "lastName": "Herbert",
+       "firstName": "Justin",
+       "displayName": "Justin Herbert"
+      }
+     },
+     {
+      "stats": [
+       "1",
+       "6",
+       "6.0",
+       "0",
+       "6"
+      ],
+      "athlete": {
+       "id": "4430968",
+       "jersey": "28",
+       "lastName": "Vidal",
+       "firstName": "Kimani",
+       "displayName": "Kimani Vidal"
+      }
+     }
+    ],
+    "descriptions": [
+     "Rushing Attempts",
+     "Yards",
+     "Yards Per Rushing Attempt",
+     "Touchdowns",
+     "Longest Run"
+    ]
+   },
+   {
+    "keys": [
+     "receptions",
+     "receivingYards",
+     "yardsPerReception",
+     "receivingTouchdowns",
+     "longReception",
+     "receivingTargets"
+    ],
+    "name": "receiving",
+    "text": "Los Angeles Receiving",
+    "labels": [
+     "REC",
+     "YDS",
+     "AVG",
+     "TD",
+     "LONG",
+     "TGTS"
+    ],
+    "totals": [
+     "20",
+     "226",
+     "11.3",
+     "1",
+     "29",
+     "33"
+    ],
+    "athletes": [
+     {
+      "stats": [
+       "6",
+       "76",
+       "12.7",
+       "0",
+       "29",
+       "7"
+      ],
+      "athlete": {
+       "id": "4686612",
+       "jersey": "9",
+       "lastName": "Harris",
+       "firstName": "Tre'",
+       "displayName": "Tre' Harris"
+      }
+     },
+     {
+      "stats": [
+       "4",
+       "66",
+       "16.5",
+       "0",
+       "29",
+       "5"
+      ],
+      "athlete": {
+       "id": "4612826",
+       "jersey": "15",
+       "lastName": "McConkey",
+       "firstName": "Ladd",
+       "displayName": "Ladd McConkey"
+      }
+     },
+     {
+      "stats": [
+       "3",
+       "40",
+       "13.3",
+       "0",
+       "21",
+       "6"
+      ],
+      "athlete": {
+       "id": "4429025",
+       "jersey": "1",
+       "lastName": "Johnston",
+       "firstName": "Quentin",
+       "displayName": "Quentin Johnston"
+      }
+     },
+     {
+      "stats": [
+       "3",
+       "35",
+       "11.7",
+       "0",
+       "25",
+       "4"
+      ],
+      "athlete": {
+       "id": "3917668",
+       "jersey": "30",
+       "lastName": "Ingold",
+       "firstName": "Alec",
+       "displayName": "Alec Ingold"
+      }
+     },
+     {
+      "stats": [
+       "1",
+       "14",
+       "14.0",
+       "0",
+       "14",
+       "3"
+      ],
+      "athlete": {
+       "id": "4430968",
+       "jersey": "28",
+       "lastName": "Vidal",
+       "firstName": "Kimani",
+       "displayName": "Kimani Vidal"
+      }
+     },
+     {
+      "stats": [
+       "0",
+       "0",
+       "0.0",
+       "0",
+       "0",
+       "1"
+      ],
+      "athlete": {
+       "id": "3051738",
+       "jersey": "13",
+       "lastName": "Valdes-Scantling",
+       "firstName": "Marquez",
+       "displayName": "Marquez Valdes-Scantling"
+      }
+     },
+     {
+      "stats": [
+       "0",
+       "0",
+       "0.0",
+       "0",
+       "0",
+       "3"
+      ],
+      "athlete": {
+       "id": "4595342",
+       "jersey": "86",
+       "lastName": "Gadsden",
+       "firstName": "Oronde",
+       "displayName": "Oronde Gadsden"
+      }
+     },
+     {
+      "stats": [
+       "0",
+       "0",
+       "0.0",
+       "0",
+       "0",
+       "1"
+      ],
+      "athlete": {
+       "id": "4685382",
+       "jersey": "8",
+       "lastName": "Hampton",
+       "firstName": "Omarion",
+       "displayName": "Omarion Hampton"
+      }
+     },
+     {
+      "stats": [
+       "3",
+       "-5",
+       "-1.7",
+       "1",
+       "1",
+       "3"
+      ],
+      "athlete": {
+       "id": "4596334",
+       "jersey": "34",
+       "lastName": "Mitchell",
+       "firstName": "Keaton",
+       "displayName": "Keaton Mitchell"
+      }
+     }
+    ],
+    "descriptions": [
+     "Receptions",
+     "Yards",
+     "Yards Per Reception",
+     "Touchdowns",
+     "Longest Reception",
+     "Receiving Targets"
+    ]
+   },
+   {
+    "keys": [
+     "fumbles",
+     "fumblesLost",
+     "fumblesRecovered"
+    ],
+    "name": "fumbles",
+    "text": "Los Angeles Fumbles",
+    "labels": [
+     "FUM",
+     "LOST",
+     "REC"
+    ],
+    "totals": [
+     "0",
+     "0",
+     "3"
+    ],
+    "athletes": [
+     {
+      "stats": [
+       "0",
+       "0",
+       "1"
+      ],
+      "athlete": {
+       "id": "16195",
+       "jersey": "23",
+       "lastName": "Jefferson",
+       "firstName": "Tony",
+       "displayName": "Tony Jefferson"
+      }
+     },
+     {
+      "stats": [
+       "0",
+       "0",
+       "2"
+      ],
+      "athlete": {
+       "id": "4241597",
+       "jersey": "0",
+       "lastName": "Henley",
+       "firstName": "Daiyan",
+       "displayName": "Daiyan Henley"
+      }
+     }
+    ],
+    "descriptions": [
+     "Fumbles",
+     "Fumbles Lost",
+     "Fumbles Recovered"
+    ]
+   },
+   {
+    "keys": [
+     "kickReturns",
+     "kickReturnYards",
+     "yardsPerKickReturn",
+     "longKickReturn",
+     "kickReturnTouchdowns"
+    ],
+    "name": "kickReturns",
+    "text": "Los Angeles Kick Returns",
+    "labels": [
+     "NO",
+     "YDS",
+     "AVG",
+     "LONG",
+     "TD"
+    ],
+    "totals": [
+     "4",
+     "106",
+     "26.5",
+     "30",
+     "0"
+    ],
+    "athletes": [
+     {
+      "stats": [
+       "2",
+       "52",
+       "26.0",
+       "28",
+       "0"
+      ],
+      "athlete": {
+       "id": "4596334",
+       "jersey": "34",
+       "lastName": "Mitchell",
+       "firstName": "Keaton",
+       "displayName": "Keaton Mitchell"
+      }
+     },
+     {
+      "stats": [
+       "1",
+       "30",
+       "30.0",
+       "30",
+       "0"
+      ],
+      "athlete": {
+       "id": "4430968",
+       "jersey": "28",
+       "lastName": "Vidal",
+       "firstName": "Kimani",
+       "displayName": "Kimani Vidal"
+      }
+     },
+     {
+      "stats": [
+       "1",
+       "24",
+       "24.0",
+       "24",
+       "0"
+      ],
+      "athlete": {
+       "id": "4362477",
+       "jersey": "12",
+       "lastName": "Davis",
+       "firstName": "Derius",
+       "displayName": "Derius Davis"
+      }
+     }
+    ],
+    "descriptions": [
+     "Kick Returns",
+     "Yards",
+     "Yards Per Kick Return",
+     "Longest Kick Return",
+     "Touchdowns"
+    ]
+   },
+   {
+    "keys": [
+     "puntReturns",
+     "puntReturnYards",
+     "yardsPerPuntReturn",
+     "longPuntReturn",
+     "puntReturnTouchdowns"
+    ],
+    "name": "puntReturns",
+    "text": "Los Angeles Punt Returns",
+    "labels": [
+     "NO",
+     "YDS",
+     "AVG",
+     "LONG",
+     "TD"
+    ],
+    "totals": [
+     "1",
+     "14",
+     "14.0",
+     "14",
+     "0"
+    ],
+    "athletes": [
+     {
+      "stats": [
+       "1",
+       "14",
+       "14.0",
+       "14",
+       "0"
+      ],
+      "athlete": {
+       "id": "4362477",
+       "jersey": "12",
+       "lastName": "Davis",
+       "firstName": "Derius",
+       "displayName": "Derius Davis"
+      }
+     }
+    ],
+    "descriptions": [
+     "Punt Returns",
+     "Yards",
+     "Yards Per Punt Return",
+     "Longest Punt Return",
+     "Touchdowns"
+    ]
+   }
+  ]
+ },
+ {
+  "team": {
+   "abbreviation": "BUF",
+   "id": "2"
+  },
+  "statistics": [
+   {
+    "keys": [
+     "completions/passingAttempts",
+     "passingYards",
+     "yardsPerPassAttempt",
+     "passingTouchdowns",
+     "interceptions",
+     "sacks-sackYardsLost",
+     "adjQBR",
+     "QBRating"
+    ],
+    "name": "passing",
+    "text": "Buffalo Passing",
+    "labels": [
+     "C/ATT",
+     "YDS",
+     "AVG",
+     "TD",
+     "INT",
+     "SACKS",
+     "QBR",
+     "RTG"
+    ],
+    "totals": [
+     "16/26",
+     "174",
+     "7.8",
+     "0",
+     "2",
+     "4-30",
+     "--",
+     "54.0"
+    ],
+    "athletes": [
+     {
+      "stats": [
+       "16/26",
+       "204",
+       "7.8",
+       "0",
+       "2",
+       "4-30",
+       "48.9",
+       "54.0"
+      ],
+      "athlete": {
+       "id": "3918298",
+       "jersey": "17",
+       "lastName": "Allen",
+       "firstName": "Josh",
+       "displayName": "Josh Allen"
+      }
+     }
+    ],
+    "descriptions": [
+     "Completions/Attempts",
+     "Yards",
+     "Yards Per Pass Attempt",
+     "Touchdowns",
+     "Interceptions",
+     "Sacks",
+     "Adjusted QBR",
+     "Passer Rating"
+    ]
+   },
+   {
+    "keys": [
+     "rushingAttempts",
+     "rushingYards",
+     "yardsPerRushAttempt",
+     "rushingTouchdowns",
+     "longRushing"
+    ],
+    "name": "rushing",
+    "text": "Buffalo Rushing",
+    "labels": [
+     "CAR",
+     "YDS",
+     "AVG",
+     "TD",
+     "LONG"
+    ],
+    "totals": [
+     "33",
+     "176",
+     "5.3",
+     "3",
+     "23"
+    ],
+    "athletes": [
+     {
+      "stats": [
+       "24",
+       "154",
+       "6.4",
+       "1",
+       "23"
+      ],
+      "athlete": {
+       "id": "4379399",
+       "jersey": "4",
+       "lastName": "Cook III",
+       "firstName": "James",
+       "displayName": "James Cook III"
+      }
+     },
+     {
+      "stats": [
+       "8",
+       "22",
+       "2.8",
+       "2",
+       "8"
+      ],
+      "athlete": {
+       "id": "3918298",
+       "jersey": "17",
+       "lastName": "Allen",
+       "firstName": "Josh",
+       "displayName": "Josh Allen"
+      }
+     },
+     {
+      "stats": [
+       "1",
+       "0",
+       "0.0",
+       "0",
+       "0"
+      ],
+      "athlete": {
+       "id": "3930086",
+       "jersey": "88",
+       "lastName": "Knox",
+       "firstName": "Dawson",
+       "displayName": "Dawson Knox"
+      }
+     }
+    ],
+    "descriptions": [
+     "Rushing Attempts",
+     "Yards",
+     "Yards Per Rushing Attempt",
+     "Touchdowns",
+     "Longest Run"
+    ]
+   },
+   {
+    "keys": [
+     "receptions",
+     "receivingYards",
+     "yardsPerReception",
+     "receivingTouchdowns",
+     "longReception",
+     "receivingTargets"
+    ],
+    "name": "receiving",
+    "text": "Buffalo Receiving",
+    "labels": [
+     "REC",
+     "YDS",
+     "AVG",
+     "TD",
+     "LONG",
+     "TGTS"
+    ],
+    "totals": [
+     "16",
+     "204",
+     "12.8",
+     "0",
+     "37",
+     "26"
+    ],
+    "athletes": [
+     {
+      "stats": [
+       "6",
+       "67",
+       "11.2",
+       "0",
+       "16",
+       "10"
+      ],
+      "athlete": {
+       "id": "3915416",
+       "jersey": "2",
+       "lastName": "Moore",
+       "firstName": "DJ",
+       "displayName": "DJ Moore"
+      }
+     },
+     {
+      "stats": [
+       "4",
+       "50",
+       "12.5",
+       "0",
+       "29",
+       "4"
+      ],
+      "athlete": {
+       "id": "3915411",
+       "jersey": "26",
+       "lastName": "Johnson",
+       "firstName": "Ty",
+       "displayName": "Ty Johnson"
+      }
+     },
+     {
+      "stats": [
+       "2",
+       "38",
+       "19.0",
+       "0",
+       "24",
+       "3"
+      ],
+      "athlete": {
+       "id": "4385690",
+       "jersey": "86",
+       "lastName": "Kincaid",
+       "firstName": "Dalton",
+       "displayName": "Dalton Kincaid"
+      }
+     },
+     {
+      "stats": [
+       "1",
+       "37",
+       "37.0",
+       "0",
+       "37",
+       "2"
+      ],
+      "athlete": {
+       "id": "4635008",
+       "jersey": "0",
+       "lastName": "Coleman",
+       "firstName": "Keon",
+       "displayName": "Keon Coleman"
+      }
+     },
+     {
+      "stats": [
+       "1",
+       "6",
+       "6.0",
+       "0",
+       "6",
+       "3"
+      ],
+      "athlete": {
+       "id": "4373678",
+       "jersey": "10",
+       "lastName": "Shakir",
+       "firstName": "Khalil",
+       "displayName": "Khalil Shakir"
+      }
+     },
+     {
+      "stats": [
+       "1",
+       "5",
+       "5.0",
+       "0",
+       "5",
+       "1"
+      ],
+      "athlete": {
+       "id": "3930086",
+       "jersey": "88",
+       "lastName": "Knox",
+       "firstName": "Dawson",
+       "displayName": "Dawson Knox"
+      }
+     },
+     {
+      "stats": [
+       "1",
+       "1",
+       "1.0",
+       "0",
+       "1",
+       "1"
+      ],
+      "athlete": {
+       "id": "3918298",
+       "jersey": "17",
+       "lastName": "Allen",
+       "firstName": "Josh",
+       "displayName": "Josh Allen"
+      }
+     },
+     {
+      "stats": [
+       "0",
+       "0",
+       "0.0",
+       "0",
+       "0",
+       "1"
+      ],
+      "athlete": {
+       "id": "4379399",
+       "jersey": "4",
+       "lastName": "Cook III",
+       "firstName": "James",
+       "displayName": "James Cook III"
+      }
+     },
+     {
+      "stats": [
+       "0",
+       "0",
+       "0.0",
+       "0",
+       "0",
+       "1"
+      ],
+      "athlete": {
+       "id": "4573699",
+       "jersey": "85",
+       "lastName": "Hawes",
+       "firstName": "Jackson",
+       "displayName": "Jackson Hawes"
+      }
+     }
+    ],
+    "descriptions": [
+     "Receptions",
+     "Yards",
+     "Yards Per Reception",
+     "Touchdowns",
+     "Longest Reception",
+     "Receiving Targets"
+    ]
+   },
+   {
+    "keys": [
+     "fumbles",
+     "fumblesLost",
+     "fumblesRecovered"
+    ],
+    "name": "fumbles",
+    "text": "Buffalo Fumbles",
+    "labels": [
+     "FUM",
+     "LOST",
+     "REC"
+    ],
+    "totals": [
+     "3",
+     "3",
+     "0"
+    ],
+    "athletes": [
+     {
+      "stats": [
+       "1",
+       "1",
+       "0"
+      ],
+      "athlete": {
+       "id": "3918298",
+       "jersey": "17",
+       "lastName": "Allen",
+       "firstName": "Josh",
+       "displayName": "Josh Allen"
+      }
+     },
+     {
+      "stats": [
+       "1",
+       "1",
+       "0"
+      ],
+      "athlete": {
+       "id": "4379399",
+       "jersey": "4",
+       "lastName": "Cook III",
+       "firstName": "James",
+       "displayName": "James Cook III"
+      }
+     },
+     {
+      "stats": [
+       "1",
+       "1",
+       "0"
+      ],
+      "athlete": {
+       "id": "4385690",
+       "jersey": "86",
+       "lastName": "Kincaid",
+       "firstName": "Dalton",
+       "displayName": "Dalton Kincaid"
+      }
+     }
+    ],
+    "descriptions": [
+     "Fumbles",
+     "Fumbles Lost",
+     "Fumbles Recovered"
+    ]
+   },
+   {
+    "keys": [
+     "kickReturns",
+     "kickReturnYards",
+     "yardsPerKickReturn",
+     "longKickReturn",
+     "kickReturnTouchdowns"
+    ],
+    "name": "kickReturns",
+    "text": "Buffalo Kick Returns",
+    "labels": [
+     "NO",
+     "YDS",
+     "AVG",
+     "LONG",
+     "TD"
+    ],
+    "totals": [
+     "3",
+     "92",
+     "30.7",
+     "39",
+     "0"
+    ],
+    "athletes": [
+     {
+      "stats": [
+       "3",
+       "92",
+       "30.7",
+       "39",
+       "0"
+      ],
+      "athlete": {
+       "id": "4037235",
+       "jersey": "19",
+       "lastName": "Dortch",
+       "firstName": "Greg",
+       "displayName": "Greg Dortch"
+      }
+     }
+    ],
+    "descriptions": [
+     "Kick Returns",
+     "Yards",
+     "Yards Per Kick Return",
+     "Longest Kick Return",
+     "Touchdowns"
+    ]
+   },
+   {
+    "keys": [
+     "puntReturns",
+     "puntReturnYards",
+     "yardsPerPuntReturn",
+     "longPuntReturn",
+     "puntReturnTouchdowns"
+    ],
+    "name": "puntReturns",
+    "text": "Buffalo Punt Returns",
+    "labels": [
+     "NO",
+     "YDS",
+     "AVG",
+     "LONG",
+     "TD"
+    ],
+    "totals": [
+     "1",
+     "8",
+     "8.0",
+     "8",
+     "0"
+    ],
+    "athletes": [
+     {
+      "stats": [
+       "1",
+       "8",
+       "8.0",
+       "8",
+       "0"
+      ],
+      "athlete": {
+       "id": "4037235",
+       "jersey": "19",
+       "lastName": "Dortch",
+       "firstName": "Greg",
+       "displayName": "Greg Dortch"
+      }
+     }
+    ],
+    "descriptions": [
+     "Punt Returns",
+     "Yards",
+     "Yards Per Punt Return",
+     "Longest Punt Return",
+     "Touchdowns"
+    ]
+   }
+  ]
+ }
+]

@@ -127,8 +127,8 @@ function Detail({ g }: { g: GameDetail }) {
           {g.line ? <LineRow g={g} /> : <p className="muted empty">No line yet</p>}
         </Section>
       )}
-      {g.screen === "C2" && <Bets title="Bet status · so far" bets={g.bets} />}
-      {g.screen === "D" && <Bets title="Bets" bets={g.bets} />}
+      {g.screen === "C2" && <Bets title="Bet status · so far" bets={g.bets} g={g} />}
+      {g.screen === "D" && <Bets title="Bets" bets={g.bets} g={g} />}
 
       <Section title={g.team_stats.kind === "season" ? "Team stats · per game this season" : "Team stats"}>
         {g.team_stats.rows.length ? <StatsTable g={g} rows={g.team_stats.rows} /> : <p className="muted empty">{noData}</p>}
@@ -251,7 +251,38 @@ function Linescore({ g }: { g: GameDetail }) {
   );
 }
 
-function Bets({ title, bets }: { title: string; bets: Bet[] | null }) {
+/** Each team's top half-PPR scorer in this game, in the bets card (Adam). Live: "so far". */
+function TopFantasy({ g }: { g: GameDetail }) {
+  const f = g.fantasy;
+  if (!f || (!f.home && !f.away)) return null;
+  return (
+    <div className="fantasy">
+      <div className="bet-label">Top fantasy · {f.scoring}{f.so_far ? " · so far" : ""}</div>
+      {(["away", "home"] as const).map((side) => {
+        const p = f[side];
+        return (
+          <div key={side} className="fantasy-row">
+            <span className="fantasy-team">{g[side].abbr}</span>
+            {p ? (
+              <span className="fantasy-player">
+                <span className="leader-name">
+                  {p.name}
+                  {p.position && <span className="muted small"> {p.position}</span>}
+                </span>
+                <span className="muted small">{p.statline}</span>
+              </span>
+            ) : (
+              <span className="muted small">–</span>
+            )}
+            <span className="fantasy-pts">{p ? `${p.points_text} pts` : ""}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function Bets({ title, bets, g }: { title: string; bets: Bet[] | null; g: GameDetail }) {
   return (
     <Section title={title}>
       {(bets ?? []).map((b) => (
@@ -267,6 +298,7 @@ function Bets({ title, bets }: { title: string; bets: Bet[] | null }) {
           )}
         </div>
       ))}
+      <TopFantasy g={g} />
       {bets?.some((b) => b.provider) && (
         <p className="muted small">Line: {bets.find((b) => b.provider)?.provider}. Reported, not advice.</p>
       )}

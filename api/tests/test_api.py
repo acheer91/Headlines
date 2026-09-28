@@ -650,3 +650,52 @@ def test_ranks_rechecked_every_10_minutes_after_a_recent_final(client):
     _sql("UPDATE team_season_stats SET fetched_at = now() - interval '11 minutes'")
     client.get(f"/api/games/{sea}")
     assert client.calls["leader_calls"] > n
+
+
+
+# ---------------- top fantasy performer (half-PPR) ----------------
+
+PLAYERS = json.loads((FIX / "boxscore_players_post.json").read_text())
+
+
+def _players_for(home, away):
+    """The real LAC @ BUF player box score, relabelled for a fixture game (BUF -> home, LAC -> away)."""
+    pl = json.loads(json.dumps(PLAYERS))
+    for team in pl:
+        team["team"]["abbreviation"] = home if team["team"]["abbreviation"] == "BUF" else away
+    return pl
+
+
+def test_fantasy_top_in_the_bets_section_on_d(client):
+    s = make_summary("401900004", "post", "DAL", "PHI", 20, 27, close=(-3.5, 44.5, -170, 145))
+    s["boxscore"]["players"] = _players_for("DAL", "PHI")
+    client.calls["summaries"]["401900004"] = s
+    g = client.get(f"/api/games/{_ids(client)['DAL']}").json()
+    f = g["fantasy"]
+    assert f["scoring"] == "Half-PPR" and f["so_far"] is False
+    assert (f["home"]["name"], f["home"]["points_text"]) == ("James Cook III", "19.4")
+    assert (f["away"]["name"], f["away"]["points_text"]) == ("Justin Herbert", "12.7")
+
+
+def test_fantasy_so_far_on_c2_and_absent_on_c1(client):
+    s = make_summary("401900003", "in", "KC", "DEN", 17, 10, close=(-3, 43.5, -160, 135))
+    s["boxscore"]["players"] = _players_for("KC", "DEN")
+    client.calls["summaries"]["401900003"] = s
+    ids = _ids(client)
+    live = client.get(f"/api/games/{ids['KC']}").json()
+    assert live["fantasy"]["so_far"] is True and live["fantasy"]["home"]["name"] == "James Cook III"
+    assert client.get(f"/api/games/{ids['SEA']}").json()["fantasy"] is None       # pre-game: no box score yet
+
+
+def test_fantasy_withheld_while_summary_is_behind(client):
+    # KC is live but ESPN's summary is still the pre-game one: no fantasy "so far" from it.
+    s = make_summary("401900003", "pre", "KC", "DEN", close=(-3, 43.5, -160, 135))
+    s["boxscore"]["players"] = _players_for("KC", "DEN")
+    client.calls["summaries"]["401900003"] = s
+    g = client.get(f"/api/games/{_ids(client)['KC']}").json()
+    assert g["summary_behind"] is True and g["fantasy"] is None
+
+
+def test_fantasy_absent_without_a_player_box_score(client):
+    g = client.get(f"/api/games/{_ids(client)['DAL']}").json()                    # trimmed fixture: no players
+    assert g["screen"] == "D" and g["fantasy"] is None

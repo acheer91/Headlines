@@ -221,14 +221,15 @@ def get_summary(conn: psycopg.Connection, game_id: int) -> dict | None:
 
 
 def get_summary_view(conn: psycopg.Connection, game_id: int) -> dict | None:
-    """The summary blocks the game screens read, without play-by-play, news, videos or the player box
-    score. A final's payload is ~600 KB (mostly `drives.previous`); this is ~50 KB, so a D page reads
-    and decodes a tenth of it. Add a block here when a screen starts reading it."""
+    """The summary blocks the game screens read, without play-by-play, news or videos. A final's
+    payload is ~600 KB (mostly `drives.previous`); this is ~100 KB (the player box score, used for the
+    top fantasy performer, is about half of it). Add a block here when a screen starts reading it."""
     return conn.execute(
         """SELECT game_state, fetched_at,
                   jsonb_build_object(
                       'header', payload->'header',
-                      'boxscore', jsonb_build_object('teams', payload->'boxscore'->'teams'),
+                      'boxscore', jsonb_build_object('teams', payload->'boxscore'->'teams',
+                                                     'players', payload->'boxscore'->'players'),
                       'leaders', payload->'leaders',
                       'injuries', payload->'injuries',
                       'pickcenter', payload->'pickcenter',

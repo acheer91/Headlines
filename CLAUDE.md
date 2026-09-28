@@ -35,7 +35,7 @@ at https://technologic.tailca897c.ts.net (tailnet only).
   statistics `results.opponent` (1st = allowed the least). A rank is shown only when ESPN's ranked value equals the
   number on the row; otherwise no rank.
 - **C1 leaders are Passing, Rushing, Receiving, Tackles, INTs** (Adam, 2026-09-27). The first four come from the
-  summary; INTs from ESPN's core team leaders (`games.team_interceptions`, cached 6 h in `team_season_leaders`).
+  summary; INTs from ESPN's core team leaders (`games.start_team_season`, cached in `team_season_stats`).
   C2 and D show this game's Passing, Rushing, Receiving.
 - **Weeks are per season type.** Preseason (1), regular season (2) and postseason (3) each start at week 1; every
   week query filters on `games.season_type`.
@@ -47,6 +47,16 @@ at https://technologic.tailca897c.ts.net (tailnet only).
   (`summary_behind`) and refetch at most every 30 s.
 - **Unreadable ESPN data is not fresh data:** if no game in a scoreboard response parses, the refresh counts as failed
   (stale banner); if some don't, the board shows a warning.
+- **Lines are append-only.** `odds_snapshots` is never updated; a row is added only when the line changes.
+- **Spread convention:** `home_spread` is from the home team's side, negative = home favored. The UI shows the favorite ("SF -2.5").
+- **No custom User-Agent on site.api.espn.com.** Akamai returns 403 for it; httpx's default works.
+- **Soccer never gets odds.** `BETTING_LEAGUES` in `espn.py`.
+- **Bet status reports, never advises.** "KC -3 covering by 4", never "take the over".
+- **No new signups or paid services** without asking Adam.
+- Favorites live in `config/favorites.json` (`{"nfl": ["SEA"]}` style, team abbreviations).
+- **Top fantasy performer** (Adam, 2026-09-27): per team, the highest half-PPR scorer in this game's player box
+  score (`summary.fantasy_top`), shown in the bets card on C2 ("so far") and D. Offense only: kicker scoring needs
+  field-goal distances the box score lacks, and two-point conversions aren't in it, so neither is counted.
 
 ## Latency (2026-09-27 pass)
 - **Web app paints last-seen data instantly** (`web/src/lastSeen.ts`, localStorage, per device) and pulls fresh data
@@ -56,16 +66,10 @@ at https://technologic.tailca897c.ts.net (tailnet only).
   host for 30 s and serve stored data at once. A 404/400 is one bad request: not retried, doesn't trip the switch.
   Batch commands (`grade_week`, `check_summary`) turn the switch off.
 - **C1 team season stats** (ranks + INTs leader) fetch in parallel with each other and with the summary
-  (`games.start_team_season` / `finish_team_season`); cached 6 h in `team_season_stats`.
+  (`games.start_team_season` / `finish_team_season`); cached in `team_season_stats` for 1 h, 10 min while a final
+  is under 6 h old, and refetched whenever another game has finished (ranks depend on all 32 teams).
 - **Postgres pool** (`psycopg_pool`, no prepared statements, 5 s wait so a down database fails fast); game pages read only the summary blocks they use
   (`db.get_summary_view`). **GZip** on responses; hashed `/assets` cached for a year, `index.html`/`sw.js` no-cache.
-- **Lines are append-only.** `odds_snapshots` is never updated; a row is added only when the line changes.
-- **Spread convention:** `home_spread` is from the home team's side, negative = home favored. The UI shows the favorite ("SF -2.5").
-- **No custom User-Agent on site.api.espn.com.** Akamai returns 403 for it; httpx's default works.
-- **Soccer never gets odds.** `BETTING_LEAGUES` in `espn.py`.
-- **Bet status reports, never advises.** "KC -3 covering by 4", never "take the over".
-- **No new signups or paid services** without asking Adam.
-- Favorites live in `config/favorites.json` (`{"nfl": ["SEA"]}` style, team abbreviations).
 
 ## Bet grading (`api/app/grading.py`, pure functions, no DB or network)
 - **Line used**, chosen per market (moneyline, spread, total) in this order (Adam, 2026-09-27, after the independent

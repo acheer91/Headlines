@@ -108,6 +108,8 @@ export type Bet = {
   graded_score?: string;
 };
 
+export type FantasyTop = { name: string; position: string | null; points: number; points_text: string; statline: string };
+
 export type GameDetail = GameCard & {
   screen: "C1" | "C2" | "D";
   stale: boolean;
@@ -123,6 +125,13 @@ export type GameDetail = GameCard & {
   injuries: { home: Injury[]; away: Injury[] } | null;
   one_liner: string | null;
   bets: Bet[] | null;
+  /** each team's top half-PPR scorer in this game (C2 so far, D final); null on C1 or with no box score */
+  fantasy?: {
+    scoring: string;
+    so_far: boolean;
+    home?: FantasyTop;
+    away?: FantasyTop;
+  } | null;
   placeholders: string[];
 };
 

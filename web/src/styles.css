@@ -124,3 +124,8 @@ button { font: inherit; color: inherit; }
 .inj-status.doubtful { color: var(--warn-text); }
 .stats .rank { display: block; font-size: 11px; font-weight: 500; color: var(--muted); }
 .linkish { background: none; border: 0; padding: 0; color: inherit; text-decoration: underline; cursor: pointer; font: inherit; }
+.fantasy { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.fantasy-row { display: grid; grid-template-columns: 40px 1fr auto; gap: 8px; align-items: center; padding: 4px 0; font-size: 13.5px; }
+.fantasy-team { color: var(--muted); font-weight: 600; font-size: 12px; }
+.fantasy-player { display: flex; flex-direction: column; min-width: 0; }
+.fantasy-pts { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
