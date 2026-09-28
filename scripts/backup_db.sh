@@ -35,7 +35,7 @@ echo "$(date -u +%FT%TZ) uploaded $name to bucket $BUCKET"
 
 # Names sort by time, so everything before the newest $KEEP_REMOTE is old.
 old=$("$OCI" os object list --auth instance_principal --bucket-name "$BUCKET" --prefix scores- --all \
-  --query 'data[].name' --raw-output | python3 -c "import json,sys; n=sorted(json.load(sys.stdin) or []); print('\n'.join(n[:-$KEEP_REMOTE]))")
+  --query 'data[].name' --raw-output | python3 -c "import json,sys; s=sys.stdin.read().strip(); n=sorted(json.loads(s) if s else []); print('\n'.join(n[:-$KEEP_REMOTE]))")
 for o in $old; do
   "$OCI" os object delete --auth instance_principal --bucket-name "$BUCKET" --name "$o" --force
   echo "$(date -u +%FT%TZ) removed old remote $o"
