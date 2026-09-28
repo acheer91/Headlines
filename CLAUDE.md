@@ -16,6 +16,11 @@ C1 -> C2 -> D on pulls) and 2.11 on the phone; 2.7's table is for Adam to hand-c
 Phase 1 (NFL scoreboard) done 2026-09-27: installed on the phone via `tailscale serve --bg 8000`
 at https://technologic.tailca897c.ts.net (tailnet only).
 
+**Deployed 2026-09-28** to the Oracle ARM server `scores` (`ssh ubuntu@scores`, repo at `~/scores-app`, cloned from
+github.com/acheer91/Headlines with a read-only deploy key `~/.ssh/scores_deploy`). Served at
+https://scores.tailca897c.ts.net (tailnet only). Phase 1 15/15 and Phase 2 14/14 passed there; survives a reboot.
+Updates: `git pull && docker compose up -d --build` on the server. Temporal UI on :8443 comes with Phase 3.
+
 ## Stack
 - `api/` FastAPI + psycopg 3, plain SQL (no ORM). Python 3.12.
 - `web/` React 18 + Vite + vite-plugin-pwa, TypeScript. Built into `web/dist` and served by the API (one origin).
