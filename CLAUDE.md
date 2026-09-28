@@ -20,9 +20,13 @@ at https://technologic.tailca897c.ts.net (tailnet only).
 github.com/acheer91/Headlines with a read-only deploy key `~/.ssh/scores_deploy`). Served at
 https://scores.tailca897c.ts.net (tailnet only). Phase 1 15/15 and Phase 2 14/14 passed there; survives a reboot.
 Updates: `git pull && docker compose up -d --build` on the server. Temporal UI on :8443 comes with Phase 3.
-**Backups** (PRD: nightly dump stored off the server): `scripts/backup_db.sh` runs from the server's crontab at 11:00 UTC,
-keeps 14 dumps in `~/backups` and 30 in the Oracle Object Storage bucket `scores-backups` (always free; the server
-authenticates as itself, no keys on disk). Log: `~/backups/backup.log`. Restore steps are in the script's header.
+**Backups** (PRD: nightly dump stored off the server): `scripts/backup.sh` runs from the server's crontab at 10:30 UTC
+(3:30 AM Pacific), `pg_dumpall` of every database (app + Temporal from Phase 3) gzipped into the Oracle Object Storage
+bucket `scores-backups` (root compartment, always free; lifecycle rule deletes objects after 30 days). Upload uses a
+write-only pre-authenticated request in `~/.backup_url` (mode 600, never in the repo) that **expires 2027-09-28 23:00 UTC**:
+make a new one before then. Log: `~/backup.log`. Restore (tested 2026-09-28): the PAR can't read, so download with
+`~/.local/oci-cli/bin/oci os object get --auth instance_principal --bucket-name scores-backups --name <file> --file <file>`,
+then `gunzip -c <file> | docker exec -i <empty postgres:16 container> psql -U postgres` and check `select count(*) from games`.
 OS security updates install daily (Ubuntu unattended-upgrades). The laptop copy is retired (`docker compose down`).
 
 ## Stack
@@ -140,8 +144,8 @@ web/src/                  Scoreboard.tsx (B), GamePage.tsx (C1 / C2 / D), GameCa
 
 ## Next phases (don't start without Adam's go-ahead)
 3. Temporal: ScheduleSync, GameWorkflow (one per game, ID = league + ESPN id; saves the line early, grades on final), Headlines.
-   Also move the nightly backup (`scripts/backup_db.sh`, now cron) into Temporal for retries and visibility (Adam, 2026-09-28).
-   Until then a failed backup alerts no one: glance at `~/backups/backup.log` on the server once a week.
+   Also move the nightly backup (`scripts/backup.sh`, now cron) into Temporal for retries and visibility (Adam, 2026-09-28).
+   Until then a failed backup alerts no one: glance at `~/backup.log` and the bucket on the server once a week.
 4. AI text (Claude Haiku-class): extract facts, then write in house voice. 8-day article rule is hard.
 5. NCAAF (major conferences + Notre Dame, no FCS, plus favorites), NBA, EPL, MLS (scores only).
    Needs a date-window query: NBA and soccer have no weeks.
