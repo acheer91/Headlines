@@ -1,0 +1,106 @@
+{
+ "categories": [
+  {
+   "name": "totalTackles",
+   "displayName": "Tackles",
+   "leaders": [
+    {
+     "displayValue": "17",
+     "value": 17.0,
+     "athlete": {
+      "$ref": "http://sports.core.api.espn.com/v2/sports/football/leagues/nfl/seasons/2026/athletes/4954445?lang=en&region=us"
+     }
+    },
+    {
+     "displayValue": "14",
+     "value": 14.0,
+     "athlete": {
+      "$ref": "http://sports.core.api.espn.com/v2/sports/football/leagues/nfl/seasons/2026/athletes/4426374?lang=en&region=us"
+     }
+    },
+    {
+     "displayValue": "11",
+     "value": 11.0,
+     "athlete": {
+      "$ref": "http://sports.core.api.espn.com/v2/sports/football/leagues/nfl/seasons/2026/athletes/3916577?lang=en&region=us"
+     }
+    },
+    {
+     "displayValue": "10",
+     "value": 10.0,
+     "athlete": {
+      "$ref": "http://sports.core.api.espn.com/v2/sports/football/leagues/nfl/seasons/2026/athletes/4036261?lang=en&region=us"
+     }
+    },
+    {
+     "displayValue": "10",
+     "value": 10.0,
+     "athlete": {
+      "$ref": "http://sports.core.api.espn.com/v2/sports/football/leagues/nfl/seasons/2026/athletes/4259181?lang=en&region=us"
+     }
+    },
+    {
+     "displayValue": "8",
+     "value": 8.0,
+     "athlete": {
+      "$ref": "http://sports.core.api.espn.com/v2/sports/football/leagues/nfl/seasons/2026/athletes/4426386?lang=en&region=us"
+     }
+    }
+   ]
+  },
+  {
+   "name": "sacks",
+   "displayName": "Sacks",
+   "leaders": [
+    {
+     "displayValue": "1",
+     "value": 1.0,
+     "athlete": {
+      "$ref": "http://sports.core.api.espn.com/v2/sports/football/leagues/nfl/seasons/2026/athletes/3116726?lang=en&region=us"
+     }
+    },
+    {
+     "displayValue": "1",
+     "value": 1.0,
+     "athlete": {
+      "$ref": "http://sports.core.api.espn.com/v2/sports/football/leagues/nfl/seasons/2026/athletes/3134690?lang=en&region=us"
+     }
+    },
+    {
+     "displayValue": "1",
+     "value": 1.0,
+     "athlete": {
+      "$ref": "http://sports.core.api.espn.com/v2/sports/football/leagues/nfl/seasons/2026/athletes/4242659?lang=en&region=us"
+     }
+    },
+    {
+     "displayValue": "1",
+     "value": 1.0,
+     "athlete": {
+      "$ref": "http://sports.core.api.espn.com/v2/sports/football/leagues/nfl/seasons/2026/athletes/4683553?lang=en&region=us"
+     }
+    },
+    {
+     "displayValue": "1",
+     "value": 1.0,
+     "athlete": {
+      "$ref": "http://sports.core.api.espn.com/v2/sports/football/leagues/nfl/seasons/2026/athletes/4870953?lang=en&region=us"
+     }
+    }
+   ]
+  },
+  {
+   "name": "interceptions",
+   "displayName": "Interceptions",
+   "leaders": [
+    {
+     "displayValue": "1",
+     "value": 1.0,
+     "athlete": {
+      "$ref": "http://sports.core.api.espn.com/v2/sports/football/leagues/nfl/seasons/2026/athletes/4870953?lang=en&region=us"
+     }
+    }
+   ]
+  }
+ ]
+}

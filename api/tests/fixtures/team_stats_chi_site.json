@@ -1,0 +1,89 @@
+{
+ "results": {
+  "opponent": [
+   {
+    "name": "passing",
+    "stats": [
+     {
+      "name": "yardsPerGame",
+      "value": 374.0,
+      "displayValue": "374.0",
+      "rank": 26,
+      "rankDisplayValue": "26th"
+     },
+     {
+      "name": "totalPointsPerGame",
+      "value": 23.0,
+      "displayValue": "23.0",
+      "rank": 16,
+      "rankDisplayValue": "16th"
+     }
+    ]
+   },
+   {
+    "name": "rushing",
+    "stats": [
+     {
+      "name": "totalPointsPerGame",
+      "value": 23.0,
+      "displayValue": "23.0",
+      "rank": 16,
+      "rankDisplayValue": "16th"
+     }
+    ]
+   },
+   {
+    "name": "receiving",
+    "stats": [
+     {
+      "name": "totalPointsPerGame",
+      "value": 23.0,
+      "displayValue": "23.0",
+      "rank": 16,
+      "rankDisplayValue": "16th"
+     }
+    ]
+   },
+   {
+    "name": "miscellaneous",
+    "stats": []
+   },
+   {
+    "name": "defensive",
+    "stats": []
+   },
+   {
+    "name": "defensiveInterceptions",
+    "stats": []
+   },
+   {
+    "name": "general",
+    "stats": []
+   },
+   {
+    "name": "returning",
+    "stats": []
+   },
+   {
+    "name": "kicking",
+    "stats": []
+   },
+   {
+    "name": "punting",
+    "stats": []
+   },
+   {
+    "name": "scoring",
+    "stats": [
+     {
+      "name": "totalPointsPerGame",
+      "value": 23.0,
+      "displayValue": "23.0",
+      "rank": 16,
+      "rankDisplayValue": "16th"
+     }
+    ]
+   }
+  ]
+ }
+}

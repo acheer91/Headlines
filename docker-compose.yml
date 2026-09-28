@@ -1,0 +1,39 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: scores
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-scores}
+      POSTGRES_DB: scores
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Migrations are applied by the api at startup (app/migrate.py), one path only: letting Postgres
+      # also run them on a new volume applied every file twice and broke fresh installs (2026-09-27).
+    ports:
+      - "127.0.0.1:5432:5432"   # localhost only, for psql during validation
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scores -d scores"]
+      interval: 5s
+      retries: 10
+    restart: unless-stopped   # come back after a laptop reboot along with the api
+
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://scores:${POSTGRES_PASSWORD:-scores}@db:5432/scores
+      ENABLED_LEAGUES: nfl
+      CACHE_SECONDS: ${CACHE_SECONDS:-30}
+      ESPN_BASE: ${ESPN_BASE:-https://site.api.espn.com/apis/site/v2/sports}
+    volumes:
+      - ./config:/srv/config:ro   # edit favorites without rebuilding
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"   # localhost only; the phone reaches it through `tailscale serve`
+    restart: unless-stopped
+
+  # Phase 3 adds: temporal, temporal-ui, worker
+
+volumes:
+  pgdata:

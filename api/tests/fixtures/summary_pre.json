@@ -1,0 +1,1889 @@
+{
+ "header": {
+  "id": "401872963",
+  "season": {
+   "year": 2026,
+   "current": true,
+   "type": 2
+  },
+  "timeValid": true,
+  "competitions": [
+   {
+    "id": "401872963",
+    "date": "2026-09-29T00:15Z",
+    "neutralSite": false,
+    "conferenceCompetition": false,
+    "boxscoreAvailable": false,
+    "commentaryAvailable": false,
+    "liveAvailable": false,
+    "onWatchESPN": true,
+    "recent": false,
+    "wallclockAvailable": false,
+    "boxscoreSource": "none",
+    "playByPlaySource": "none",
+    "competitors": [
+     {
+      "id": "3",
+      "order": 0,
+      "homeAway": "home",
+      "team": {
+       "id": "3",
+       "location": "Chicago",
+       "name": "Bears",
+       "nickname": "Bears",
+       "abbreviation": "CHI",
+       "displayName": "Chicago Bears",
+       "color": "0b1c3a",
+       "alternateColor": "e64100",
+       "logos": [
+        {
+         "href": "https://a.espncdn.com/i/teamlogos/nfl/500/chi.png",
+         "width": 500,
+         "height": 500,
+         "alt": "",
+         "rel": [
+          "full",
+          "default"
+         ],
+         "lastUpdated": "2024-06-25T18:46Z"
+        },
+        {
+         "href": "https://a.espncdn.com/i/teamlogos/nfl/500-dark/chi.png",
+         "width": 500,
+         "height": 500,
+         "alt": "",
+         "rel": [
+          "full",
+          "dark"
+         ],
+         "lastUpdated": "2024-06-25T18:46Z"
+        },
+        {
+         "href": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/chi.png",
+         "width": 500,
+         "height": 500,
+         "alt": "",
+         "rel": [
+          "full",
+          "scoreboard"
+         ],
+         "lastUpdated": "2024-06-25T18:46Z"
+        },
+        {
+         "href": "https://a.espncdn.com/i/teamlogos/nfl/500-dark/scoreboard/chi.png",
+         "width": 500,
+         "height": 500,
+         "alt": "",
+         "rel": [
+          "full",
+          "scoreboard",
+          "dark"
+         ],
+         "lastUpdated": "2024-06-25T18:46Z"
+        },
+        {
+         "href": "https://a.espncdn.com/guid/19d73366-b5a5-cca2-a176-a2c024ce0bb3/logos/grayscale.png",
+         "width": 500,
+         "height": 500,
+         "alt": "",
+         "rel": [
+          "full",
+          "grayscale"
+         ],
+         "lastUpdated": "2026-03-31T12:53Z"
+        },
+        {
+         "href": "https://a.espncdn.com/guid/19d73366-b5a5-cca2-a176-a2c024ce0bb3/logos/primary_logo_on_white_color.png",
+         "width": 4096,
+         "height": 4096,
+         "alt": "",
+         "rel": [
+          "full",
+          "primary_logo_on_white_color"
+         ],
+         "lastUpdated": "2026-07-22T20:30Z"
+        },
+        {
+         "href": "https://a.espncdn.com/guid/19d73366-b5a5-cca2-a176-a2c024ce0bb3/logos/primary_logo_on_black_color.png",
+         "width": 4096,
+         "height": 4096,
+         "alt": "",
+         "rel": [
+          "full",
+          "primary_logo_on_black_color"
+         ],
+         "lastUpdated": "2026-07-22T20:30Z"
+        },
+        {
+         "href": "https://a.espncdn.com/guid/19d73366-b5a5-cca2-a176-a2c024ce0bb3/logos/primary_logo_on_primary_color.png",
+         "width": 4096,
+         "height": 4096,
+         "alt": "",
+         "rel": [
+          "full",
+          "primary_logo_on_primary_color"
+         ],
+         "lastUpdated": "2026-07-22T20:30Z"
+        },
+        {
+         "href": "https://a.espncdn.com/guid/19d73366-b5a5-cca2-a176-a2c024ce0bb3/logos/primary_logo_on_secondary_color.png",
+         "width": 4096,
+         "height": 4096,
+         "alt": "",
+         "rel": [
+          "full",
+          "primary_logo_on_secondary_color"
+         ],
+         "lastUpdated": "2026-07-22T20:30Z"
+        },
+        {
+         "href": "https://a.espncdn.com/guid/19d73366-b5a5-cca2-a176-a2c024ce0bb3/logos/primary_logo_black.png",
+         "width": 4096,
+         "height": 4096,
+         "alt": "",
+         "rel": [
+          "full",
+          "primary_logo_black"
+         ],
+         "lastUpdated": "2026-07-22T20:30Z"
+        },
+        {
+         "href": "https://a.espncdn.com/guid/19d73366-b5a5-cca2-a176-a2c024ce0bb3/logos/primary_logo_white.png",
+         "width": 4096,
+         "height": 4096,
+         "alt": "",
+         "rel": [
+          "full",
+          "primary_logo_white"
+         ],
+         "lastUpdated": "2026-07-22T20:30Z"
+        },
+        {
+         "href": "https://a.espncdn.com/guid/19d73366-b5a5-cca2-a176-a2c024ce0bb3/logos/secondary_logo_on_white_color.png",
+         "width": 4096,
+         "height": 4096,
+         "alt": "",
+         "rel": [
+          "full",
+          "secondary_logo_on_white_color"
+         ],
+         "lastUpdated": "2026-07-22T20:30Z"
+        },
+        {
+         "href": "https://a.espncdn.com/guid/19d73366-b5a5-cca2-a176-a2c024ce0bb3/logos/secondary_logo_on_black_color.png",
+         "width": 4096,
+         "height": 4096,
+         "alt": "",
+         "rel": [
+          "full",
+          "secondary_logo_on_black_color"
+         ],
+         "lastUpdated": "2026-07-22T20:30Z"
+        },
+        {
+         "href": "https://a.espncdn.com/guid/19d73366-b5a5-cca2-a176-a2c024ce0bb3/logos/secondary_logo_on_primary_color.png",
+         "width": 4096,
+         "height": 4096,
+         "alt": "",
+         "rel": [
+          "full",
+          "secondary_logo_on_primary_color"
+         ],
+         "lastUpdated": "2026-07-22T20:30Z"
+        },
+        {
+         "href": "https://a.espncdn.com/guid/19d73366-b5a5-cca2-a176-a2c024ce0bb3/logos/secondary_logo_on_secondary_color.png",
+         "width": 4096,
+         "height": 4096,
+         "alt": "",
+         "rel": [
+          "full",
+          "secondary_logo_on_secondary_color"
+         ],
+         "lastUpdated": "2026-07-22T20:30Z"
+        },
+        {
+         "href": "https://a.espncdn.com/guid/19d73366-b5a5-cca2-a176-a2c024ce0bb3/logos/secondary_logo_black.png",
+         "width": 4096,
+         "height": 4096,
+         "alt": "",
+         "rel": [
+          "full",
+          "secondary_logo_black"
+         ],
+         "lastUpdated": "2026-07-22T20:30Z"
+        },
+        {
+         "href": "https://a.espncdn.com/guid/19d73366-b5a5-cca2-a176-a2c024ce0bb3/logos/secondary_logo_white.png",
+         "width": 4096,
+         "height": 4096,
+         "alt": "",
+         "rel": [
+          "full",
+          "secondary_logo_white"
+         ],
+         "lastUpdated": "2026-07-22T20:30Z"
+        }
+       ]
+      },
+      "record": [
+       {
+        "type": "total",
+        "summary": "1-1",
+        "displayValue": "1-1"
+       },
+       {
+        "type": "home",
+        "summary": "0-1",
+        "displayValue": "0-1"
+       },
+       {
+        "type": "vsconf",
+        "summary": "1-1",
+        "displayValue": "1-1"
+       }
+      ],
+      "possession": false
+     },
+     {
+      "id": "21",
+      "order": 1,
+      "homeAway": "away",
+      "team": {
+       "id": "21",
+       "location": "Philadelphia",
+       "name": "Eagles",
+       "nickname": "Eagles",
+       "abbreviation": "PHI",
+       "displayName": "Philadelphia Eagles",
+       "color": "06424d",
+       "alternateColor": "000000",
+       "logos": [
+        {
+         "href": "https://a.espncdn.com/i/teamlogos/nfl/500/phi.png",
+         "width": 500,
+         "height": 500,
+         "alt": "",
+         "rel": [
+          "full",
+          "default"
+         ],
+         "lastUpdated": "2024-06-25T18:55Z"
+        },
+        {
+         "href": "https://a.espncdn.com/i/teamlogos/nfl/500-dark/phi.png",
+         "width": 500,
+         "height": 500,
+         "alt": "",
+         "rel": [
+          "full",
+          "dark"
+         ],
+         "lastUpdated": "2024-06-25T18:56Z"
+        },
+        {
+         "href": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/phi.png",
+         "width": 500,
+         "height": 500,
+         "alt": "",
+         "rel": [
+          "full",
+          "scoreboard"
+         ],
+         "lastUpdated": "2024-06-25T18:56Z"
+        },
+        {
+         "href": "https://a.espncdn.com/i/teamlogos/nfl/500-dark/scoreboard/phi.png",
+         "width": 500,
+         "height": 500,
+         "alt": "",
+         "rel": [
+          "full",
+          "scoreboard",
+          "dark"
+         ],
+         "lastUpdated": "2024-06-25T18:56Z"
+        },
+        {
+         "href": "https://a.espncdn.com/guid/d1a9b001-1df7-fbd7-ae4c-6ca7065286ec/logos/grayscale.png",
+         "width": 500,
+         "height": 500,
+         "alt": "",
+         "rel": [
+          "full",
+          "grayscale"
+         ],
+         "lastUpdated": "2026-03-31T12:53Z"
+        },
+        {
+         "href": "https://a.espncdn.com/guid/d1a9b001-1df7-fbd7-ae4c-6ca7065286ec/logos/primary_logo_on_white_color.png",
+         "width": 4096,
+         "height": 4096,
+         "alt": "",
+         "rel": [
+          "full",
+          "primary_logo_on_white_color"
+         ],
+         "lastUpdated": "2026-07-22T20:30Z"
+        },
+        {
+         "href": "https://a.espncdn.com/guid/d1a9b001-1df7-fbd7-ae4c-6ca7065286ec/logos/primary_logo_on_black_color.png",
+         "width": 4096,
+         "height": 4096,
+         "alt": "",
+         "rel": [
+          "full",
+          "primary_logo_on_black_color"
+         ],
+         "lastUpdated": "2026-07-22T20:30Z"
+        },
+        {
+         "href": "https://a.espncdn.com/guid/d1a9b001-1df7-fbd7-ae4c-6ca7065286ec/logos/primary_logo_on_primary_color.png",
+         "width": 4096,
+         "height": 4096,
+         "alt": "",
+         "rel": [
+          "full",
+          "primary_logo_on_primary_color"
+         ],
+         "lastUpdated": "2026-07-22T20:30Z"
+        },
+        {
+         "href": "https://a.espncdn.com/guid/d1a9b001-1df7-fbd7-ae4c-6ca7065286ec/logos/primary_logo_on_secondary_color.png",
+         "width": 4096,
+         "height": 4096,
+         "alt": "",
+         "rel": [
+          "full",
+          "primary_logo_on_secondary_color"
+         ],
+         "lastUpdated": "2026-07-22T20:30Z"
+        },
+        {
+         "href": "https://a.espncdn.com/guid/d1a9b001-1df7-fbd7-ae4c-6ca7065286ec/logos/primary_logo_black.png",
+         "width": 4096,
+         "height": 4096,
+         "alt": "",
+         "rel": [
+          "full",
+          "primary_logo_black"
+         ],
+         "lastUpdated": "2026-07-22T20:30Z"
+        },
+        {
+         "href": "https://a.espncdn.com/guid/d1a9b001-1df7-fbd7-ae4c-6ca7065286ec/logos/primary_logo_white.png",
+         "width": 4096,
+         "height": 4096,
+         "alt": "",
+         "rel": [
+          "full",
+          "primary_logo_white"
+         ],
+         "lastUpdated": "2026-07-22T20:30Z"
+        },
+        {
+         "href": "https://a.espncdn.com/guid/d1a9b001-1df7-fbd7-ae4c-6ca7065286ec/logos/secondary_logo_on_white_color.png",
+         "width": 4096,
+         "height": 4096,
+         "alt": "",
+         "rel": [
+          "full",
+          "secondary_logo_on_white_color"
+         ],
+         "lastUpdated": "2026-07-22T20:30Z"
+        },
+        {
+         "href": "https://a.espncdn.com/guid/d1a9b001-1df7-fbd7-ae4c-6ca7065286ec/logos/secondary_logo_on_black_color.png",
+         "width": 4096,
+         "height": 4096,
+         "alt": "",
+         "rel": [
+          "full",
+          "secondary_logo_on_black_color"
+         ],
+         "lastUpdated": "2026-07-22T20:30Z"
+        },
+        {
+         "href": "https://a.espncdn.com/guid/d1a9b001-1df7-fbd7-ae4c-6ca7065286ec/logos/secondary_logo_on_primary_color.png",
+         "width": 4096,
+         "height": 4096,
+         "alt": "",
+         "rel": [
+          "full",
+          "secondary_logo_on_primary_color"
+         ],
+         "lastUpdated": "2026-07-22T20:30Z"
+        },
+        {
+         "href": "https://a.espncdn.com/guid/d1a9b001-1df7-fbd7-ae4c-6ca7065286ec/logos/secondary_logo_on_secondary_color.png",
+         "width": 4096,
+         "height": 4096,
+         "alt": "",
+         "rel": [
+          "full",
+          "secondary_logo_on_secondary_color"
+         ],
+         "lastUpdated": "2026-07-22T20:30Z"
+        },
+        {
+         "href": "https://a.espncdn.com/guid/d1a9b001-1df7-fbd7-ae4c-6ca7065286ec/logos/secondary_logo_black.png",
+         "width": 4096,
+         "height": 4096,
+         "alt": "",
+         "rel": [
+          "full",
+          "secondary_logo_black"
+         ],
+         "lastUpdated": "2026-07-22T20:30Z"
+        },
+        {
+         "href": "https://a.espncdn.com/guid/d1a9b001-1df7-fbd7-ae4c-6ca7065286ec/logos/secondary_logo_white.png",
+         "width": 4096,
+         "height": 4096,
+         "alt": "",
+         "rel": [
+          "full",
+          "secondary_logo_white"
+         ],
+         "lastUpdated": "2026-07-22T20:30Z"
+        }
+       ]
+      },
+      "record": [
+       {
+        "type": "total",
+        "summary": "2-0",
+        "displayValue": "2-0"
+       },
+       {
+        "type": "road",
+        "summary": "1-0",
+        "displayValue": "1-0"
+       },
+       {
+        "type": "vsconf",
+        "summary": "1-0",
+        "displayValue": "1-0"
+       }
+      ],
+      "possession": false
+     }
+    ],
+    "status": {
+     "type": {
+      "id": "1",
+      "name": "STATUS_SCHEDULED",
+      "state": "pre",
+      "completed": false,
+      "description": "Scheduled",
+      "detail": "Mon, September 28th at 8:15 PM EDT",
+      "shortDetail": "9/28 - 8:15 PM EDT"
+     },
+     "isTBDFlex": false
+    },
+    "broadcasts": [
+     {
+      "type": {
+       "id": "1",
+       "shortName": "TV"
+      },
+      "market": {
+       "id": "1",
+       "type": "National"
+      },
+      "media": {
+       "shortName": "ESPN"
+      },
+      "lang": "en",
+      "region": "us",
+      "isNational": true
+     },
+     {
+      "type": {
+       "id": "1",
+       "shortName": "TV"
+      },
+      "market": {
+       "id": "1",
+       "type": "National"
+      },
+      "media": {
+       "shortName": "ABC"
+      },
+      "lang": "en",
+      "region": "us",
+      "isNational": true
+     }
+    ],
+    "boxscoreMinutes": false
+   }
+  ],
+  "week": 3,
+  "league": {
+   "id": "28",
+   "name": "National Football League",
+   "abbreviation": "NFL",
+   "shortName": "NFL",
+   "slug": "nfl",
+   "isTournament": false,
+   "logos": [
+    {
+     "href": "https://a.espncdn.com/i/teamlogos/leagues/500/nfl.png",
+     "rel": [
+      "full",
+      "default"
+     ]
+    },
+    {
+     "href": "https://a.espncdn.com/i/teamlogos/leagues/500-dark/nfl.png",
+     "rel": [
+      "full",
+      "dark"
+     ]
+    }
+   ]
+  }
+ },
+ "boxscore": {
+  "teams": [
+   {
+    "team": {
+     "id": "21",
+     "slug": "philadelphia-eagles",
+     "location": "Philadelphia",
+     "name": "Eagles",
+     "abbreviation": "PHI",
+     "displayName": "Philadelphia Eagles",
+     "shortDisplayName": "Eagles",
+     "color": "06424d",
+     "alternateColor": "000000",
+     "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/phi.png"
+    },
+    "statistics": [
+     {
+      "name": "totalPointsPerGame",
+      "displayValue": "24.0",
+      "label": "Points Per Game"
+     },
+     {
+      "name": "yardsPerGame",
+      "displayValue": "346.0",
+      "label": "Total Yards"
+     },
+     {
+      "name": "passingYardsPerGame",
+      "displayValue": "233.5",
+      "label": "Yards Passing"
+     },
+     {
+      "name": "rushingYardsPerGame",
+      "displayValue": "112.5",
+      "label": "Yards Rushing"
+     },
+     {
+      "name": "totalPointsPerGameAllowed",
+      "displayValue": "21.0",
+      "label": "Points Allowed Per Game"
+     },
+     {
+      "name": "yardsPerGameAllowed",
+      "displayValue": "300.5",
+      "label": "Yards Allowed"
+     },
+     {
+      "name": "passingYardsPerGameAllowed",
+      "displayValue": "173.5",
+      "label": "Pass Yards Allowed"
+     },
+     {
+      "name": "rushingYardsPerGameAllowed",
+      "displayValue": "127.0",
+      "label": "Rush Yards Allowed"
+     }
+    ],
+    "displayOrder": 1,
+    "homeAway": "away"
+   },
+   {
+    "team": {
+     "id": "3",
+     "slug": "chicago-bears",
+     "location": "Chicago",
+     "name": "Bears",
+     "abbreviation": "CHI",
+     "displayName": "Chicago Bears",
+     "shortDisplayName": "Bears",
+     "color": "0b1c3a",
+     "alternateColor": "e64100",
+     "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/chi.png"
+    },
+    "statistics": [
+     {
+      "name": "totalPointsPerGame",
+      "displayValue": "31.0",
+      "label": "Points Per Game"
+     },
+     {
+      "name": "yardsPerGame",
+      "displayValue": "443.0",
+      "label": "Total Yards"
+     },
+     {
+      "name": "passingYardsPerGame",
+      "displayValue": "230.5",
+      "label": "Yards Passing"
+     },
+     {
+      "name": "rushingYardsPerGame",
+      "displayValue": "212.5",
+      "label": "Yards Rushing"
+     },
+     {
+      "name": "totalPointsPerGameAllowed",
+      "displayValue": "23.0",
+      "label": "Points Allowed Per Game"
+     },
+     {
+      "name": "yardsPerGameAllowed",
+      "displayValue": "374.0",
+      "label": "Yards Allowed"
+     },
+     {
+      "name": "passingYardsPerGameAllowed",
+      "displayValue": "252.0",
+      "label": "Pass Yards Allowed"
+     },
+     {
+      "name": "rushingYardsPerGameAllowed",
+      "displayValue": "122.0",
+      "label": "Rush Yards Allowed"
+     }
+    ],
+    "displayOrder": 2,
+    "homeAway": "home"
+   }
+  ]
+ },
+ "leaders": [
+  {
+   "team": {
+    "id": "3",
+    "displayName": "Chicago Bears",
+    "abbreviation": "CHI",
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/chi.png",
+    "logos": [
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500/chi.png",
+      "width": 500,
+      "height": 500,
+      "alt": "",
+      "rel": [
+       "full",
+       "default"
+      ],
+      "lastUpdated": "2024-06-25T18:46Z"
+     },
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500-dark/chi.png",
+      "width": 500,
+      "height": 500,
+      "alt": "",
+      "rel": [
+       "full",
+       "dark"
+      ],
+      "lastUpdated": "2024-06-25T18:46Z"
+     },
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/chi.png",
+      "width": 500,
+      "height": 500,
+      "alt": "",
+      "rel": [
+       "full",
+       "scoreboard"
+      ],
+      "lastUpdated": "2024-06-25T18:46Z"
+     },
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500-dark/scoreboard/chi.png",
+      "width": 500,
+      "height": 500,
+      "alt": "",
+      "rel": [
+       "full",
+       "scoreboard",
+       "dark"
+      ],
+      "lastUpdated": "2024-06-25T18:46Z"
+     }
+    ]
+   },
+   "leaders": [
+    {
+     "name": "passingYards",
+     "displayName": "Passing Yards",
+     "leaders": [
+      {
+       "displayValue": "36/55, 407 YDS, 2 TD, 1 INT",
+       "value": 407.0,
+       "athlete": {
+        "id": "4431611",
+        "lastName": "Williams",
+        "fullName": "Caleb Williams",
+        "displayName": "Caleb Williams",
+        "shortName": "C. Williams",
+        "jersey": "18",
+        "position": {
+         "name": "Quarterback",
+         "displayName": "Quarterback",
+         "abbreviation": "QB"
+        },
+        "status": "Out",
+        "injuries": {
+         "status": "Out",
+         "date": "2026-09-27T12:12Z",
+         "type": {
+          "id": "4",
+          "name": "INJURY_STATUS_OUT",
+          "description": "out",
+          "abbreviation": "O"
+         },
+         "details": {
+          "fantasyStatus": {
+           "description": "OUT",
+           "abbreviation": "OUT",
+           "displayDescription": "Out"
+          },
+          "type": "Hamstring",
+          "location": "Leg",
+          "detail": "Strain",
+          "side": "Right",
+          "returnDate": "2026-10-04"
+         }
+        }
+       },
+       "mainStat": {
+        "value": "407",
+        "label": "YDS"
+       },
+       "summary": "36/55, 2 TD, 1 INT"
+      }
+     ]
+    },
+    {
+     "name": "rushingYards",
+     "displayName": "Rushing Yards",
+     "leaders": [
+      {
+       "displayValue": "34 CAR, 169 YDS, 3 TD",
+       "value": 169.0,
+       "athlete": {
+        "id": "4259545",
+        "lastName": "Swift",
+        "fullName": "D'Andre Swift",
+        "displayName": "D'Andre Swift",
+        "shortName": "D. Swift",
+        "jersey": "4",
+        "position": {
+         "name": "Running Back",
+         "displayName": "Running Back",
+         "abbreviation": "RB"
+        },
+        "status": "Active",
+        "injuries": {
+         "status": "Active",
+         "date": "2026-09-20T22:23Z",
+         "type": {
+          "id": "0",
+          "name": "INJURY_STATUS_ACTIVE",
+          "description": "active",
+          "abbreviation": "A"
+         }
+        }
+       },
+       "mainStat": {
+        "value": "169",
+        "label": "YDS"
+       },
+       "summary": "34 CAR, 3 TD"
+      }
+     ]
+    },
+    {
+     "name": "receivingYards",
+     "displayName": "Receiving Yards",
+     "leaders": [
+      {
+       "displayValue": "13 REC, 124 YDS",
+       "value": 124.0,
+       "athlete": {
+        "id": "2973405",
+        "lastName": "Raymond",
+        "fullName": "Kalif Raymond",
+        "displayName": "Kalif Raymond",
+        "shortName": "K. Raymond",
+        "jersey": "14",
+        "position": {
+         "name": "Wide Receiver",
+         "displayName": "Wide Receiver",
+         "abbreviation": "WR"
+        },
+        "status": "Active",
+        "injuries": {
+         "status": "Active",
+         "date": "2026-09-21T20:38Z",
+         "type": {
+          "id": "0",
+          "name": "INJURY_STATUS_ACTIVE",
+          "description": "active",
+          "abbreviation": "A"
+         }
+        }
+       },
+       "mainStat": {
+        "value": "124",
+        "label": "YDS"
+       },
+       "summary": "13 REC"
+      }
+     ]
+    },
+    {
+     "name": "sacks",
+     "displayName": "Sacks",
+     "leaders": [
+      {
+       "displayValue": "1",
+       "value": 1.0,
+       "athlete": {
+        "id": "3116726",
+        "lastName": "Street",
+        "fullName": "Kentavius Street",
+        "displayName": "Kentavius Street",
+        "shortName": "K. Street",
+        "jersey": "93",
+        "position": {
+         "name": "Defensive Tackle",
+         "displayName": "Defensive Tackle",
+         "abbreviation": "DT"
+        },
+        "status": "Active",
+        "injuries": {
+         "status": "Active",
+         "date": "2026-03-11T00:15Z",
+         "type": {
+          "id": "0",
+          "name": "INJURY_STATUS_ACTIVE",
+          "description": "active",
+          "abbreviation": "A"
+         }
+        }
+       },
+       "mainStat": {
+        "value": "1",
+        "label": "SACKS"
+       },
+       "summary": ""
+      }
+     ]
+    },
+    {
+     "name": "totalTackles",
+     "displayName": "Tackles",
+     "leaders": [
+      {
+       "displayValue": "17",
+       "value": 17.0,
+       "athlete": {
+        "id": "4954445",
+        "lastName": "Thieneman",
+        "fullName": "Dillon Thieneman",
+        "displayName": "Dillon Thieneman",
+        "shortName": "D. Thieneman",
+        "jersey": "31",
+        "position": {
+         "name": "Safety",
+         "displayName": "Safety",
+         "abbreviation": "S"
+        },
+        "status": "Active",
+        "injuries": {
+         "status": "Active",
+         "date": "2026-09-16T01:19Z",
+         "type": {
+          "id": "0",
+          "name": "INJURY_STATUS_ACTIVE",
+          "description": "active",
+          "abbreviation": "A"
+         }
+        }
+       },
+       "mainStat": {
+        "value": "17",
+        "label": "TOT"
+       },
+       "summary": ""
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "team": {
+    "id": "21",
+    "displayName": "Philadelphia Eagles",
+    "abbreviation": "PHI",
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/phi.png",
+    "logos": [
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500/phi.png",
+      "width": 500,
+      "height": 500,
+      "alt": "",
+      "rel": [
+       "full",
+       "default"
+      ],
+      "lastUpdated": "2024-06-25T18:55Z"
+     },
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500-dark/phi.png",
+      "width": 500,
+      "height": 500,
+      "alt": "",
+      "rel": [
+       "full",
+       "dark"
+      ],
+      "lastUpdated": "2024-06-25T18:56Z"
+     },
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/phi.png",
+      "width": 500,
+      "height": 500,
+      "alt": "",
+      "rel": [
+       "full",
+       "scoreboard"
+      ],
+      "lastUpdated": "2024-06-25T18:56Z"
+     },
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500-dark/scoreboard/phi.png",
+      "width": 500,
+      "height": 500,
+      "alt": "",
+      "rel": [
+       "full",
+       "scoreboard",
+       "dark"
+      ],
+      "lastUpdated": "2024-06-25T18:56Z"
+     }
+    ]
+   },
+   "leaders": [
+    {
+     "name": "passingYards",
+     "displayName": "Passing Yards",
+     "leaders": [
+      {
+       "displayValue": "40/62, 467 YDS, 5 TD, 2 INT",
+       "value": 467.0,
+       "athlete": {
+        "id": "4040715",
+        "lastName": "Hurts",
+        "fullName": "Jalen Hurts",
+        "displayName": "Jalen Hurts",
+        "shortName": "J. Hurts",
+        "jersey": "1",
+        "position": {
+         "name": "Quarterback",
+         "displayName": "Quarterback",
+         "abbreviation": "QB"
+        },
+        "status": "Active",
+        "injuries": {
+         "status": "Active",
+         "date": "2026-09-20T23:12Z",
+         "type": {
+          "id": "0",
+          "name": "INJURY_STATUS_ACTIVE",
+          "description": "active",
+          "abbreviation": "A"
+         }
+        }
+       },
+       "mainStat": {
+        "value": "467",
+        "label": "YDS"
+       },
+       "summary": "40/62, 5 TD, 2 INT"
+      }
+     ]
+    },
+    {
+     "name": "rushingYards",
+     "displayName": "Rushing Yards",
+     "leaders": [
+      {
+       "displayValue": "19 CAR, 92 YDS",
+       "value": 92.0,
+       "athlete": {
+        "id": "3929630",
+        "lastName": "Barkley",
+        "fullName": "Saquon Barkley",
+        "displayName": "Saquon Barkley",
+        "shortName": "S. Barkley",
+        "jersey": "26",
+        "position": {
+         "name": "Running Back",
+         "displayName": "Running Back",
+         "abbreviation": "RB"
+        },
+        "status": "Active",
+        "injuries": {
+         "status": "Active",
+         "date": "2026-09-25T22:22Z",
+         "type": {
+          "id": "0",
+          "name": "INJURY_STATUS_ACTIVE",
+          "description": "active",
+          "abbreviation": "A"
+         }
+        }
+       },
+       "mainStat": {
+        "value": "92",
+        "label": "YDS"
+       },
+       "summary": "19 CAR"
+      }
+     ]
+    },
+    {
+     "name": "receivingYards",
+     "displayName": "Receiving Yards",
+     "leaders": [
+      {
+       "displayValue": "13 REC, 170 YDS, 1 TD",
+       "value": 170.0,
+       "athlete": {
+        "id": "4241478",
+        "lastName": "Smith",
+        "fullName": "DeVonta Smith",
+        "displayName": "DeVonta Smith",
+        "shortName": "D. Smith",
+        "jersey": "6",
+        "position": {
+         "name": "Wide Receiver",
+         "displayName": "Wide Receiver",
+         "abbreviation": "WR"
+        },
+        "status": "Active",
+        "injuries": {
+         "status": "Active",
+         "date": "2026-09-26T16:38Z",
+         "type": {
+          "id": "0",
+          "name": "INJURY_STATUS_ACTIVE",
+          "description": "active",
+          "abbreviation": "A"
+         }
+        }
+       },
+       "mainStat": {
+        "value": "170",
+        "label": "YDS"
+       },
+       "summary": "13 REC, 1 TD"
+      }
+     ]
+    },
+    {
+     "name": "sacks",
+     "displayName": "Sacks",
+     "leaders": [
+      {
+       "displayValue": "1",
+       "value": 1.0,
+       "athlete": {
+        "id": "4426331",
+        "lastName": "Smith Jr.",
+        "fullName": "Nolan Smith Jr.",
+        "displayName": "Nolan Smith Jr.",
+        "shortName": "N. Smith Jr.",
+        "jersey": "3",
+        "position": {
+         "name": "Linebacker",
+         "displayName": "Linebacker",
+         "abbreviation": "LB"
+        },
+        "status": "Active",
+        "injuries": {
+         "status": "Active",
+         "date": "2026-05-21T13:54Z",
+         "type": {
+          "id": "0",
+          "name": "INJURY_STATUS_ACTIVE",
+          "description": "active",
+          "abbreviation": "A"
+         }
+        }
+       },
+       "mainStat": {
+        "value": "1",
+        "label": "SACKS"
+       },
+       "summary": ""
+      }
+     ]
+    },
+    {
+     "name": "totalTackles",
+     "displayName": "Tackles",
+     "leaders": [
+      {
+       "displayValue": "19",
+       "value": 19.0,
+       "athlete": {
+        "id": "4685287",
+        "lastName": "Campbell",
+        "fullName": "Jihaad Campbell",
+        "displayName": "Jihaad Campbell",
+        "shortName": "J. Campbell",
+        "jersey": "11",
+        "position": {
+         "name": "Linebacker",
+         "displayName": "Linebacker",
+         "abbreviation": "LB"
+        },
+        "status": "Active",
+        "injuries": {
+         "status": "Active",
+         "date": "2026-09-23T01:17Z",
+         "type": {
+          "id": "0",
+          "name": "INJURY_STATUS_ACTIVE",
+          "description": "active",
+          "abbreviation": "A"
+         }
+        }
+       },
+       "mainStat": {
+        "value": "19",
+        "label": "TOT"
+       },
+       "summary": ""
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "injuries": [
+  {
+   "team": {
+    "id": "3",
+    "displayName": "Chicago Bears",
+    "abbreviation": "CHI",
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/chi.png",
+    "logos": [
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500/chi.png",
+      "width": 500,
+      "height": 500,
+      "alt": "",
+      "rel": [
+       "full",
+       "default"
+      ],
+      "lastUpdated": "2024-06-25T18:46Z"
+     },
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500-dark/chi.png",
+      "width": 500,
+      "height": 500,
+      "alt": "",
+      "rel": [
+       "full",
+       "dark"
+      ],
+      "lastUpdated": "2024-06-25T18:46Z"
+     },
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/chi.png",
+      "width": 500,
+      "height": 500,
+      "alt": "",
+      "rel": [
+       "full",
+       "scoreboard"
+      ],
+      "lastUpdated": "2024-06-25T18:46Z"
+     },
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500-dark/scoreboard/chi.png",
+      "width": 500,
+      "height": 500,
+      "alt": "",
+      "rel": [
+       "full",
+       "scoreboard",
+       "dark"
+      ],
+      "lastUpdated": "2024-06-25T18:46Z"
+     }
+    ]
+   },
+   "injuries": [
+    {
+     "status": "Injured Reserve",
+     "date": "2026-09-28T01:11Z",
+     "athlete": {
+      "id": "4361748",
+      "lastName": "Johnson Jr.",
+      "fullName": "Anthony Johnson Jr.",
+      "displayName": "Anthony Johnson Jr.",
+      "shortName": "A. Johnson Jr.",
+      "jersey": "26",
+      "position": {
+       "name": "Safety",
+       "displayName": "Safety",
+       "abbreviation": "S"
+      },
+      "collegeAthlete": {},
+      "status": {
+       "id": "29",
+       "name": "Practice Squad",
+       "type": "practice-squad",
+       "abbreviation": "Practice Squad"
+      }
+     },
+     "type": {
+      "id": "5",
+      "name": "INJURY_STATUS_IR",
+      "description": "Injured Reserve",
+      "abbreviation": "IR"
+     },
+     "details": {
+      "fantasyStatus": {
+       "description": "IR",
+       "abbreviation": "IR",
+       "displayDescription": "IR"
+      },
+      "type": "Undisclosed",
+      "location": "Other",
+      "returnDate": "2026-10-18"
+     }
+    },
+    {
+     "status": "Out",
+     "date": "2026-09-27T12:12Z",
+     "athlete": {
+      "id": "4431611",
+      "lastName": "Williams",
+      "fullName": "Caleb Williams",
+      "displayName": "Caleb Williams",
+      "shortName": "C. Williams",
+      "jersey": "18",
+      "position": {
+       "name": "Quarterback",
+       "displayName": "Quarterback",
+       "abbreviation": "QB"
+      },
+      "collegeAthlete": {},
+      "status": {
+       "id": "1",
+       "name": "Active",
+       "type": "active",
+       "abbreviation": "Active"
+      }
+     },
+     "type": {
+      "id": "4",
+      "name": "INJURY_STATUS_OUT",
+      "description": "out",
+      "abbreviation": "O"
+     },
+     "details": {
+      "fantasyStatus": {
+       "description": "OUT",
+       "abbreviation": "OUT",
+       "displayDescription": "Out"
+      },
+      "type": "Hamstring",
+      "location": "Leg",
+      "detail": "Strain",
+      "side": "Right",
+      "returnDate": "2026-10-04"
+     }
+    },
+    {
+     "status": "Out",
+     "date": "2026-09-24T00:28Z",
+     "athlete": {
+      "id": "4432804",
+      "lastName": "Turner",
+      "fullName": "Shemar Turner",
+      "displayName": "Shemar Turner",
+      "shortName": "S. Turner",
+      "jersey": "95",
+      "position": {
+       "name": "Defensive Tackle",
+       "displayName": "Defensive Tackle",
+       "abbreviation": "DT"
+      },
+      "collegeAthlete": {},
+      "status": {
+       "id": "13",
+       "name": "Day-To-Day",
+       "type": "day-to-day",
+       "abbreviation": "Day-To-Day"
+      }
+     },
+     "type": {
+      "id": "4",
+      "name": "INJURY_STATUS_OUT",
+      "description": "out",
+      "abbreviation": "O"
+     },
+     "details": {
+      "fantasyStatus": {
+       "description": "PUP-R",
+       "abbreviation": "PUP-R",
+       "displayDescription": "PUP-R"
+      },
+      "type": "Knee - ACL",
+      "location": "Leg",
+      "detail": "Surgery",
+      "side": "Not Specified",
+      "returnDate": "2026-10-11"
+     }
+    },
+    {
+     "status": "Out",
+     "date": "2026-09-23T22:34Z",
+     "athlete": {
+      "id": "4430822",
+      "lastName": "Sewell",
+      "fullName": "Noah Sewell",
+      "displayName": "Noah Sewell",
+      "shortName": "N. Sewell",
+      "jersey": "44",
+      "position": {
+       "name": "Linebacker",
+       "displayName": "Linebacker",
+       "abbreviation": "LB"
+      },
+      "collegeAthlete": {},
+      "status": {
+       "id": "13",
+       "name": "Day-To-Day",
+       "type": "day-to-day",
+       "abbreviation": "Day-To-Day"
+      }
+     },
+     "type": {
+      "id": "4",
+      "name": "INJURY_STATUS_OUT",
+      "description": "out",
+      "abbreviation": "O"
+     },
+     "details": {
+      "fantasyStatus": {
+       "description": "PUP-R",
+       "abbreviation": "PUP-R",
+       "displayDescription": "PUP-R"
+      },
+      "type": "Achilles",
+      "location": "Leg",
+      "detail": "Surgery",
+      "side": "Not Specified",
+      "returnDate": "2026-10-11"
+     }
+    },
+    {
+     "status": "Out",
+     "date": "2026-09-08T23:35Z",
+     "athlete": {
+      "id": "4361093",
+      "lastName": "Gordon",
+      "fullName": "Kyler Gordon",
+      "displayName": "Kyler Gordon",
+      "shortName": "K. Gordon",
+      "jersey": "6",
+      "position": {
+       "name": "Cornerback",
+       "displayName": "Cornerback",
+       "abbreviation": "CB"
+      },
+      "collegeAthlete": {},
+      "status": {
+       "id": "13",
+       "name": "Day-To-Day",
+       "type": "day-to-day",
+       "abbreviation": "Day-To-Day"
+      }
+     },
+     "type": {
+      "id": "4",
+      "name": "INJURY_STATUS_OUT",
+      "description": "out",
+      "abbreviation": "O"
+     },
+     "details": {
+      "fantasyStatus": {
+       "description": "PUP-R",
+       "abbreviation": "PUP-R",
+       "displayDescription": "PUP-R"
+      },
+      "type": "Calf",
+      "location": "Leg",
+      "detail": "Not Specified",
+      "side": "Not Specified",
+      "returnDate": "2026-10-11"
+     }
+    }
+   ]
+  },
+  {
+   "team": {
+    "id": "21",
+    "displayName": "Philadelphia Eagles",
+    "abbreviation": "PHI",
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/phi.png",
+    "logos": [
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500/phi.png",
+      "width": 500,
+      "height": 500,
+      "alt": "",
+      "rel": [
+       "full",
+       "default"
+      ],
+      "lastUpdated": "2024-06-25T18:55Z"
+     },
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500-dark/phi.png",
+      "width": 500,
+      "height": 500,
+      "alt": "",
+      "rel": [
+       "full",
+       "dark"
+      ],
+      "lastUpdated": "2024-06-25T18:56Z"
+     },
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/phi.png",
+      "width": 500,
+      "height": 500,
+      "alt": "",
+      "rel": [
+       "full",
+       "scoreboard"
+      ],
+      "lastUpdated": "2024-06-25T18:56Z"
+     },
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500-dark/scoreboard/phi.png",
+      "width": 500,
+      "height": 500,
+      "alt": "",
+      "rel": [
+       "full",
+       "scoreboard",
+       "dark"
+      ],
+      "lastUpdated": "2024-06-25T18:56Z"
+     }
+    ]
+   },
+   "injuries": [
+    {
+     "status": "Out",
+     "date": "2026-09-26T21:21Z",
+     "athlete": {
+      "id": "3915106",
+      "lastName": "Johnson",
+      "fullName": "Fred Johnson",
+      "displayName": "Fred Johnson",
+      "shortName": "F. Johnson",
+      "jersey": "74",
+      "position": {
+       "name": "Offensive Tackle",
+       "displayName": "Offensive Tackle",
+       "abbreviation": "OT"
+      },
+      "collegeAthlete": {},
+      "status": {
+       "id": "1",
+       "name": "Active",
+       "type": "active",
+       "abbreviation": "Active"
+      }
+     },
+     "type": {
+      "id": "4",
+      "name": "INJURY_STATUS_OUT",
+      "description": "out",
+      "abbreviation": "O"
+     },
+     "details": {
+      "fantasyStatus": {
+       "description": "OUT",
+       "abbreviation": "OUT",
+       "displayDescription": "Out"
+      },
+      "type": "Knee",
+      "location": "Leg",
+      "detail": "Not Specified",
+      "side": "Not Specified",
+      "returnDate": "2026-10-04"
+     }
+    },
+    {
+     "status": "Questionable",
+     "date": "2026-09-26T20:29Z",
+     "athlete": {
+      "id": "3916409",
+      "lastName": "Greenard",
+      "fullName": "Jonathan Greenard",
+      "displayName": "Jonathan Greenard",
+      "shortName": "J. Greenard",
+      "jersey": "52",
+      "position": {
+       "name": "Linebacker",
+       "displayName": "Linebacker",
+       "abbreviation": "LB"
+      },
+      "collegeAthlete": {},
+      "status": {
+       "id": "1",
+       "name": "Active",
+       "type": "active",
+       "abbreviation": "Active"
+      }
+     },
+     "type": {
+      "id": "2",
+      "name": "INJURY_STATUS_QUESTIONABLE",
+      "description": "questionable",
+      "abbreviation": "Q"
+     },
+     "details": {
+      "fantasyStatus": {
+       "description": "QUESTIONABLE",
+       "abbreviation": "QUESTIONABLE",
+       "displayDescription": "Questionable"
+      },
+      "type": "Pectoral",
+      "location": "Torso",
+      "detail": "Surgery",
+      "side": "Not Specified",
+      "returnDate": "2026-09-28"
+     }
+    },
+    {
+     "status": "Out",
+     "date": "2026-09-26T20:25Z",
+     "athlete": {
+      "id": "4241372",
+      "lastName": "Brown",
+      "fullName": "Hollywood Brown",
+      "displayName": "Hollywood Brown",
+      "shortName": "H. Brown",
+      "jersey": "0",
+      "position": {
+       "name": "Wide Receiver",
+       "displayName": "Wide Receiver",
+       "abbreviation": "WR"
+      },
+      "collegeAthlete": {},
+      "status": {
+       "id": "1",
+       "name": "Active",
+       "type": "active",
+       "abbreviation": "Active"
+      }
+     },
+     "type": {
+      "id": "4",
+      "name": "INJURY_STATUS_OUT",
+      "description": "out",
+      "abbreviation": "O"
+     },
+     "details": {
+      "fantasyStatus": {
+       "description": "OUT",
+       "abbreviation": "OUT",
+       "displayDescription": "Out"
+      },
+      "type": "Ankle",
+      "location": "Leg",
+      "detail": "Not Specified",
+      "side": "Not Specified",
+      "returnDate": "2026-10-04"
+     }
+    },
+    {
+     "status": "Out",
+     "date": "2026-09-26T20:01Z",
+     "athlete": {
+      "id": "3121023",
+      "lastName": "Goedert",
+      "fullName": "Dallas Goedert",
+      "displayName": "Dallas Goedert",
+      "shortName": "D. Goedert",
+      "jersey": "88",
+      "position": {
+       "name": "Tight End",
+       "displayName": "Tight End",
+       "abbreviation": "TE"
+      },
+      "collegeAthlete": {},
+      "status": {
+       "id": "1",
+       "name": "Active",
+       "type": "active",
+       "abbreviation": "Active"
+      }
+     },
+     "type": {
+      "id": "4",
+      "name": "INJURY_STATUS_OUT",
+      "description": "out",
+      "abbreviation": "O"
+     },
+     "details": {
+      "fantasyStatus": {
+       "description": "OUT",
+       "abbreviation": "OUT",
+       "displayDescription": "Out"
+      },
+      "type": "Knee - MCL",
+      "location": "Leg",
+      "detail": "Sprain",
+      "side": "Right",
+      "returnDate": "2026-10-04"
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "date": "2026-09-16T00:56Z",
+     "athlete": {
+      "id": "4035624",
+      "lastName": "Dickerson",
+      "fullName": "Landon Dickerson",
+      "displayName": "Landon Dickerson",
+      "shortName": "L. Dickerson",
+      "jersey": "69",
+      "position": {
+       "name": "Guard",
+       "displayName": "Guard",
+       "abbreviation": "G"
+      },
+      "collegeAthlete": {},
+      "status": {
+       "id": "13",
+       "name": "Day-To-Day",
+       "type": "day-to-day",
+       "abbreviation": "Day-To-Day"
+      }
+     },
+     "type": {
+      "id": "5",
+      "name": "INJURY_STATUS_IR",
+      "description": "Injured Reserve",
+      "abbreviation": "IR"
+     },
+     "details": {
+      "fantasyStatus": {
+       "description": "IR",
+       "abbreviation": "IR",
+       "displayDescription": "IR"
+      },
+      "type": "Knee",
+      "location": "Leg",
+      "detail": "Not Specified",
+      "side": "Not Specified",
+      "returnDate": "2026-10-18"
+     }
+    }
+   ]
+  }
+ ],
+ "pickcenter": [
+  {
+   "provider": {
+    "id": "100",
+    "name": "Draft Kings",
+    "priority": 1,
+    "logos": [
+     {
+      "href": "https://a.espncdn.com/i/betting/Draftkings_Light.svg",
+      "rel": [
+       "light"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/i/betting/Draftkings_Dark.svg",
+      "rel": [
+       "dark"
+      ]
+     }
+    ]
+   },
+   "details": "PHI -4.5",
+   "overUnder": 41.5,
+   "spread": 4.5,
+   "overOdds": -105.0,
+   "underOdds": -115.0,
+   "awayTeamOdds": {
+    "favorite": true,
+    "underdog": false,
+    "moneyLine": -205,
+    "spreadOdds": 100.0,
+    "team": {},
+    "teamId": "21",
+    "favoriteAtOpen": false
+   },
+   "homeTeamOdds": {
+    "favorite": false,
+    "underdog": true,
+    "moneyLine": 170,
+    "spreadOdds": -120.0,
+    "team": {},
+    "teamId": "3",
+    "favoriteAtOpen": true
+   },
+   "moneyline": {
+    "displayName": "Moneyline",
+    "shortDisplayName": "ML",
+    "home": {
+     "close": {
+      "odds": "+170"
+     },
+     "open": {
+      "odds": "-118"
+     }
+    },
+    "away": {
+     "close": {
+      "odds": "-205"
+     },
+     "open": {
+      "odds": "-102"
+     }
+    }
+   },
+   "pointSpread": {
+    "displayName": "Spread",
+    "shortDisplayName": "Spread",
+    "home": {
+     "close": {
+      "line": "+4.5",
+      "odds": "-120"
+     },
+     "open": {
+      "line": "-1.5",
+      "odds": "-105"
+     }
+    },
+    "away": {
+     "close": {
+      "line": "-4.5",
+      "odds": "+100"
+     },
+     "open": {
+      "line": "+1.5",
+      "odds": "-115"
+     }
+    }
+   },
+   "total": {
+    "displayName": "Total",
+    "shortDisplayName": "Total",
+    "over": {
+     "close": {
+      "line": "o41.5",
+      "odds": "-105"
+     },
+     "open": {
+      "line": "o46.5",
+      "odds": "-110"
+     }
+    },
+    "under": {
+     "close": {
+      "line": "u41.5",
+      "odds": "-115"
+     },
+     "open": {
+      "line": "u46.5",
+      "odds": "-110"
+     }
+    }
+   },
+   "header": {
+    "logo": {
+     "dark": "https://a.espncdn.com/i/espnbet/dark/espn-bet-square-off.svg",
+     "light": "https://a.espncdn.com/i/espnbet/espn-bet-square-off.svg",
+     "exclusivesLogoDark": "https://a.espncdn.com/i/espnbet/espn-bet-square-mint.svg",
+     "exclusivesLogoLight": "https://a.espncdn.com/i/espnbet/espn-bet-square-mint.svg"
+    },
+    "text": "Game Odds"
+   },
+   "footer": {
+    "disclaimer": "GAMBLING PROBLEM? CALL 1-800-GAMBLER or 1-800-MY-RESET, (800) 327-5050 or visit gamblinghelplinema.org (MA). Call 877-8-HOPENY/text HOPENY (467369) (NY). Call 888-789-7777/visit ccpg.org (CT), or visit www.mdgamblinghelp.org (MD), 1-800-981-0023 (PR). 21+ and present in most states. (18+ DC/KY/NH/PR/WY). Void in ONT. Eligibility restrictions apply. Terms: draftkings.com/sportsbook. On behalf of Boot Hill Casino (KS). Pass-thru of per wager tax may apply in IL."
+   }
+  }
+ ],
+ "gameInfo": {
+  "venue": {
+   "id": "3933",
+   "fullName": "Soldier Field",
+   "address": {
+    "city": "Chicago",
+    "state": "IL",
+    "zipCode": "60605",
+    "country": "USA"
+   },
+   "grass": true,
+   "images": [
+    {
+     "href": "https://a.espncdn.com/i/venues/nfl/day/3933.jpg",
+     "width": 2000,
+     "height": 1125,
+     "alt": "",
+     "rel": [
+      "full",
+      "day"
+     ]
+    },
+    {
+     "href": "https://a.espncdn.com/i/venues/nfl/day/interior/3933.jpg",
+     "width": 2000,
+     "height": 1125,
+     "alt": "",
+     "rel": [
+      "full",
+      "day",
+      "interior"
+     ]
+    }
+   ]
+  },
+  "weather": {
+   "temperature": 64,
+   "highTemperature": 64,
+   "lowTemperature": 64,
+   "conditionId": "33",
+   "gust": 10,
+   "precipitation": 0
+  }
+ }
+}

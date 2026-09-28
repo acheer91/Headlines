@@ -1,0 +1,103 @@
+{
+ "splits": {
+  "categories": [
+   {
+    "name": "general",
+    "stats": []
+   },
+   {
+    "name": "passing",
+    "stats": [
+     {
+      "name": "totalPointsPerGame",
+      "value": 31.0,
+      "displayValue": "31.0",
+      "rank": 4,
+      "rankDisplayValue": "Tied-4th"
+     },
+     {
+      "name": "yardsPerGame",
+      "value": 443.0,
+      "displayValue": "443.0",
+      "rank": 2,
+      "rankDisplayValue": "2nd"
+     }
+    ]
+   },
+   {
+    "name": "rushing",
+    "stats": [
+     {
+      "name": "totalPointsPerGame",
+      "value": 31.0,
+      "displayValue": "31.0",
+      "rank": 4,
+      "rankDisplayValue": "Tied-4th"
+     },
+     {
+      "name": "yardsPerGame",
+      "value": 443.0,
+      "displayValue": "443.0",
+      "rank": 2,
+      "rankDisplayValue": "2nd"
+     }
+    ]
+   },
+   {
+    "name": "receiving",
+    "stats": [
+     {
+      "name": "totalPointsPerGame",
+      "value": 31.0,
+      "displayValue": "31.0",
+      "rank": 4,
+      "rankDisplayValue": "Tied-4th"
+     },
+     {
+      "name": "yardsPerGame",
+      "value": 443.0,
+      "displayValue": "443.0",
+      "rank": 2,
+      "rankDisplayValue": "2nd"
+     }
+    ]
+   },
+   {
+    "name": "defensive",
+    "stats": []
+   },
+   {
+    "name": "defensiveInterceptions",
+    "stats": []
+   },
+   {
+    "name": "kicking",
+    "stats": []
+   },
+   {
+    "name": "returning",
+    "stats": []
+   },
+   {
+    "name": "punting",
+    "stats": []
+   },
+   {
+    "name": "scoring",
+    "stats": [
+     {
+      "name": "totalPointsPerGame",
+      "value": 31.0,
+      "displayValue": "31.0",
+      "rank": 4,
+      "rankDisplayValue": "Tied-4th"
+     }
+    ]
+   },
+   {
+    "name": "miscellaneous",
+    "stats": []
+   }
+  ]
+ }
+}

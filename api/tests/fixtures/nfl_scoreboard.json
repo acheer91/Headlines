@@ -1,0 +1,294 @@
+{
+ "season": {
+  "year": 2026,
+  "type": 2
+ },
+ "week": {
+  "number": 4
+ },
+ "events": [
+  {
+   "id": "401900001",
+   "date": "2026-09-28T17:00Z",
+   "competitions": [
+    {
+     "id": "x",
+     "date": "2026-09-28T17:00Z",
+     "competitors": [
+      {
+       "homeAway": "home",
+       "score": "0",
+       "team": {
+        "id": "2",
+        "abbreviation": "BUF",
+        "displayName": "Buffalo Bills",
+        "shortDisplayName": "Bills",
+        "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/buf.png",
+        "color": "00338d"
+       }
+      },
+      {
+       "homeAway": "away",
+       "score": "0",
+       "team": {
+        "id": "15",
+        "abbreviation": "MIA",
+        "displayName": "Miami Dolphins",
+        "shortDisplayName": "Dolphins",
+        "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/mia.png",
+        "color": "008e97"
+       }
+      }
+     ],
+     "status": {
+      "period": 0,
+      "displayClock": "0:00",
+      "type": {
+       "state": "pre",
+       "detail": "Sun, 9/28 - 1:00 PM EDT",
+       "shortDetail": "Sun, 9/28 - 1:00 PM EDT"
+      }
+     },
+     "venue": {
+      "fullName": "Test Stadium"
+     },
+     "broadcasts": [
+      {
+       "names": [
+        "CBS"
+       ]
+      }
+     ],
+     "odds": [
+      {
+       "provider": {
+        "name": "DraftKings"
+       },
+       "details": "BUF -6.5",
+       "overUnder": 48.5,
+       "spread": -6.5,
+       "homeTeamOdds": {
+        "moneyLine": -285
+       },
+       "awayTeamOdds": {
+        "moneyLine": 230
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "401900002",
+   "date": "2026-09-28T20:25Z",
+   "competitions": [
+    {
+     "id": "x",
+     "date": "2026-09-28T20:25Z",
+     "competitors": [
+      {
+       "homeAway": "home",
+       "score": "0",
+       "team": {
+        "id": "26",
+        "abbreviation": "SEA",
+        "displayName": "Seattle Seahawks",
+        "shortDisplayName": "Seahawks",
+        "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/sea.png",
+        "color": "002a5c"
+       }
+      },
+      {
+       "homeAway": "away",
+       "score": "0",
+       "team": {
+        "id": "25",
+        "abbreviation": "SF",
+        "displayName": "San Francisco 49ers",
+        "shortDisplayName": "49ers",
+        "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/sf.png",
+        "color": "aa0000"
+       }
+      }
+     ],
+     "status": {
+      "period": 0,
+      "displayClock": "0:00",
+      "type": {
+       "state": "pre",
+       "detail": "Sun, 9/28 - 4:25 PM EDT",
+       "shortDetail": "Sun, 9/28 - 4:25 PM EDT"
+      }
+     },
+     "venue": {
+      "fullName": "Test Stadium"
+     },
+     "broadcasts": [
+      {
+       "names": [
+        "CBS"
+       ]
+      }
+     ],
+     "odds": [
+      {
+       "provider": {
+        "name": "DraftKings"
+       },
+       "details": "SF -2.5",
+       "overUnder": 44.5,
+       "moneyline": {
+        "home": {
+         "close": {
+          "odds": "+120"
+         }
+        },
+        "away": {
+         "close": {
+          "odds": "-142"
+         }
+        }
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "401900003",
+   "date": "2026-09-28T17:00Z",
+   "competitions": [
+    {
+     "id": "x",
+     "date": "2026-09-28T17:00Z",
+     "competitors": [
+      {
+       "homeAway": "home",
+       "score": "17",
+       "team": {
+        "id": "12",
+        "abbreviation": "KC",
+        "displayName": "Kansas City Chiefs",
+        "shortDisplayName": "Chiefs",
+        "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/kc.png",
+        "color": "e31837"
+       }
+      },
+      {
+       "homeAway": "away",
+       "score": "10",
+       "team": {
+        "id": "7",
+        "abbreviation": "DEN",
+        "displayName": "Denver Broncos",
+        "shortDisplayName": "Broncos",
+        "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/den.png",
+        "color": "0a2343"
+       }
+      }
+     ],
+     "status": {
+      "period": 3,
+      "displayClock": "10:21",
+      "type": {
+       "state": "in",
+       "detail": "10:21 - 3rd",
+       "shortDetail": "10:21 - 3rd"
+      }
+     },
+     "venue": {
+      "fullName": "Test Stadium"
+     },
+     "broadcasts": [
+      {
+       "names": [
+        "CBS"
+       ]
+      }
+     ],
+     "odds": [
+      {
+       "provider": {
+        "name": "DraftKings"
+       },
+       "details": "KC -3",
+       "overUnder": 43.5,
+       "spread": -3,
+       "homeTeamOdds": {
+        "moneyLine": -165
+       },
+       "awayTeamOdds": {
+        "moneyLine": 140
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "401900004",
+   "date": "2026-09-27T00:15Z",
+   "competitions": [
+    {
+     "id": "x",
+     "date": "2026-09-27T00:15Z",
+     "competitors": [
+      {
+       "homeAway": "home",
+       "score": "20",
+       "team": {
+        "id": "6",
+        "abbreviation": "DAL",
+        "displayName": "Dallas Cowboys",
+        "shortDisplayName": "Cowboys",
+        "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/dal.png",
+        "color": "002a5c"
+       }
+      },
+      {
+       "homeAway": "away",
+       "score": "27",
+       "team": {
+        "id": "21",
+        "abbreviation": "PHI",
+        "displayName": "Philadelphia Eagles",
+        "shortDisplayName": "Eagles",
+        "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/phi.png",
+        "color": "06424d"
+       }
+      }
+     ],
+     "status": {
+      "period": 4,
+      "displayClock": "0:00",
+      "type": {
+       "state": "post",
+       "detail": "Final",
+       "shortDetail": "Final"
+      }
+     },
+     "venue": {
+      "fullName": "Test Stadium"
+     },
+     "broadcasts": [
+      {
+       "names": [
+        "CBS"
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "401900099",
+   "date": "2026-09-28T17:00Z",
+   "competitions": [
+    {
+     "id": "x",
+     "competitors": []
+    }
+   ]
+  }
+ ]
+}

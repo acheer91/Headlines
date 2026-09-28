@@ -1,0 +1,3 @@
+# Keep LF everywhere: the shell scripts break with CRLF, and the app runs in Linux containers.
+* text=auto eol=lf
+*.png binary
