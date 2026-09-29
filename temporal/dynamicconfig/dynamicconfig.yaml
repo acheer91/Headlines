@@ -1,0 +1,4 @@
+# Temporal dynamic config: server defaults except workflow IDs up to 255 characters (as in Temporal's example).
+limit.maxIDLength:
+  - value: 255
+    constraints: {}

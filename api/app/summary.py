@@ -12,7 +12,7 @@ import logging
 import re
 from typing import Any, Callable
 
-from .espn import _float, _get, _home_spread, _int, _ml, is_completed
+from .espn import _float, _get, _home_spread, _int, _ml, is_completed, is_postponed
 
 log = logging.getLogger(__name__)
 
@@ -55,6 +55,7 @@ def status(p: dict) -> dict:
         "event_id": str(_get(p, "header", "id") or comp.get("id") or ""),
         "state": state if state in ("pre", "in", "post") else None,
         "completed": is_completed(st),
+        "postponed": is_postponed(st),
         "detail": _get(st, "type", "detail"),
         "short_detail": _get(st, "type", "shortDetail"),
         "period": _int(st.get("period")),

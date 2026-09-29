@@ -80,6 +80,8 @@ class Game:
     completed: bool = False
     # False for a flexed game whose kickoff isn't set: start_time is a placeholder (midnight Eastern).
     time_valid: bool = True
+    # ESPN's status type name is STATUS_POSTPONED: a new date may still come (Phase 3's GameWorkflow waits for it).
+    postponed: bool = False
     warnings: list[str] = field(default_factory=list)
 
 
@@ -202,6 +204,10 @@ def is_completed(status: dict) -> bool:
     return _get(status, "type", "state") == "post" and not _NOT_PLAYED.search(_get(status, "type", "name") or "")
 
 
+def is_postponed(status: dict) -> bool:
+    return (_get(status, "type", "name") or "").upper() == "STATUS_POSTPONED"
+
+
 def parse_scoreboard(payload: dict, league: str) -> tuple[list[Game], list[str]]:
     """Pure function: ESPN scoreboard JSON -> games. Returns (games, errors).
     A game that can't be parsed is skipped and reported, never fatal."""
@@ -251,6 +257,7 @@ def parse_scoreboard(payload: dict, league: str) -> tuple[list[Game], list[str]]
                 season_type=season_type or _int(_get(ev, "season", "type")),
                 completed=is_completed(status),
                 time_valid=comp.get("timeValid") is not False and ev.get("timeValid") is not False,
+                postponed=is_postponed(status),
                 odds=odds,
                 warnings=warnings,
             ))
@@ -460,4 +467,40 @@ def parse_ranks(own_payload: dict | None, opponent_payload: dict | None) -> dict
         r = _first_ranked(sources[src], name)
         if r:
             out[key] = r
+    return out
+
+
+# ---------- news (Phase 3 stores it; Phase 4 writes the Screen A feed from it) ----------
+
+def fetch_news(league: str, *, limit: int = 50, client: httpx.Client | None = None, attempts: int = 2,
+               base_url: str = BASE) -> dict:
+    if league not in LEAGUES:
+        raise ValueError(f"unknown league {league}")
+    return _get_json(f"{base_url}/{LEAGUES[league]['path']}/news", {"limit": str(limit)},
+                     client=client, attempts=attempts, what=f"{league} news")
+
+
+def parse_news(payload: dict) -> list[dict]:
+    """ESPN news JSON -> [{espn_id, headline, description, url, published_at}]. Articles without an id
+    or headline are skipped (the id is the dedupe key)."""
+    out = []
+    for a in payload.get("articles") or []:
+        if not isinstance(a, dict):
+            continue
+        aid, headline = a.get("id"), (a.get("headline") or "").strip()
+        if aid is None or not headline:
+            continue
+        published = None
+        if a.get("published"):
+            try:
+                published = _parse_time(a["published"])
+            except ValueError:
+                published = None
+        out.append({
+            "espn_id": str(aid),
+            "headline": headline,
+            "description": a.get("description"),
+            "url": _get(a, "links", "web", "href"),
+            "published_at": published,
+        })
     return out

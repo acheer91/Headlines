@@ -33,7 +33,76 @@ services:
       - "127.0.0.1:8000:8000"   # localhost only; the phone reaches it through `tailscale serve`
     restart: unless-stopped
 
-  # Phase 3 adds: temporal, temporal-ui, worker
+  # ---------- Phase 3: Temporal (self-hosted, state in this Postgres: databases temporal + temporal_visibility) ----------
+  # Pinned tags, all with linux/arm64 builds (checked with `docker manifest inspect`, 2026-09-28).
+  temporal-admin-tools:
+    image: temporalio/admin-tools:1.32.0
+    environment: &temporal-db
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_SEEDS: db
+      POSTGRES_USER: scores
+      POSTGRES_PWD: ${POSTGRES_PASSWORD:-scores}
+      TEMPORAL_ADDRESS: temporal:7233
+    volumes:
+      - ./temporal/admin-tools.sh:/admin-tools.sh:ro
+    entrypoint: ["/bin/sh", "/admin-tools.sh"]
+    healthcheck:   # healthy once the schemas are set up; the server waits for it
+      test: ["CMD", "test", "-f", "/tmp/schema-ready"]
+      interval: 3s
+      retries: 100
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  temporal:
+    image: temporalio/server:1.32.0
+    environment:
+      <<: *temporal-db
+      BIND_ON_IP: 0.0.0.0
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/dynamicconfig.yaml
+    volumes:
+      - ./temporal/dynamicconfig:/etc/temporal/config/dynamicconfig:ro
+    depends_on:
+      temporal-admin-tools:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:7233:7233"   # localhost only: the temporal CLI and tests on this machine
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "7233"]
+      interval: 5s
+      start_period: 30s
+      retries: 60
+    restart: unless-stopped
+
+  temporal-ui:
+    image: temporalio/ui:2.54.1
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+    depends_on:
+      temporal:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:8080"   # localhost only; other devices reach it with `tailscale serve`
+    restart: unless-stopped
+
+  worker:
+    build: .
+    command: ["python", "-m", "app.temporal.worker"]
+    environment:
+      DATABASE_URL: postgresql://scores:${POSTGRES_PASSWORD:-scores}@db:5432/scores
+      ENABLED_LEAGUES: nfl
+      ESPN_BASE: ${WORKER_ESPN_BASE:-https://site.api.espn.com/apis/site/v2/sports}   # step 3.7 points it at a bad host
+      TEMPORAL_ADDRESS: temporal:7233
+    depends_on:
+      db:
+        condition: service_healthy
+      temporal:
+        condition: service_healthy
+      api:
+        condition: service_started   # the api applies migrations at startup
+    restart: unless-stopped
 
 volumes:
   pgdata:

@@ -3,15 +3,64 @@
 Personal, pull-based scores app (ESPN-app replacement). Full PRD: "Scores App — Mini PRD".
 This file is the working brief for Claude Code. Keep it current as phases land.
 
-## Current phase: 2 — Game screens and bet grading (built 2026-09-27; Sunday checks pending)
+## Current phase: 3 — Temporal (built on branch `phase-3` 2026-09-28, laptop only; not deployed)
+Scope: scheduled work off the pull path. ScheduleSync (daily 6:00 AM PT) starts one GameWorkflow per NFL game not yet
+final; GameWorkflow saves the line, runs the (empty) preview step, waits for kickoff, polls for the final, grades, and
+regrades once 24 h later; Headlines (7:00 AM and 5:00 PM PT) stores ESPN news in `news_items`, no AI. Handoff: "Scores
+App — Phase 3 Handoff". Status: `validate_phase3.sh` 23/23 on the laptop (2026-09-28), 156 tests; 3.9 API side passed. Still to do: 3.9 in the app, 3.10 (unattended
+weekend), 3.12 on a real deploy, real game histories as replay fixtures, server resize + deploy (Adam's call).
+
+### Temporal
+- **Containers:** `temporal` (server 1.32.0, :7233 localhost), `temporal-admin-tools` (1.32.0: sets up the `temporal`
+  and `temporal_visibility` databases in our Postgres on every start, creates namespace `default` with 30-day
+  retention, then stays up for the CLI), `temporal-ui` (2.54.1, :8080 localhost; `tailscale serve` for other devices),
+  `worker` (same image as the api, `python -m app.temporal.worker`, task queue `scores`). All tags have arm64 builds.
+  After first boot: `docker compose exec worker python -m app.temporal.schedules` (safe to rerun).
+- **Code** in `api/app/temporal/`: `models.py` (dataclasses only), `activities.py` (sync, wrap Phase 1/2 code),
+  `workflows.py` (decide and wait only), `starter.py` (signal-with-start activity), `worker.py`, `schedules.py`.
+- **Workflows decide, activities do.** No clock, random, network, DB, env, files or zoneinfo in `workflows.py`;
+  times travel as UTC ISO strings; Pacific-time math (the 8 AM preview) happens in `sync_schedule`.
+- **Every activity is idempotent** (upserts; snapshots only on a line change; news dedupes on ESPN's id).
+- **Workflow IDs** `<league>-<espn_id>`, reuse policy "allow duplicate failed only": a completed game is never
+  reopened; a failed or terminated one is restarted by the next ScheduleSync.
+- **Retries:** ESPN activities 30 s per try, 10 s doubling to 10 min, give up after 6 h (the workflow then skips that
+  step, never fails); `grade_game` 5 tries, then the workflow fails (visible in the UI); preview none.
+- **Reschedule signal** `Times(start_iso, preview_iso)`: ScheduleSync sends the current times daily; identical times
+  change nothing. A bad or offset-less time is logged and ignored. A kickoff ESPN moves later is also picked up by
+  the status poll.
+- **Closed as** `graded [h, a]` (plus `regraded ...` after a stat correction), `not played (canceled)`,
+  `unresolved: never went final` (7 days of polling) or `unresolved: postponed, no new date in 14 days`. An unresolved
+  game completes, so it is not restarted; the pull path still grades it.
+- **Snapshots are tagged** `odds_snapshots.source`: `pull` (the app) or `workflow` (the worker).
+- **The app never depends on Temporal.** The pull path still refreshes and grades with Temporal stopped.
+- **Workflow changes are versioned.** Once games are running, wrap any change to workflow logic in
+  `workflow.patched("<name>")` and run `tests/test_replay.py` (replays `tests/fixtures/histories/`); deploy Tuesday or
+  Wednesday. Activity code can change any time (restart the worker).
+- **Tests:** `tests/test_workflows.py` uses the time-skipping test server (x86 only: run on the laptop, not the ARM
+  server); `tests/test_activities.py` needs TEST_DATABASE_URL.
+
+### Runbook (`docker compose exec temporal-admin-tools temporal ...`)
+- Running games: `workflow list --query "WorkflowType='GameWorkflow' AND ExecutionStatus='Running'"`
+- One game: `workflow show -w nfl-<espn_id>` (or the UI)
+- ScheduleSync now: `schedule trigger --schedule-id schedule-sync`
+- Kickoff changed, sync hasn't run: `workflow signal -w nfl-<espn_id> --name reschedule --input '{"start_iso": "2026-10-04T20:25:00+00:00"}'`
+  (UTC with offset; preview_iso optional, default keeps the same lead)
+- Stuck after a bug fix: `workflow reset -w nfl-<espn_id> --type LastWorkflowTask`
+- Beyond saving: `workflow terminate -w nfl-<espn_id> --reason ...`, then trigger ScheduleSync (starts a fresh one)
+- Failures: UI filter `ExecutionStatus='Failed'`, every Monday after the weekend
+- Save a real history for the replay test: `workflow show -w nfl-<espn_id> -o json > api/tests/fixtures/histories/<name>.json`
+
+## Phase 2 — Game screens and bet grading (built 2026-09-27; Sunday checks passed 2026-09-28)
 Scope: C1 pre-game, C2 live, D post-game from the ESPN game summary; ML / spread / O/U grading; summary cache.
 Out of scope: AI text (spots ship as "Coming in Phase 4" placeholders), Temporal, other leagues.
 Status: `validate_phase2.sh` 14/14, 124 tests. Self-review fixed 10 issues; an independent review found 10 more, its
 re-check found a regression + 5 small items; all fixed and verified by the reviewer (verdict: ready apart from 2.10/2.11).
 Known residual (accepted): if ESPN drops the event list AND the season/week fields in one change, the board is served as
 fresh with stored cards (needs two simultaneous format changes). Bug bash (2026-09-27) fixed 8 issues across Phases 1 and 2. Steps 2.4-2.6 checked against espn.com on 2026-09-27
-(3 upcoming, a live game at halftime, 3 finals). Still to do on a real Sunday: 2.10 (one game
-C1 -> C2 -> D on pulls) and 2.11 on the phone; 2.7's table is for Adam to hand-check.
+(3 upcoming, a live game at halftime, 3 finals). 2.10 passed on PHI @ CHI 2026-09-28 (C1 -> C2 -> D on pulls, all
+bets graded right by hand on ESPN's close, plus LAR @ DEN; report in `phase2_check_PHI-CHI.md`) and 2.11 passed on the
+phone. Still open: Adam's hand check of 2.7's table and the 4 "Decisions to confirm" in the Phase 2 handoff.
+Server shape since 2026-09-28: A1.Flex 2 OCPU / 4 GB + 2 GB swap (~0.6 GB used before Temporal).
 
 Phase 1 (NFL scoreboard) done 2026-09-27: installed on the phone via `tailscale serve --bg 8000`
 at https://technologic.tailca897c.ts.net (tailnet only).
@@ -27,14 +76,14 @@ write-only pre-authenticated request in `~/.backup_url` (mode 600, never in the 
 make a new one before then. Log: `~/backup.log`. Restore (tested 2026-09-28): the PAR can't read, so download with
 `~/.local/oci-cli/bin/oci os object get --auth instance_principal --bucket-name scores-backups --name <file> --file <file>`,
 then `gunzip -c <file> | docker exec -i <empty postgres:16 container> psql -U postgres` and check `select count(*) from games`.
-OS security updates install daily (Ubuntu unattended-upgrades). The laptop copy is retired (`docker compose down`).
+OS security updates install daily (Ubuntu unattended-upgrades). The laptop stack runs again for Phase 3 testing (its own data).
 
 ## Stack
 - `api/` FastAPI + psycopg 3, plain SQL (no ORM). Python 3.12.
 - `web/` React 18 + Vite + vite-plugin-pwa, TypeScript. Built into `web/dist` and served by the API (one origin).
 - `db/migrations/` plain SQL, applied only by the API at startup (`app/migrate.py`, tracked in
   `schema_migrations`). Every file must be idempotent: `tests/test_migrations.py` applies each twice.
-- `docker-compose.yml` db + api. Phase 3 adds temporal, temporal-ui, worker.
+- `docker-compose.yml` db + api, plus Phase 3's temporal, temporal-admin-tools, temporal-ui, worker.
 
 ## Rules
 - **Pull model.** Data refreshes only when the user pulls or opens the app. No polling timers in the web app.
@@ -104,6 +153,8 @@ OS security updates install daily (Ubuntu unattended-upgrades). The laptop copy 
 docker compose up -d --build            # full stack on :8000 (applies new migrations at startup)
 ./scripts/validate_phase1.sh            # Phase 1 automated checks
 ./scripts/validate_phase2.sh            # Phase 2 automated checks (includes the full test suite in the container)
+./scripts/validate_phase3.sh            # Phase 3 automated checks (~25 min; SKIP_SLOW=1 skips 3.7/3.8)
+docker compose exec worker python -m app.temporal.schedules [--show]  # create/update (or print) the schedules
 docker compose exec api python -m app.check_espn [--week N]        # live scoreboard parse check
 docker compose exec api python -m app.check_summary [--event ID]   # live summary blocks, one game per state
 docker compose exec api python -m app.grade_week --week N [--season-type 3]   # grade a week, print a hand-check table
@@ -132,19 +183,21 @@ api/app/migrate.py        applies db/migrations at startup
 api/app/check_espn.py     validation CLI (scoreboard)
 api/app/check_summary.py  validation CLI (summary, step 2.1)
 api/app/grade_week.py     grade a week, print the hand-check table (step 2.7)
+api/app/temporal/         Phase 3: models, activities, workflows, starter, worker, schedules
 api/tests/                parser, summary, grading and cache-rule tests (fixtures: real ESPN payloads), API tests
                           (real Postgres), static-serving tests (need web/dist)
 db/migrations/            001_init.sql (Phase 1), 002_game_details.sql (game_summaries, bet_results),
                           003_season_type_and_status.sql (season_type, completed, time_valid),
-                          004_team_season_stats.sql (per-team cache: ranks + INTs leader)
+                          004_team_season_stats.sql (per-team cache: ranks + INTs leader),
+                          005_temporal.sql (odds_snapshots.source, news_items)
+temporal/                 admin-tools entrypoint (schema setup + namespace), dynamic config
 docs/                     espn_summary_fields.md (field map)
 web/src/                  Scoreboard.tsx (B), GamePage.tsx (C1 / C2 / D), GameCard.tsx, usePull.tsx (pull to refresh),
                           lastSeen.ts (instant paint from the last response)
 ```
 
 ## Next phases (don't start without Adam's go-ahead)
-3. Temporal: ScheduleSync, GameWorkflow (one per game, ID = league + ESPN id; saves the line early, grades on final), Headlines.
-   Also move the nightly backup (`scripts/backup.sh`, now cron) into Temporal for retries and visibility (Adam, 2026-09-28).
+3. (Built, see above.) Not in the Phase 3 handoff, still to do: move the nightly backup (`scripts/backup.sh`, now cron) into Temporal for retries and visibility (Adam, 2026-09-28).
    Until then a failed backup alerts no one: glance at `~/backup.log` and the bucket on the server once a week.
 4. AI text (Claude Haiku-class): extract facts, then write in house voice. 8-day article rule is hard.
 5. NCAAF (major conferences + Notre Dame, no FCS, plus favorites), NBA, EPL, MLS (scores only).

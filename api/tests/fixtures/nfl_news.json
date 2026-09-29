@@ -1,0 +1,131 @@
+{
+ "articles": [
+  {
+   "id": 50056420,
+   "nowId": "1-50056420",
+   "contentKey": "50056420-1-293-1",
+   "dataSourceIdentifier": "36b7456c013f1",
+   "type": "Media",
+   "headline": "Case Keenum scores 3 TDs to lead Bears over Eagles on MNF",
+   "description": "Case Keenum scores 3 TDs to lead Bears over Eagles on MNF",
+   "lastModified": "2026-09-29T03:19:08Z",
+   "published": "2026-09-29T03:19:08Z",
+   "links": {
+    "api": {
+     "artwork": {
+      "href": "https://artwork.api.espn.com/artwork/collections/media/fb21c37a-b47c-4ab5-8252-44bd3bc822fb"
+     },
+     "self": {
+      "href": "https://content.core.api.espn.com/v1/video/clips/50056420"
+     }
+    },
+    "sportscenter": {
+     "href": "sportscenter://x-callback-url/showVideo?videoID=50056420&videoDSI=36b7456c013f1"
+    },
+    "web": {
+     "href": "https://www.espn.com/video/clip/_/id/50056420/case-keenum-scores-3-tds-lead-bears-eagles-mnf",
+     "self": {
+      "href": "https://www.espn.com/video/clip/_/id/50056420/case-keenum-scores-3-tds-lead-bears-eagles-mnf",
+      "dsi": {
+       "href": "https://www.espn.com/video/clip?id=36b7456c013f1"
+      }
+     }
+    }
+   },
+   "premium": false
+  },
+  {
+   "id": 50055728,
+   "nowId": "1-50055728",
+   "contentKey": "50055728-1-5-1",
+   "dataSourceIdentifier": "ae4766bfd583b",
+   "type": "HeadlineNews",
+   "headline": "Seahawks' Mike Macdonald says team still believes in RB Jadarian Price",
+   "description": "Seahawks coach Mike Macdonald said the team has not lost faith in starting running back Jadarian Price after the rookie first-round pick lost a fumble for the second week in a row Sunday.",
+   "lastModified": "2026-09-29T03:15:18Z",
+   "published": "2026-09-29T03:15:18Z",
+   "byline": "Brady Henderson",
+   "links": {
+    "api": {
+     "self": {
+      "href": "https://content.core.api.espn.com/v1/sports/news/50055728"
+     }
+    },
+    "app": {
+     "sportscenter": {
+      "href": "sportscenter://x-callback-url/showStory?uid=50055728"
+     }
+    },
+    "mobile": {
+     "href": "http://m.espn.go.com/nfl/story?storyId=50055728"
+    },
+    "web": {
+     "href": "https://www.espn.com/nfl/story/_/id/50055728/seahawks-mike-macdonald-says-team-believes-rb-jadarian-price"
+    }
+   },
+   "premium": false
+  },
+  {
+   "id": 50055561,
+   "nowId": "1-50055561",
+   "contentKey": "50055561-1-6-1",
+   "dataSourceIdentifier": "c1064c333efc0",
+   "type": "Story",
+   "headline": "QB3 Case Keenum, Bears defense shock Eagles in MNF rout",
+   "description": "Keenum stepped up big in a pressure situation and combined with a defensive gem to lead the Bears past the Eagles.",
+   "lastModified": "2026-09-29T03:20:04Z",
+   "published": "2026-09-29T03:20:04Z",
+   "byline": "Courtney Cronin and Tim McManus",
+   "links": {
+    "api": {
+     "self": {
+      "href": "https://content.core.api.espn.com/v1/sports/news/50055561"
+     }
+    },
+    "app": {
+     "sportscenter": {
+      "href": "sportscenter://x-callback-url/showStory?uid=50055561"
+     }
+    },
+    "mobile": {
+     "href": "http://m.espn.go.com/nfl/story?storyId=50055561"
+    },
+    "web": {
+     "href": "https://www.espn.com/nfl/story/_/id/50055561/nfl-chicago-bears-philadelphia-eagles-monday-night-football-case-keenum"
+    }
+   },
+   "premium": false
+  },
+  {
+   "id": 50055525,
+   "nowId": "1-50055525",
+   "contentKey": "50055525-1-5-1",
+   "dataSourceIdentifier": "2013002fa5483",
+   "type": "HeadlineNews",
+   "headline": "McVay, Rams won't make excuses after pass interference call",
+   "description": "A day after his team's 30-26 loss to the Denver Broncos, Los Angeles coach Sean McVay said the 1-2 Rams will not \"play the victim card\" because of a debatable defensive pass interference late on cornerback Josh Wallace.",
+   "lastModified": "2026-09-29T01:51:13Z",
+   "published": "2026-09-29T01:51:13Z",
+   "byline": "Sarah Barshop",
+   "links": {
+    "api": {
+     "self": {
+      "href": "https://content.core.api.espn.com/v1/sports/news/50055525"
+     }
+    },
+    "app": {
+     "sportscenter": {
+      "href": "sportscenter://x-callback-url/showStory?uid=50055525"
+     }
+    },
+    "mobile": {
+     "href": "http://m.espn.go.com/nfl/story?storyId=50055525"
+    },
+    "web": {
+     "href": "https://www.espn.com/nfl/story/_/id/50055525/mcvay-rams-make-excuses-pass-interference-call"
+    }
+   },
+   "premium": false
+  }
+ ]
+}
