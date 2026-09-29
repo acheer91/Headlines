@@ -40,12 +40,12 @@ NO_RETRY = dict(start_to_close_timeout=timedelta(seconds=30), retry_policy=Retry
 LINE_EVERY = timedelta(days=1)            # save the line on first sight, then daily ...
 LAST_LINE_BEFORE = timedelta(minutes=30)  # ... and a last time 30 minutes before kickoff
 PREVIEW_LEAD = timedelta(hours=1)         # an early kickoff (London, 6:30 AM PT) moves the 8 AM preview ahead of it
-WATCH_EVERY = timedelta(minutes=15)       # status polls after kickoff ...
+WATCH_EVERY = timedelta(minutes=2.5)      # status polls after kickoff (Adam, 2026-09-28: cheap, so often) ...
 WATCH_SLOW_AFTER = timedelta(hours=8)     # ... hourly after 8 hours ...
 WATCH_SLOW_EVERY = timedelta(hours=1)
 WATCH_GIVE_UP = timedelta(days=7)         # ... and closed as unresolved after 7 days
 POSTPONED_WAIT = timedelta(days=14)       # a postponed game waits this long for a new date
-REGRADE_AFTER = timedelta(hours=24)       # stat corrections
+REGRADE_AFTER = timedelta(hours=1)        # late score corrections (Adam, 2026-09-28: 1 hour is enough)
 
 
 def _dt(iso: str) -> datetime:
@@ -55,7 +55,7 @@ def _dt(iso: str) -> datetime:
 @workflow.defn
 class GameWorkflow:
     """One per game (ID <league>-<espn_id>): saves the line, runs the preview step, waits for kickoff,
-    watches for the final, grades, and regrades once 24 hours later."""
+    watches for the final, grades, and regrades once an hour later."""
 
     @workflow.init
     def __init__(self, inp: GameInput) -> None:

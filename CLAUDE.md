@@ -5,8 +5,8 @@ This file is the working brief for Claude Code. Keep it current as phases land.
 
 ## Current phase: 3 — Temporal (built on branch `phase-3` 2026-09-28, laptop only; not deployed)
 Scope: scheduled work off the pull path. ScheduleSync (daily 6:00 AM PT) starts one GameWorkflow per NFL game not yet
-final; GameWorkflow saves the line, runs the (empty) preview step, waits for kickoff, polls for the final, grades, and
-regrades once 24 h later; Headlines (7:00 AM and 5:00 PM PT) stores ESPN news in `news_items`, no AI. Handoff: "Scores
+final; GameWorkflow saves the line, runs the (empty) preview step, waits for kickoff, polls for the final every 2.5 min (Adam), grades, and
+regrades once 1 h later (Adam); Headlines (7:00 AM and 5:00 PM PT) stores ESPN news in `news_items`, no AI. Handoff: "Scores
 App — Phase 3 Handoff". Status: `validate_phase3.sh` 23/23 on the laptop (2026-09-28), 156 tests; 3.9 API side passed. Still to do: 3.9 in the app, 3.10 (unattended
 weekend), 3.12 on a real deploy, real game histories as replay fixtures, server resize + deploy (Adam's call).
 

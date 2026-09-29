@@ -144,12 +144,12 @@ async def test_full_game_lifecycle(env):
     # Preview once, on game morning, before kickoff.
     [preview] = fake.times("generate_preview")
     assert close(preview, start - timedelta(hours=5))
-    # Status polls from kickoff, every 15 minutes.
+    # Status polls from kickoff, every 2.5 minutes.
     polls = fake.times("fetch_game_state")
-    assert close(polls[0], start) and close(polls[1], start + timedelta(minutes=15)) and len(polls) == 3
-    # Graded on final, then regraded 24 hours later after the score changed.
+    assert close(polls[0], start) and close(polls[1], start + timedelta(minutes=2.5)) and len(polls) == 3
+    # Graded on final, then regraded an hour later after the score changed.
     grades = fake.times("grade_game")
-    assert len(grades) == 2 and grades[1] - grades[0] >= timedelta(hours=24)
+    assert len(grades) == 2 and close(grades[1], grades[0] + timedelta(hours=1))
     assert len(fake.times("fetch_summary")) == 2
     assert result == "graded [24, 17], regraded [24, 20] after a stat correction"
 
@@ -257,10 +257,10 @@ async def test_game_never_going_final(env):
     polls = fake.times("fetch_game_state")
     # Each poll adds a few real milliseconds, so allow a minute of drift over the week.
     assert abs(polls[-1] - polls[0] - timedelta(days=7)) < timedelta(minutes=1)
-    # 15-minute polls for the first 8 hours (33 polls), hourly after (160 more).
-    assert close(polls[1], polls[0] + timedelta(minutes=15))
+    # 2.5-minute polls for the first 8 hours (193 polls), hourly after (160 more).
+    assert close(polls[1], polls[0] + timedelta(minutes=2.5))
     assert close(polls[-1], polls[-2] + timedelta(hours=1))
-    assert len(polls) == 193
+    assert len(polls) == 353
 
 
 async def test_delayed_kickoff_goes_back_to_waiting(env):
