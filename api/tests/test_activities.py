@@ -30,6 +30,8 @@ def acts(monkeypatch):
         conn.commit()
     migrate.migrate(TEST_DB)
     monkeypatch.setattr(db, "DATABASE_URL", TEST_DB)
+    monkeypatch.setattr(activities, "BOARD_CACHE_SECONDS", 0.0)   # each call fetches; see the cache test
+    activities._boards.clear()
 
     boards = {}                                   # (week, season_type) -> payload; default: the fixture
     calls = {"boards": [], "boards_map": boards, "summaries": default_summaries(), "news": NEWS}
@@ -186,3 +188,17 @@ def test_fetch_news_dedupes(acts):
 def test_generate_preview_is_a_no_op(acts):
     from app.temporal import activities as a
     assert acts(a.generate_preview, "nfl", "401900001") is None
+
+
+def test_concurrent_polls_share_one_scoreboard_fetch(acts, monkeypatch):
+    from app.temporal import activities as a
+    acts(a.sync_schedule, "nfl")
+    monkeypatch.setattr(a, "BOARD_CACHE_SECONDS", 60.0)
+    before = len(acts.calls["boards"])
+    for eid in ("401900001", "401900002", "401900003", "401900004"):
+        acts(a.fetch_game_state, "nfl", eid)
+    acts(a.save_line, "nfl", "401900001")
+    assert len(acts.calls["boards"]) == before + 1          # one ESPN call for five activities
+    monkeypatch.setattr(a, "BOARD_CACHE_SECONDS", 0.0)
+    acts(a.fetch_game_state, "nfl", "401900003")
+    assert len(acts.calls["boards"]) == before + 2          # expired: fetches again
