@@ -10,8 +10,9 @@ AI text, neutral-site labels (stored, not shown). Bowls/Playoff plumbing is buil
 bowl games are confirmed with the handoff's December checklist by Dec 12.
 - **Board filter** lives in `api/app/ncaaf.py` (`is_featured`); the API (`/api/scoreboard/ncaaf`) and the worker
   (`sync_schedule`) both call it, so the board and the workflows always agree. A game shows when either team is SEC,
-  Big Ten, Big 12, ACC or Pac-12 (ESPN conferenceId 8, 5, 4, 1, 9) or Notre Dame (team 87), and neither team is FCS
-  (a conference outside `FBS_CONFERENCES`). Favorites always show. A missing conference hides the game and the parser
+  Big Ten, Big 12, ACC or Pac-12 (ESPN conferenceId 8, 5, 4, 1, 9), is ranked 1-25 (PRD, added 2026-09-29), or is
+  Notre Dame (team 87), and neither team is FCS (a conference outside `FBS_CONFERENCES`): a ranked team vs an FCS
+  opponent still hides. Favorites always show. A missing conference hides the game and the parser
   warns "no conference". Every FBS game is still stored; the filter only decides what shows and what gets a workflow.
 - **Conference, rank and neutral site are stored per game** (`games.home_conf` ... `neutral_site`, migration 006).
   ESPN's rank 99 = unranked, stored as NULL. A completed game's rank is frozen (next week's poll never relabels it).

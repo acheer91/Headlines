@@ -37,6 +37,18 @@ def _as_pregame(payload: dict) -> dict:
     return p
 
 
+RANKED_MID = "401862779"   # TEM (American) vs ARMY (American), both unranked in the fixture
+
+
+def _with_mid_major_rank(payload: dict, rank: int) -> dict:
+    """The payload with TEM (home, 401862779) given ESPN's curatedRank.current = rank (99 = unranked)."""
+    p = copy.deepcopy(payload)
+    ev = next(e for e in p["events"] if e["id"] == RANKED_MID)
+    home = next(c for c in ev["competitions"][0]["competitors"] if c["homeAway"] == "home")
+    home["curatedRank"] = {"current": rank}
+    return p
+
+
 def _hidden_game(games):
     """A game the rules leave off the board (an FCS opponent), for the favorites tests."""
     return next(g for g in games if not ncaaf.is_featured_game(g, set())
@@ -61,6 +73,21 @@ def _hidden_game(games):
 ])
 def test_is_featured(home_id, away_id, home_abbr, away_abbr, home_conf, away_conf, favs, shows):
     assert ncaaf.is_featured(home_id, away_id, home_abbr, away_abbr, home_conf, away_conf, favs) is shows
+
+
+AMERICAN, MOUNTAIN_WEST = 151, 17
+
+
+@pytest.mark.parametrize("home_conf,away_conf,home_rank,away_rank,shows", [
+    (AMERICAN, SUN_BELT, 18, None, True),          # a ranked mid-major shows (PRD, Sep 29)
+    (MAC, MOUNTAIN_WEST, None, 24, True),          # ... either side
+    (AMERICAN, FCS, 18, None, False),              # a ranked team vs FCS still hides
+    (MAC, SUN_BELT, None, None, False),            # two unranked mid-majors
+    (None, SEC, 10, None, False),                  # a missing conference hides, ranked or not
+])
+def test_is_featured_ranked(home_conf, away_conf, home_rank, away_rank, shows):
+    assert ncaaf.is_featured("1", "2", "HOME", "AWAY", home_conf, away_conf, set(),
+                             home_rank=home_rank, away_rank=away_rank) is shows
 
 
 # ---------------- parser on real ESPN data ----------------
@@ -188,6 +215,18 @@ def test_rank_frozen_once_a_game_is_final(ncaaf_client):
 
 
 @needs_db
+def test_ranked_mid_major_on_the_board_unranked_hidden(ncaaf_client):
+    # Pre-game, so the rank isn't frozen and the forced refresh can take it away again.
+    ncaaf_client.calls["payload"] = _with_mid_major_rank(_as_pregame(NCAAF), 18)
+    body = ncaaf_client.get("/api/scoreboard/ncaaf").json()
+    tem = [c for c in body["games"] if c["home"]["abbr"] == "TEM"]
+    assert len(tem) == 1 and tem[0]["home"]["rank"] == 18 and tem[0]["away"]["rank"] is None
+    ncaaf_client.calls["payload"] = _with_mid_major_rank(_as_pregame(NCAAF), 99)
+    body = ncaaf_client.get("/api/scoreboard/ncaaf?force=true").json()
+    assert "TEM" not in {c["home"]["abbr"] for c in body["games"]}
+
+
+@needs_db
 def test_season_type_is_part_of_the_cache_key(ncaaf_client):
     ncaaf_client.calls["payload"] = copy.deepcopy(NFL)
     assert ncaaf_client.get("/api/scoreboard/nfl?season_type=1&week=2").status_code == 200
@@ -244,6 +283,14 @@ def test_sync_schedule_starts_workflows_only_for_board_games(ncaaf_acts):
     ncaaf_acts.favorites({"ncaaf": [hidden.away.abbr]})
     refs = ncaaf_acts(a.sync_schedule, "ncaaf")
     assert {r.espn_id for r in refs} == featured | {hidden.espn_id}
+
+
+@needs_db
+def test_sync_schedule_includes_a_ranked_mid_major(ncaaf_acts):
+    from app.temporal import activities as a
+    assert RANKED_MID not in {r.espn_id for r in ncaaf_acts(a.sync_schedule, "ncaaf")}
+    ncaaf_acts.calls["boards_map"][(None, None)] = _with_mid_major_rank(_as_pregame(NCAAF), 18)
+    assert RANKED_MID in {r.espn_id for r in ncaaf_acts(a.sync_schedule, "ncaaf")}
 
 
 @needs_db
