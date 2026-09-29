@@ -78,9 +78,11 @@ _BACKWARDS = ("((games.completed IS TRUE AND EXCLUDED.state <> 'post')"
               " OR (games.state = 'in' AND EXCLUDED.state = 'pre'))")
 
 
-def save_games(conn: psycopg.Connection, games: list[Game], source: str = "espn") -> list[tuple[int, str]]:
+def save_games(conn: psycopg.Connection, games: list[Game], source: str = "espn",
+               snapshot_source: str = "pull") -> list[tuple[int, str]]:
     """Upsert games and teams. Adds an odds snapshot only when the line changed,
-    so a 30-second refresh cadence doesn't write a row per pull. Returns (game id, stored state) per game."""
+    so a 30-second refresh cadence doesn't write a row per pull. Returns (game id, stored state) per game.
+    snapshot_source tags new odds snapshots: 'pull' (the app) or 'workflow' (the Temporal worker)."""
     saved: list[tuple[int, str]] = []
     with conn.cursor() as cur:
         for g in games:
@@ -143,10 +145,10 @@ def save_games(conn: psycopg.Connection, games: list[Game], source: str = "espn"
                     cur.execute(
                         """
                         INSERT INTO odds_snapshots (game_id, game_state, provider, details,
-                                                    home_spread, total, home_ml, away_ml)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                                                    home_spread, total, home_ml, away_ml, source)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
                         """,
-                        (game_id, g.state, *new),
+                        (game_id, g.state, *new, snapshot_source),
                     )
     conn.commit()
     return saved
@@ -210,6 +212,10 @@ def games_for_week(conn: psycopg.Connection, league: str, season: int, week: int
 
 def game_by_id(conn: psycopg.Connection, game_id: int) -> dict | None:
     return conn.execute(_GAMES_SQL + " WHERE g.id = %s", (game_id,)).fetchone()
+
+
+def game_by_espn_id(conn: psycopg.Connection, league: str, espn_id: str) -> dict | None:
+    return conn.execute(_GAMES_SQL + " WHERE g.league = %s AND g.espn_id = %s", (league, espn_id)).fetchone()
 
 
 # ---------- Phase 2: game summaries and bet results ----------
@@ -352,3 +358,19 @@ def completed_game_stats(conn: psycopg.Connection, league: str, season: int, sea
            WHERE league = %s AND season = %s AND season_type = %s AND completed""",
         (league, season, season_type)).fetchone()
     return r["n"], r["latest"]
+
+
+# ---------- Phase 3: news ----------
+
+def insert_news(conn: psycopg.Connection, league: str, items: list[dict]) -> int:
+    """Store news items not seen before (dedupe on ESPN's article id). Returns how many were new."""
+    added = 0
+    for it in items:
+        cur = conn.execute(
+            """INSERT INTO news_items (league, espn_id, headline, description, url, published_at)
+               VALUES (%s, %s, %s, %s, %s, %s)
+               ON CONFLICT (league, espn_id) DO NOTHING""",
+            (league, it["espn_id"], it["headline"], it.get("description"), it.get("url"), it.get("published_at")))
+        added += cur.rowcount
+    conn.commit()
+    return added
