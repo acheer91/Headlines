@@ -21,7 +21,7 @@ services:
     build: .
     environment:
       DATABASE_URL: postgresql://scores:${POSTGRES_PASSWORD:-scores}@db:5432/scores
-      ENABLED_LEAGUES: nfl
+      ENABLED_LEAGUES: nfl,ncaaf
       CACHE_SECONDS: ${CACHE_SECONDS:-30}
       ESPN_BASE: ${ESPN_BASE:-https://site.api.espn.com/apis/site/v2/sports}
     volumes:
@@ -92,9 +92,11 @@ services:
     command: ["python", "-m", "app.temporal.worker"]
     environment:
       DATABASE_URL: postgresql://scores:${POSTGRES_PASSWORD:-scores}@db:5432/scores
-      ENABLED_LEAGUES: nfl
+      ENABLED_LEAGUES: nfl,ncaaf
       ESPN_BASE: ${WORKER_ESPN_BASE:-https://site.api.espn.com/apis/site/v2/sports}   # step 3.7 points it at a bad host
       TEMPORAL_ADDRESS: temporal:7233
+    volumes:
+      - ./config:/srv/config:ro   # favorites: sync_schedule reads them on every run (no rebuild after an edit)
     depends_on:
       db:
         condition: service_healthy

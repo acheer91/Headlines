@@ -18,13 +18,16 @@ export function Scoreboard() {
   const { league = "nfl" } = useParams();
   const nav = useNavigate();
   const [data, setData] = useState<SB | null>(null);
-  // The browsed week lives in the URL (?week=2), so opening a game and coming back keeps it.
+  // The browsed stage lives in the URL (?st=3&week=1), so opening a game and coming back keeps it.
+  // Preseason, regular season and postseason each start at week 1, so the season type is part of it.
   const [params, setParams] = useSearchParams();
   const week = Number(params.get("week")) || undefined;
-  const setWeek = (w: number) => setParams({ week: String(w) }, { replace: true });
+  const st = Number(params.get("st")) || undefined;
+  const go = (s: { season_type: number; week: number }) =>
+    setParams({ st: String(s.season_type), week: String(s.week) }, { replace: true });
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const key = `sb:${league}:${week ?? "current"}`;
+  const key = `sb:${league}:${st ?? "cur"}:${week ?? "current"}`;
   // Which board is on screen right now, and which one is being fetched. Opening the app can ask
   // twice for the same board (mount + foreground): skip the repeat. Switching weeks mid-load must
   // still fetch the new week, and a late answer for a week you've left must not overwrite the screen.
@@ -39,7 +42,7 @@ export function Scoreboard() {
       setLoading(true);
       setErr(null);
       try {
-        const fresh = await getScoreboard(league, week, force);
+        const fresh = await getScoreboard(league, week, st, force);
         remember(key, fresh);
         if (shownKey.current === key) setData(fresh);
       } catch (e) {
@@ -51,7 +54,7 @@ export function Scoreboard() {
         }
       }
     },
-    [league, week, key],
+    [league, week, st, key],
   );
 
   // Paint the last scoreboard we showed right away, then pull fresh data over it.
@@ -62,7 +65,10 @@ export function Scoreboard() {
 
   const { handlers, indicator } = usePull(load, loading);
 
-  const shownWeek = week ?? data?.week ?? undefined;
+  // Prev and Next walk ESPN's season calendar (weeks, then e.g. Bowls and CFP), across season types.
+  const cal = data?.calendar ?? [];
+  const i = cal.findIndex((s) => s.season_type === (st ?? data?.season_type) && s.week === (week ?? data?.week));
+  const label = i >= 0 ? cal[i].label : `Week ${week ?? data?.week ?? "–"}`;
   const updated = data?.updated_at ? updatedAt(data.updated_at) : null;
 
   return (
@@ -71,11 +77,11 @@ export function Scoreboard() {
       <header className="top">
         <h1>{league.toUpperCase()}</h1>
         <div className="week">
-          <button aria-label="Previous week" disabled={!shownWeek || shownWeek <= 1} onClick={() => setWeek((shownWeek ?? 2) - 1)}>
+          <button aria-label="Previous week" disabled={i <= 0} onClick={() => go(cal[i - 1])}>
             ‹
           </button>
-          <span>Week {shownWeek ?? "–"}</span>
-          <button aria-label="Next week" disabled={!shownWeek || shownWeek >= 18} onClick={() => setWeek((shownWeek ?? 0) + 1)}>
+          <span>{label}</span>
+          <button aria-label="Next week" disabled={i < 0 || i >= cal.length - 1} onClick={() => go(cal[i + 1])}>
             ›
           </button>
         </div>

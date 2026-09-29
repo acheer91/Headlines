@@ -1,4 +1,4 @@
-"""FastAPI app: NFL scoreboard (Screen B) and game pages (C1 pre-game, C2 live, D post-game).
+"""FastAPI app: NFL and NCAAF scoreboards (Screen B) and game pages (C1 pre-game, C2 live, D post-game).
 
 Pull model: a scoreboard request refreshes from ESPN only if our last good fetch is older
 than CACHE_SECONDS; otherwise it serves Postgres. If ESPN fails, it serves the last stored
@@ -6,7 +6,6 @@ data with stale=true, so the scoreboard never goes blank because a feed hiccuppe
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -18,7 +17,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import db, espn, games, migrate
+from . import db, espn, favorites, games, migrate, ncaaf
 
 CACHE_SECONDS = int(os.environ.get("CACHE_SECONDS", "30"))
 ENABLED_LEAGUES = [x.strip() for x in os.environ.get("ENABLED_LEAGUES", "nfl").split(",") if x.strip()]
@@ -48,11 +47,7 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 
 def _favorites() -> dict[str, list[str]]:
-    try:
-        data = json.loads(FAVORITES_FILE.read_text())
-        return {k: [a.upper() for a in v] for k, v in data.items() if isinstance(v, list)}
-    except (OSError, ValueError):
-        return {}
+    return favorites.load(FAVORITES_FILE)
 
 
 def _age_seconds(ts: datetime | None) -> float | None:
@@ -61,10 +56,10 @@ def _age_seconds(ts: datetime | None) -> float | None:
     return (datetime.now(timezone.utc) - ts).total_seconds()
 
 
-def _refresh(conn, league: str, week: int | None) -> tuple[bool, str | None]:
+def _refresh(conn, league: str, week: int | None, season_type: int | None = None) -> tuple[bool, str | None]:
     """Fetch from ESPN and store. Returns (ok, error)."""
     try:
-        payload = espn.fetch_scoreboard(league, week=week, base_url=ESPN_BASE)
+        payload = espn.fetch_scoreboard(league, week=week, season_type=season_type, base_url=ESPN_BASE)
         games_, errors = espn.parse_scoreboard(payload, league)
         raw = len(payload.get("events") or [])
         if raw and not games_:
@@ -85,11 +80,14 @@ def _refresh(conn, league: str, week: int | None) -> tuple[bool, str | None]:
         stype = games_[0].season_type if games_ else espn._int(espn._get(payload, "season", "type"))
         # Some games unreadable: the rest refreshed, and the board warns that some cards may be old.
         err = f"{len(errors)} of {raw} games unreadable: " + "; ".join(errors[:5]) if errors else None
+        db.save_calendar(conn, league, season, espn.parse_calendar(payload))
         db.log_fetch(conn, league, "espn", True, requested_week=week, games=len(games_),
-                     season=season, week=wk, season_type=stype, error=err)
+                     season=season, week=wk, season_type=stype, error=err,
+                     requested_season_type=season_type)
     except Exception as exc:  # noqa: BLE001
         conn.rollback()
-        db.log_fetch(conn, league, "espn", False, requested_week=week, error=repr(exc)[:500])
+        db.log_fetch(conn, league, "espn", False, requested_week=week, error=repr(exc)[:500],
+                     requested_season_type=season_type)
         return False, repr(exc)
     # Regrade finals whose score changed (stat corrections). Grading problems never fail the pull.
     for game_id, state in saved:
@@ -118,11 +116,14 @@ def _card(row: dict, favorites: set[str]) -> dict:
         "clock": row["clock"],
         "broadcast": row["broadcast"],
         "venue": row["venue"],
+        "neutral_site": bool(row.get("neutral_site")),
         "favorite": row["home_abbr"] in favorites or row["away_abbr"] in favorites,
         "home": {"abbr": row["home_abbr"], "name": row["home_name"], "short": row["home_short"],
-                 "logo": row["home_logo"], "color": row["home_color"], "score": row["home_score"]},
+                 "logo": row["home_logo"], "color": row["home_color"], "score": row["home_score"],
+                 "rank": row.get("home_rank")},
         "away": {"abbr": row["away_abbr"], "name": row["away_name"], "short": row["away_short"],
-                 "logo": row["away_logo"], "color": row["away_color"], "score": row["away_score"]},
+                 "logo": row["away_logo"], "color": row["away_color"], "score": row["away_score"],
+                 "rank": row.get("away_rank")},
         "line": None if not has_line else {
             "provider": row["odds_provider"],
             "details": row["odds_details"],
@@ -155,7 +156,9 @@ def health():
 
 
 @app.get("/api/scoreboard/{league}")
-def scoreboard(league: str, week: int | None = Query(None, ge=1, le=25), force: bool = False):
+def scoreboard(league: str, week: int | None = Query(None, ge=1, le=999),
+               season_type: int | None = Query(None, ge=1, le=3), force: bool = False):
+    # week goes to 999: ESPN numbers the College Football Playoff week 999 (season type 3).
     if league not in ENABLED_LEAGUES:
         raise HTTPException(404, f"league '{league}' not enabled")
     if league not in ("nfl", "ncaaf"):
@@ -163,27 +166,35 @@ def scoreboard(league: str, week: int | None = Query(None, ge=1, le=25), force: 
         raise HTTPException(501, "only week-based leagues are wired in Phase 1")
 
     with db.connect() as conn:
-        last = db.last_fetch(conn, league, week)
+        last = db.last_fetch(conn, league, week, requested_season_type=season_type)
         age = _age_seconds(last["fetched_at"]) if last else None
         stale, error = False, None
 
         if force or age is None or age >= CACHE_SECONDS:
-            ok, error = _refresh(conn, league, week)
+            ok, error = _refresh(conn, league, week, season_type)
             if not ok:
                 stale = True
-            last = db.last_fetch(conn, league, week)
+            last = db.last_fetch(conn, league, week, requested_season_type=season_type)
             if last is None:
                 raise HTTPException(502, f"ESPN unreachable and nothing stored yet: {error}")
 
         season, wk = last["season"], last["week"]
         rows = db.games_for_week(conn, league, season, wk, last.get("season_type")) if season and wk else []
         favs = set(_favorites().get(league, []))
+        if league == "ncaaf":
+            # Every FBS game is stored; the board shows the PRD's filtered set (ncaaf.py).
+            rows = [r for r in rows if ncaaf.is_featured_row(r, favs)]
         cards = sorted((_card(r, favs) for r in rows), key=_sort_key)
+        # ESPN's season stages (weeks, then Bowls / Playoffs), for Prev and Next across season types.
+        calendar = [{"season_type": s["season_type"], "week": s["week"], "label": s["label"]}
+                    for s in db.get_calendar(conn, league)]
 
     return {
         "league": league,
         "season": season,
         "week": wk,
+        "season_type": last.get("season_type"),
+        "calendar": calendar,
         "updated_at": last["fetched_at"].isoformat(),
         "stale": stale,
         "error": error if stale else None,
