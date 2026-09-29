@@ -3,12 +3,16 @@
 Personal, pull-based scores app (ESPN-app replacement). Full PRD: "Scores App — Mini PRD".
 This file is the working brief for Claude Code. Keep it current as phases land.
 
-## Current phase: 3 — Temporal (built on branch `phase-3` 2026-09-28, laptop only; not deployed)
+## Current phase: 3 — Temporal (built 2026-09-28, deployed to the server 2026-09-29 05:13 UTC)
 Scope: scheduled work off the pull path. ScheduleSync (daily 6:00 AM PT) starts one GameWorkflow per NFL game not yet
 final; GameWorkflow saves the line, runs the (empty) preview step, waits for kickoff, polls for the final every 2.5 min (Adam), grades, and
 regrades once 1 h later (Adam); Headlines (7:00 AM and 5:00 PM PT) stores ESPN news in `news_items`, no AI. Handoff: "Scores
-App — Phase 3 Handoff". Status: `validate_phase3.sh` 23/23 on the laptop (2026-09-28), 156 tests; 3.9 API side passed. Still to do: 3.9 in the app, 3.10 (unattended
-weekend), 3.12 on a real deploy, real game histories as replay fixtures, server resize + deploy (Adam's call).
+App — Phase 3 Handoff". Status: `validate_phase3.sh` 23/23 on the laptop and 22/22 on the server (3.5/3.6 run on x86 only), 157 tests; 3.9
+API side passed; every runbook command run once on the server. 2.7 (week 3): 48/48 results match an independent
+regrade from ESPN's finals and closes. Decisions (Adam, 2026-09-28): last line save 30 min before kickoff, polls every
+2.5 min, one regrade 1 h after the final, headlines without AI, pull path stays. No server resize: the whole stack
+uses ~1.1 GB of 3.8 GB (Temporal ~90 MB). Still to do: 3.9 in the app, 3.10 (unattended weekend), 3.12 (a patched
+change deployed mid-week), 3 real game histories as replay fixtures.
 
 ### Temporal
 - **Containers:** `temporal` (server 1.32.0, :7233 localhost), `temporal-admin-tools` (1.32.0: sets up the `temporal`
@@ -21,6 +25,8 @@ weekend), 3.12 on a real deploy, real game histories as replay fixtures, server 
 - **Workflows decide, activities do.** No clock, random, network, DB, env, files or zoneinfo in `workflows.py`;
   times travel as UTC ISO strings; Pacific-time math (the 8 AM preview) happens in `sync_schedule`.
 - **Every activity is idempotent** (upserts; snapshots only on a line change; news dedupes on ESPN's id).
+- **Shared scoreboard fetch:** `save_line` and `fetch_game_state` read the game's week through a 60 s in-worker cache,
+  so a Sunday's simultaneous polls make one ESPN call per week, not one per game.
 - **Workflow IDs** `<league>-<espn_id>`, reuse policy "allow duplicate failed only": a completed game is never
   reopened; a failed or terminated one is restarted by the next ScheduleSync.
 - **Retries:** ESPN activities 30 s per try, 10 s doubling to 10 min, give up after 6 h (the workflow then skips that
@@ -68,7 +74,8 @@ at https://technologic.tailca897c.ts.net (tailnet only).
 **Deployed 2026-09-28** to the Oracle ARM server `scores` (`ssh ubuntu@scores`, repo at `~/scores-app`, cloned from
 github.com/acheer91/Headlines with a read-only deploy key `~/.ssh/scores_deploy`). Served at
 https://scores.tailca897c.ts.net (tailnet only). Phase 1 15/15 and Phase 2 14/14 passed there; survives a reboot.
-Updates: `git pull && docker compose up -d --build` on the server. Temporal UI on :8443 comes with Phase 3.
+Updates: `git pull && docker compose up -d --build` on the server. Temporal UI: https://scores.tailca897c.ts.net:8443
+(`tailscale serve --bg --https=8443 8080`, tailnet only).
 **Backups** (PRD: nightly dump stored off the server): `scripts/backup.sh` runs from the server's crontab at 10:30 UTC
 (3:30 AM Pacific), `pg_dumpall` of every database (app + Temporal from Phase 3) gzipped into the Oracle Object Storage
 bucket `scores-backups` (root compartment, always free; lifecycle rule deletes objects after 30 days). Upload uses a
