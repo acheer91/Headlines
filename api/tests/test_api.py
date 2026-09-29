@@ -67,7 +67,7 @@ def client(monkeypatch, tmp_path):
     import psycopg
     from app import migrate
     with psycopg.connect(TEST_DB) as conn:
-        conn.execute("DROP TABLE IF EXISTS news_items, team_season_stats, team_season_leaders, bet_results, game_summaries, fetch_log, odds_snapshots,"
+        conn.execute("DROP TABLE IF EXISTS league_calendar, news_items, team_season_stats, team_season_leaders, bet_results, game_summaries, fetch_log, odds_snapshots,"
                      " games, teams,"
                      " schema_migrations CASCADE")
         conn.commit()
@@ -231,7 +231,7 @@ def test_migrations_applied_and_idempotent(client):
     from app import migrate
     names = [r[0] for r in _sql("SELECT name FROM schema_migrations ORDER BY name")]
     assert names == ["001_init.sql", "002_game_details.sql", "003_season_type_and_status.sql",
-                     "004_team_season_stats.sql", "005_temporal.sql"]
+                     "004_team_season_stats.sql", "005_temporal.sql", "006_ncaaf.sql"]
     assert migrate.migrate(TEST_DB) == []                    # second run applies nothing
     tables = {r[0] for r in _sql("SELECT table_name FROM information_schema.tables WHERE table_schema='public'")}
     assert {"game_summaries", "bet_results"} <= tables

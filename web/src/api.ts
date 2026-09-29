@@ -5,6 +5,8 @@ export type TeamSide = {
   logo: string | null;
   color: string | null;
   score: number | null;
+  /** AP / CFP rank 1-25 (NCAAF); null = unranked */
+  rank: number | null;
 };
 
 export type Line = {
@@ -31,6 +33,8 @@ export type GameCard = {
   clock: string | null;
   broadcast: string | null;
   venue: string | null;
+  /** stored for NCAAF; nothing displays it yet */
+  neutral_site: boolean;
   favorite: boolean;
   home: TeamSide;
   away: TeamSide;
@@ -42,6 +46,10 @@ export type Scoreboard = {
   league: string;
   season: number | null;
   week: number | null;
+  /** 1 preseason, 2 regular season, 3 postseason */
+  season_type: number | null;
+  /** ESPN's season stages in order (weeks, then e.g. Bowls and CFP); Prev and Next walk it */
+  calendar: { season_type: number; week: number; label: string }[];
   updated_at: string | null;
   stale: boolean;
   error: string | null;
@@ -66,9 +74,10 @@ async function get<T>(url: string): Promise<T> {
   return r.json();
 }
 
-export const getScoreboard = (league: string, week?: number, force = false) => {
+export const getScoreboard = (league: string, week?: number, seasonType?: number, force = false) => {
   const q = new URLSearchParams();
   if (week) q.set("week", String(week));
+  if (seasonType) q.set("season_type", String(seasonType));
   if (force) q.set("force", "true");
   const qs = q.toString();
   return get<Scoreboard>(`/api/scoreboard/${league}${qs ? `?${qs}` : ""}`);

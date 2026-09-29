@@ -93,8 +93,9 @@ def save_games(conn: psycopg.Connection, games: list[Game], source: str = "espn"
                 INSERT INTO games (league, espn_id, start_time, state, status_detail, period, clock,
                                    home_team_id, away_team_id, home_score, away_score, venue,
                                    broadcast, season, week, season_type, completed, time_valid,
-                                   source, fetched_at)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
+                                   source, home_conf, away_conf, home_rank, away_rank, neutral_site,
+                                   fetched_at)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
                 ON CONFLICT (league, espn_id) DO UPDATE SET
                     -- Never backwards (same rule as update_game_status): a lagging response (a final
                     -- reported as live again, a live game as pre-game) changes nothing about the game,
@@ -111,12 +112,18 @@ def save_games(conn: psycopg.Connection, games: list[Game], source: str = "espn"
                     broadcast = EXCLUDED.broadcast, season = EXCLUDED.season,
                     week = EXCLUDED.week, season_type = EXCLUDED.season_type,
                     time_valid = EXCLUDED.time_valid,
+                    -- The rank is frozen once a game is completed: next week's poll never relabels an old final.
+                    home_conf = EXCLUDED.home_conf, away_conf = EXCLUDED.away_conf,
+                    home_rank = CASE WHEN games.completed IS TRUE THEN games.home_rank ELSE EXCLUDED.home_rank END,
+                    away_rank = CASE WHEN games.completed IS TRUE THEN games.away_rank ELSE EXCLUDED.away_rank END,
+                    neutral_site = EXCLUDED.neutral_site,
                     source = EXCLUDED.source, fetched_at = now()
                 RETURNING id, state
                 """.replace("{back}", _BACKWARDS),
                 (g.league, g.espn_id, g.start_time, g.state, g.status_detail, g.period, g.clock,
                  home_id, away_id, g.home_score, g.away_score, g.venue, g.broadcast,
-                 g.season, g.week, g.season_type, g.completed, g.time_valid, source),
+                 g.season, g.week, g.season_type, g.completed, g.time_valid, source,
+                 g.home_conf, g.away_conf, g.home_rank, g.away_rank, g.neutral_site),
             )
             row = cur.fetchone()
             game_id = row["id"]
@@ -157,24 +164,43 @@ def save_games(conn: psycopg.Connection, games: list[Game], source: str = "espn"
 def log_fetch(conn: psycopg.Connection, league: str, source: str, ok: bool, *,
               requested_week: int | None = None, games: int | None = None,
               season: int | None = None, week: int | None = None, season_type: int | None = None,
-              error: str | None = None) -> None:
+              error: str | None = None, requested_season_type: int | None = None) -> None:
     conn.execute(
-        """INSERT INTO fetch_log (league, source, ok, requested_week, games, season, week, season_type, error)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-        (league, source, ok, requested_week, games, season, week, season_type, error),
+        """INSERT INTO fetch_log (league, source, ok, requested_week, games, season, week, season_type, error,
+                                  requested_season_type)
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+        (league, source, ok, requested_week, games, season, week, season_type, error, requested_season_type),
     )
     conn.commit()
 
 
 def last_fetch(conn: psycopg.Connection, league: str, requested_week: int | None = None,
-               ok_only: bool = True) -> dict | None:
+               ok_only: bool = True, requested_season_type: int | None = None) -> dict | None:
     """Last fetch for this request. requested_week=None means the 'current week' request,
-    which is cached separately from browsing a specific week."""
-    sql = "SELECT * FROM fetch_log WHERE league = %s AND requested_week IS NOT DISTINCT FROM %s"
+    which is cached separately from browsing a specific week; likewise per requested season type
+    (preseason, regular season and postseason each have a week 1)."""
+    sql = ("SELECT * FROM fetch_log WHERE league = %s AND requested_week IS NOT DISTINCT FROM %s"
+           " AND requested_season_type IS NOT DISTINCT FROM %s")
     if ok_only:
         sql += " AND ok"
     sql += " ORDER BY fetched_at DESC, id DESC LIMIT 1"
-    return conn.execute(sql, (league, requested_week)).fetchone()
+    return conn.execute(sql, (league, requested_week, requested_season_type)).fetchone()
+
+
+def save_calendar(conn: psycopg.Connection, league: str, season: int | None, stages: list[dict]) -> None:
+    """ESPN's season calendar (espn.parse_calendar), one row per league."""
+    if not stages:
+        return                            # never overwrite a good calendar with an empty one
+    conn.execute(
+        """INSERT INTO league_calendar (league, season, stages) VALUES (%s, %s, %s)
+           ON CONFLICT (league) DO UPDATE SET season = EXCLUDED.season, stages = EXCLUDED.stages,
+                                              fetched_at = now()""",
+        (league, season, Jsonb(stages)))
+
+
+def get_calendar(conn: psycopg.Connection, league: str) -> list[dict]:
+    row = conn.execute("SELECT stages FROM league_calendar WHERE league = %s", (league,)).fetchone()
+    return row["stages"] if row else []
 
 
 # The line shown on a card: newest snapshot for games not started; for live or final
@@ -184,6 +210,7 @@ _GAMES_SQL = """
 SELECT g.id, g.league, g.espn_id, g.start_time, g.state, g.status_detail, g.period, g.clock,
        g.home_score, g.away_score, g.venue, g.broadcast, g.season, g.week, g.season_type, g.completed,
        g.time_valid, g.source, g.fetched_at,
+       g.home_conf, g.away_conf, g.home_rank, g.away_rank, g.neutral_site,
        h.espn_id AS home_espn_id, a.espn_id AS away_espn_id,
        h.abbr AS home_abbr, h.name AS home_name, h.short_name AS home_short, h.logo_url AS home_logo, h.color AS home_color,
        a.abbr AS away_abbr, a.name AS away_name, a.short_name AS away_short, a.logo_url AS away_logo, a.color AS away_color,

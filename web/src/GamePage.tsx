@@ -72,7 +72,7 @@ export function GamePage() {
         <button
           className="back"
           // Opened directly (shared link, restored app): there's no in-app page to go back to.
-          onClick={() => ((window.history.state?.idx ?? 0) > 0 ? nav(-1) : nav("/scores/nfl"))}
+          onClick={() => ((window.history.state?.idx ?? 0) > 0 ? nav(-1) : nav(`/scores/${g?.league ?? seed?.league ?? "nfl"}`))}
           aria-label="Back"
         >
           ‹

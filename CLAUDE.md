@@ -3,7 +3,31 @@
 Personal, pull-based scores app (ESPN-app replacement). Full PRD: "Scores App — Mini PRD".
 This file is the working brief for Claude Code. Keep it current as phases land.
 
-## Current phase: 3 — Temporal (built 2026-09-28, deployed to the server 2026-09-29 05:13 UTC)
+## Current phase: 5a — NCAAF (built 2026-09-29 on branch `phase-5a-ncaaf`; deploy planned Tue 2026-10-06)
+Scope: an NCAAF tab with a filtered board, AP/CFP ranks on cards, the same C1/C2/D screens and grading as NFL, and a
+GameWorkflow for every board game. Handoff: "Phase 5a Handoff — NCAAF" (Claude Doc). Out of scope: NBA/EPL/MLS (5b),
+AI text, neutral-site labels (stored, not shown). Bowls/Playoff plumbing is built (browse across season types); real
+bowl games are confirmed with the handoff's December checklist by Dec 12.
+- **Board filter** lives in `api/app/ncaaf.py` (`is_featured`); the API (`/api/scoreboard/ncaaf`) and the worker
+  (`sync_schedule`) both call it, so the board and the workflows always agree. A game shows when either team is SEC,
+  Big Ten, Big 12, ACC or Pac-12 (ESPN conferenceId 8, 5, 4, 1, 9), is ranked 1-25 (PRD, added 2026-09-29), or is
+  Notre Dame (team 87), and neither team is FCS (a conference outside `FBS_CONFERENCES`): a ranked team vs an FCS
+  opponent still hides. Favorites always show. A missing conference hides the game and the parser
+  warns "no conference". Every FBS game is still stored; the filter only decides what shows and what gets a workflow.
+- **Conference, rank and neutral site are stored per game** (`games.home_conf` ... `neutral_site`, migration 006).
+  ESPN's rank 99 = unranked, stored as NULL. A completed game's rank is frozen (next week's poll never relabels it).
+- **Season calendar:** `espn.parse_calendar` flattens ESPN's `leagues[0].calendar` into stages (NCAAF: weeks 1-15,
+  Bowls = type 3 week 1, CFP = type 3 week 999; NFL: preseason, 18 weeks, Wild Card ... Super Bowl), stored in
+  `league_calendar`. The scoreboard takes `?season_type=&week=` (week up to 999), is cached per (week, season type),
+  and returns `season_type` + `calendar`; the web app's Prev/Next walk it (`?st=3&week=1`). `sync_schedule` fetches the
+  calendar's next stage (falls back to week + 1 when ESPN sends no calendar).
+- **Favorites** are read on every call by `api/app/favorites.py` (API and worker; the worker mounts `./config` too).
+  Never resolve its path at import time: the workflow sandbox imports activities and refuses `Path.resolve()`.
+- Step 1 census (2026 weeks 1-5, 2026-09-29): 99 / 86 / 75 / 71 / 59 games, unchanged with `limit=300`; FBS ids seen
+  1, 4, 5, 8, 9, 12, 15, 17, 18, 37, 151; every other id seen (20, 21, 24, 25, 27, 29, 30, 31, 32, 48, 177, 179) is FCS.
+  Texas is `TEX`.
+
+## Phase 3 — Temporal (built 2026-09-28, deployed to the server 2026-09-29 05:13 UTC)
 Scope: scheduled work off the pull path. ScheduleSync (daily 6:00 AM PT) starts one GameWorkflow per NFL game not yet
 final; GameWorkflow saves the line, runs the (empty) preview step, waits for kickoff, polls for the final every 2.5 min (Adam), grades, and
 regrades once 1 h later (Adam); Headlines (7:00 AM and 5:00 PM PT) stores ESPN news in `news_items`, no AI. Handoff: "Scores
@@ -107,7 +131,7 @@ OS security updates install daily (Ubuntu unattended-upgrades). The laptop stack
   summary; INTs from ESPN's core team leaders (`games.team_interceptions`, cached 6 h in `team_season_leaders`).
   C2 and D show this game's Passing, Rushing, Receiving.
 - **Weeks are per season type.** Preseason (1), regular season (2) and postseason (3) each start at week 1; every
-  week query filters on `games.season_type`.
+  week query filters on `games.season_type`, and browsing follows ESPN's calendar (never a hard-coded last week).
 - **Only completed games are graded.** Canceled/postponed games are `state = 'post'` with `completed = false`
   (usually 0-0); they show "Not graded · Canceled" and any stored results are removed.
 - **Flexed kickoffs:** `time_valid = false` means `start_time` is ESPN's placeholder; show the date and "time TBD".
@@ -134,7 +158,8 @@ OS security updates install daily (Ubuntu unattended-upgrades). The laptop stack
 - **Soccer never gets odds.** `BETTING_LEAGUES` in `espn.py`.
 - **Bet status reports, never advises.** "KC -3 covering by 4", never "take the over".
 - **No new signups or paid services** without asking Adam.
-- Favorites live in `config/favorites.json` (`{"nfl": ["SEA"]}` style, team abbreviations).
+- Favorites live in `config/favorites.json` (`{"nfl": ["NE"], "ncaaf": ["TEX"]}`, ESPN team abbreviations).
+- **NCAAF board filter lives in `ncaaf.py`; the API and worker both call it.** Never filter NCAAF anywhere else.
 
 ## Bet grading (`api/app/grading.py`, pure functions, no DB or network)
 - **Line used**, chosen per market (moneyline, spread, total) in this order (Adam, 2026-09-27, after the independent
@@ -164,7 +189,7 @@ docker compose up -d --build            # full stack on :8000 (applies new migra
 docker compose exec worker python -m app.temporal.schedules [--show]  # create/update (or print) the schedules
 docker compose exec api python -m app.check_espn [--week N]        # live scoreboard parse check
 docker compose exec api python -m app.check_summary [--event ID]   # live summary blocks, one game per state
-docker compose exec api python -m app.grade_week --week N [--season-type 3]   # grade a week, print a hand-check table
+docker compose exec api python -m app.grade_week [--league ncaaf] --week N [--season-type 3]   # grade a week, hand-check table
 docker compose exec api python -m app.migrate                      # apply migrations by hand
 
 # Local dev without Docker
@@ -185,6 +210,8 @@ api/app/summary.py        ESPN game summary -> screen blocks (header, stats, lea
 api/app/grading.py        ML / spread / O/U grading, line choice, live status, result wording (pure)
 api/app/games.py          summary cache rules, state moves on pull, grade_game, per-screen payloads
 api/app/db.py             upserts, odds snapshots, fetch_log, card query, summaries, bet results
+api/app/ncaaf.py          NCAAF board filter (pure; API + worker)
+api/app/favorites.py      reads config/favorites.json on every call (API + worker)
 api/app/main.py           /api/health, /api/scoreboard/{league}, /api/games/{id}, serves web/dist
 api/app/migrate.py        applies db/migrations at startup
 api/app/check_espn.py     validation CLI (scoreboard)
@@ -196,7 +223,8 @@ api/tests/                parser, summary, grading and cache-rule tests (fixture
 db/migrations/            001_init.sql (Phase 1), 002_game_details.sql (game_summaries, bet_results),
                           003_season_type_and_status.sql (season_type, completed, time_valid),
                           004_team_season_stats.sql (per-team cache: ranks + INTs leader),
-                          005_temporal.sql (odds_snapshots.source, news_items)
+                          005_temporal.sql (odds_snapshots.source, news_items),
+                          006_ncaaf.sql (conference/rank/neutral site per game, league_calendar, fetch cache key)
 temporal/                 admin-tools entrypoint (schema setup + namespace), dynamic config
 docs/                     espn_summary_fields.md (field map)
 web/src/                  Scoreboard.tsx (B), GamePage.tsx (C1 / C2 / D), GameCard.tsx, usePull.tsx (pull to refresh),
@@ -207,6 +235,6 @@ web/src/                  Scoreboard.tsx (B), GamePage.tsx (C1 / C2 / D), GameCa
 3. (Built, see above.) Not in the Phase 3 handoff, still to do: move the nightly backup (`scripts/backup.sh`, now cron) into Temporal for retries and visibility (Adam, 2026-09-28).
    Until then a failed backup alerts no one: glance at `~/backup.log` and the bucket on the server once a week.
 4. AI text (Claude Haiku-class): extract facts, then write in house voice. 8-day article rule is hard.
-5. NCAAF (major conferences + Notre Dame, no FCS, plus favorites), NBA, EPL, MLS (scores only).
+5. 5a NCAAF built (see the top). 5b: NBA, EPL, MLS (scores only).
    Needs a date-window query: NBA and soccer have no weeks.
 6. Deploy to Oracle Cloud always-free, Tailscale only.

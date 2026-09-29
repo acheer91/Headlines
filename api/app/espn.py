@@ -4,7 +4,7 @@ Unofficial and undocumented, so every field is read defensively: a missing field
 becomes None, never an exception. The only hard requirements per game are an id,
 a start time and two teams; anything else missing still yields a usable game.
 
-Phase 1 turns on NFL only. The other leagues are mapped so Phase 5 is a config change.
+NFL (Phase 1) and NCAAF (Phase 5a) are on; the other leagues are mapped for Phase 5b.
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ CORE = "https://sports.core.api.espn.com/v2/sports"   # per-team season stats an
 LEAGUES: dict[str, dict[str, Any]] = {
     "nfl":   {"path": "football/nfl", "core": "football/leagues/nfl", "params": {}},
     "ncaaf": {"path": "football/college-football", "core": "football/leagues/college-football",
-              "params": {"groups": "80"}},  # 80 = all FBS
+              "params": {"groups": "80", "limit": "300"}},  # 80 = all FBS; limit so a full Saturday fits one page
     "nba":   {"path": "basketball/nba", "core": "basketball/leagues/nba", "params": {}},
     "epl":   {"path": "soccer/eng.1", "core": "soccer/leagues/eng.1", "params": {}},
     "mls":   {"path": "soccer/usa.1", "core": "soccer/leagues/usa.1", "params": {}},
@@ -83,6 +83,13 @@ class Game:
     # ESPN's status type name is STATUS_POSTPONED: a new date may still come (Phase 3's GameWorkflow waits for it).
     postponed: bool = False
     warnings: list[str] = field(default_factory=list)
+    # NCAAF (Phase 5a): ESPN conferenceId per side (drives ncaaf.py), AP/CFP rank 1-25 or None,
+    # and neutral site. Stored for every league; only NCAAF uses them.
+    home_conf: int | None = None
+    away_conf: int | None = None
+    home_rank: int | None = None
+    away_rank: int | None = None
+    neutral_site: bool = False
 
 
 # ---------- small defensive helpers ----------
@@ -145,6 +152,15 @@ def _team(comp: dict) -> Team:
         logo_url=t.get("logo") or _get(t, "logos", 0, "href"),
         color=t.get("color"),
     )
+
+
+def _conf(comp: dict) -> int | None:
+    return _int(_get(comp, "team", "conferenceId"))
+
+
+def _rank(comp: dict) -> int | None:
+    r = _int(_get(comp, "curatedRank", "current"))
+    return r if r is not None and 1 <= r <= 25 else None   # ESPN sends 99 for unranked
 
 
 _DETAILS_RE = re.compile(r"^\s*([A-Za-z0-9&.]+)\s+([+-]?\d+(?:\.\d+)?)\s*$")
@@ -237,6 +253,9 @@ def parse_scoreboard(payload: dict, league: str) -> tuple[list[Game], list[str]]
             odds = _odds(comp, home, away) if league in BETTING_LEAGUES else None
             if league in BETTING_LEAGUES and odds is None and state == "pre":
                 warnings.append("no line")
+            home_conf, away_conf = _conf(home_c), _conf(away_c)
+            if league == "ncaaf" and (home_conf is None or away_conf is None):
+                warnings.append("no conference")   # the board filter will hide this game
 
             games.append(Game(
                 league=league,
@@ -260,10 +279,37 @@ def parse_scoreboard(payload: dict, league: str) -> tuple[list[Game], list[str]]
                 postponed=is_postponed(status),
                 odds=odds,
                 warnings=warnings,
+                home_conf=home_conf,
+                away_conf=away_conf,
+                home_rank=_rank(home_c),
+                away_rank=_rank(away_c),
+                neutral_site=comp.get("neutralSite") is True,
             ))
         except Exception as exc:  # noqa: BLE001 — one bad game never kills the board
             errors.append(f"{league}:{ev_id}: {exc!r}")
     return games, errors
+
+
+def parse_calendar(payload: dict) -> list[dict]:
+    """ESPN's season calendar, flattened to the stages you can browse, in order:
+    [{"season_type": 1|2|3, "week": int, "label": str, "start": iso, "end": iso}].
+    Off-season (type 4) is left out. Empty if ESPN sends no calendar."""
+    stages: list[dict] = []
+    for st in _get(payload, "leagues", 0, "calendar") or []:
+        if not isinstance(st, dict):
+            continue                      # NBA and soccer send a plain list of dates instead
+        stype = _int(st.get("value"))
+        if stype not in (1, 2, 3):
+            continue
+        for e in st.get("entries") or []:
+            if not isinstance(e, dict):
+                continue
+            wk = _int(e.get("value"))
+            if wk is None:
+                continue
+            stages.append({"season_type": stype, "week": wk, "label": e.get("label") or f"Week {wk}",
+                           "start": e.get("startDate"), "end": e.get("endDate")})
+    return stages
 
 
 # ---------- fetching ----------

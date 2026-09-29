@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
-from .. import db, espn, games, summary
+from .. import db, espn, favorites, games, ncaaf, summary
 from .models import GameRef, GameState
 
 log = logging.getLogger(__name__)
@@ -57,21 +57,34 @@ def _save(league: str, payload: dict) -> tuple[list[espn.Game], list[tuple[int, 
 @activity.defn
 def sync_schedule(league: str) -> list[GameRef]:
     """Fetch ESPN's current week and the next one, save them, and return every game not yet final.
-    Postponed games are included (a new date may come); canceled ones and finals are not."""
+    Postponed games are included (a new date may come); canceled ones and finals are not.
+    NCAAF: every FBS game is saved, but only board games (ncaaf.py, favorites included) are returned."""
     cur = espn.fetch_scoreboard(league, base_url=ESPN_BASE)
     boards = [cur]
     season_type = espn._int(espn._get(cur, "season", "type"))
     week = espn._int(espn._get(cur, "week", "number"))
-    if season_type and week:
+    # The next stage from ESPN's calendar when it has one (reaches NCAAF Bowls, then the Playoff's week 999);
+    # otherwise week + 1, rolling into the next season type.
+    stages = espn.parse_calendar(cur)
+    here = next((i for i, s in enumerate(stages)
+                 if (s["season_type"], s["week"]) == (season_type, week)), None)
+    if here is not None and here + 1 < len(stages):
+        nxt_stage = stages[here + 1]
+        boards.append(espn.fetch_scoreboard(league, week=nxt_stage["week"], season_type=nxt_stage["season_type"],
+                                            base_url=ESPN_BASE))
+    elif season_type and week:
         nxt = espn.fetch_scoreboard(league, week=week + 1, season_type=season_type, base_url=ESPN_BASE)
         if not nxt.get("events") and season_type < 3:
             # Last week of preseason or regular season: next is week 1 of the next season type.
             nxt = espn.fetch_scoreboard(league, week=1, season_type=season_type + 1, base_url=ESPN_BASE)
         boards.append(nxt)
     refs: dict[str, GameRef] = {}
+    favs = set(favorites.load().get(league, []))
     for board in boards:
-        parsed, saved = _save(league, board)
+        parsed, saved = _save(league, board)   # every game is saved; only board games get a workflow
         for g, (_gid, stored_state) in zip(parsed, saved):
+            if league == "ncaaf" and not ncaaf.is_featured_game(g, favs):
+                continue
             # The stored state, not ESPN's: a lagging response never moves a game backwards.
             if stored_state != "post" or g.postponed:
                 refs[g.espn_id] = GameRef(league, g.espn_id, _iso(g.start_time), preview_iso(g.start_time))
