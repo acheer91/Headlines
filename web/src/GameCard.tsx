@@ -47,7 +47,7 @@ export function LineRow({ g }: { g: Game }) {
 
 function TeamRow({ side, g, isHome }: { side: Game["home"]; g: Game; isHome: boolean }) {
   const other = isHome ? g.away : g.home;
-  const winning = g.state !== "pre" && side.score != null && other.score != null && side.score > other.score;
+  const winning = (g.state !== "pre" || g.backup) && side.score != null && other.score != null && side.score > other.score;
   const losing = g.state === "post" && side.score != null && other.score != null && side.score < other.score;
   return (
     <div className={`team ${losing ? "dim" : ""}`}>
@@ -68,20 +68,21 @@ function TeamRow({ side, g, isHome }: { side: Game["home"]; g: Game; isHome: boo
         {side.short ?? side.name}
       </span>
       <span className="abbr">{side.abbr}</span>
-      <span className={`score ${winning ? "lead" : ""}`}>{g.state === "pre" ? "" : side.score ?? ""}</span>
+      <span className={`score ${winning ? "lead" : ""}`}>{g.state === "pre" && !g.backup ? "" : side.score ?? ""}</span>
     </div>
   );
 }
 
 export function GameCardView({ g, onOpen }: { g: Game; onOpen: () => void }) {
   const status =
-    g.state === "pre" ? kickoff(g.start_time, g.time_valid) : g.state === "in" ? g.status_detail ?? "Live" : g.status_detail ?? "Final";
+    g.backup ? g.status_detail ?? "Live" : g.state === "pre" ? kickoff(g.start_time, g.time_valid) : g.state === "in" ? g.status_detail ?? "Live" : g.status_detail ?? "Final";
   return (
     <button className={`card ${g.state}`} onClick={onOpen}>
       <div className="card-head">
         <span className={`status ${g.state}`}>
           {g.state === "in" && <span className="dot" />}
           {status}
+          {g.backup && <span className="muted" style={{ fontWeight: 400 }}>backup</span>}
         </span>
         <span className="meta">
           {g.favorite && <span className="fav">★</span>}

@@ -140,6 +140,8 @@ OS security updates install daily (Ubuntu unattended-upgrades). The laptop stack
   (`summary_behind`) and refetch at most every 30 s.
 - **Unreadable ESPN data is not fresh data:** if no game in a scoreboard response parses, the refresh counts as failed
   (stale banner); if some don't, the board shows a warning.
+- **Live-score backup (backup.py):** display-only, scores and status of live games, only when an ESPN refresh fails.
+  Never stored, never graded, never used for lines. No MLS.
 
 ## Latency (2026-09-27 pass)
 - **Web app paints last-seen data instantly** (`web/src/lastSeen.ts`, localStorage, per device) and pulls fresh data
