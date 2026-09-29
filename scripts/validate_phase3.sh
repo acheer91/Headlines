@@ -88,6 +88,8 @@ if [ "${SKIP_SLOW:-0}" = "1" ]; then
   echo "3.7/3.8 SKIPPED (SKIP_SLOW=1)"
 else
   echo "3.7 ESPN outage (${OUTAGE_SECONDS:-600} s with ESPN pointed at a bad host)"
+  # However this script ends (Ctrl-C, a dropped SSH session), put the worker back on the real ESPN.
+  trap 'docker compose up -d worker >/dev/null 2>&1' EXIT HUP INT TERM
   WORKER_ESPN_BASE=https://invalid.example.com docker compose up -d worker >/dev/null 2>&1
   WID="validate-outage-$(date +%s)"
   tctl workflow start --type ScheduleSyncWorkflow --task-queue scores --workflow-id "$WID" --input '["nfl"]' >/dev/null
