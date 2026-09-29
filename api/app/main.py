@@ -17,7 +17,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import db, espn, favorites, games, migrate, ncaaf
+from . import backup, db, espn, favorites, games, migrate, ncaaf
 
 CACHE_SECONDS = int(os.environ.get("CACHE_SECONDS", "30"))
 ENABLED_LEAGUES = [x.strip() for x in os.environ.get("ENABLED_LEAGUES", "nfl").split(",") if x.strip()]
@@ -185,6 +185,19 @@ def scoreboard(league: str, week: int | None = Query(None, ge=1, le=999),
             # Every FBS game is stored; the board shows the PRD's filtered set (ncaaf.py).
             rows = [r for r in rows if ncaaf.is_featured_row(r, favs)]
         cards = sorted((_card(r, favs) for r in rows), key=_sort_key)
+        if stale and league in backup.SOURCES:
+            # ESPN just failed: overlay live games' score and status from one backup source (backup.py).
+            # Display-only: nothing is stored, and the card's state never changes.
+            live = [c for c in cards if backup.is_live(c)]
+            if live:
+                scores = backup.fetch(league, live, season, wk, last.get("season_type"))
+                for c in live:
+                    b = backup.match({c["home"]["name"], c["home"]["short"] or ""},
+                                     {c["away"]["name"], c["away"]["short"] or ""}, scores)
+                    if b:
+                        c["home"]["score"], c["away"]["score"] = b.home_score, b.away_score
+                        c["status_detail"] = b.status
+                        c["backup"] = True
         # ESPN's season stages (weeks, then Bowls / Playoffs), for Prev and Next across season types.
         calendar = [{"season_type": s["season_type"], "week": s["week"], "label": s["label"]}
                     for s in db.get_calendar(conn, league)]
