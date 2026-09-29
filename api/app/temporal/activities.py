@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
+import time as _time
 from datetime import datetime, time, timezone
 from zoneinfo import ZoneInfo
 
@@ -85,18 +87,40 @@ def _stored(league: str, espn_id: str) -> dict:
     return row
 
 
-def _board_for(league: str, row: dict) -> tuple[espn.Game | None, list[tuple[int, str]]]:
-    """Fetch and save the scoreboard week this game belongs to; return its entry (None if ESPN no longer
-    lists it in that week, e.g. a postponed game moved to another week)."""
-    payload = espn.fetch_scoreboard(league, week=row["week"], season_type=row["season_type"], base_url=ESPN_BASE)
-    parsed, saved = _save(league, payload)
-    return next((g for g in parsed if g.espn_id == row["espn_id"]), None), saved
+# On a Sunday most games poll at the same moments (every 2.5 minutes from a shared kickoff) and each poll
+# needs the same week's scoreboard. Within BOARD_CACHE_SECONDS the first poll fetches and saves it; the
+# others reuse that result instead of calling ESPN again. Only successful fetches are kept.
+BOARD_CACHE_SECONDS = 60.0
+_boards: dict[tuple, tuple[float, list[espn.Game]]] = {}
+_board_locks: dict[tuple, threading.Lock] = {}
+_boards_lock = threading.Lock()
+
+
+def _week_board(league: str, week: int | None, season_type: int | None) -> list[espn.Game]:
+    key = (league, week, season_type)
+    with _boards_lock:
+        lock = _board_locks.setdefault(key, threading.Lock())
+    with lock:   # concurrent polls for the same week wait for one fetch instead of each calling ESPN
+        hit = _boards.get(key)
+        if hit and _time.monotonic() - hit[0] < BOARD_CACHE_SECONDS:
+            return hit[1]
+        payload = espn.fetch_scoreboard(league, week=week, season_type=season_type, base_url=ESPN_BASE)
+        parsed, _ = _save(league, payload)
+        _boards[key] = (_time.monotonic(), parsed)
+        return parsed
+
+
+def _board_for(league: str, row: dict) -> espn.Game | None:
+    """The game's entry in its scoreboard week (fetched and saved, or from the last minute's fetch). None if
+    ESPN no longer lists it in that week, e.g. a postponed game moved to another week."""
+    parsed = _week_board(league, row["week"], row["season_type"])
+    return next((g for g in parsed if g.espn_id == row["espn_id"]), None)
 
 
 @activity.defn
 def save_line(league: str, espn_id: str) -> None:
     """Save the game's scoreboard week (source 'workflow'); an odds snapshot is added only if the line changed."""
-    game, _ = _board_for(league, _stored(league, espn_id))
+    game = _board_for(league, _stored(league, espn_id))
     if game is None:
         activity.logger.warning("%s %s not in its stored week's scoreboard; line not saved", league, espn_id)
     elif game.odds is None:
@@ -108,7 +132,7 @@ def fetch_game_state(league: str, espn_id: str) -> GameState:
     """State, score and kickoff for one game, from its scoreboard week (saved on the way). Falls back to
     the game summary when the week no longer lists the game."""
     row = _stored(league, espn_id)
-    game, _ = _board_for(league, row)
+    game = _board_for(league, row)
     if game is not None:
         with db.connect() as conn:
             row = db.game_by_espn_id(conn, league, espn_id)   # stored values: never backwards
