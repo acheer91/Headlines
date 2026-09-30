@@ -18,7 +18,7 @@ import httpx
 import psycopg
 from psycopg.rows import dict_row
 
-from . import client, sources, writer
+from . import client, facts, sources, writer
 
 ROOT = Path(__file__).resolve().parents[3]
 API = os.environ.get("SAMPLES_API", "http://127.0.0.1:8000")
@@ -27,8 +27,11 @@ OUT = ROOT / "docs" / "phase4-samples.md"
 # (league, away, home). The last preview is an obscure game, expected to have no fresh articles.
 PREVIEWS = [("nfl", "NE", "BUF"), ("nfl", "PIT", "CLE"), ("ncaaf", "OSU", "IOWA"), ("ncaaf", "MIA", "CLEM"),
             ("ncaaf", "TXSO", "FAU")]
+# All 16 NFL finals of week 4 (Sep 25-28), for the accuracy evaluation.
 RECAPS = [("nfl", "PHI", "CHI"), ("nfl", "NE", "JAX"), ("nfl", "SEA", "WSH"), ("nfl", "BAL", "DAL"),
-          ("nfl", "CIN", "PIT")]
+          ("nfl", "CIN", "PIT"), ("nfl", "ATL", "GB"), ("nfl", "LAC", "BUF"), ("nfl", "CAR", "CLE"),
+          ("nfl", "NYJ", "DET"), ("nfl", "HOU", "IND"), ("nfl", "KC", "MIA"), ("nfl", "TEN", "NYG"),
+          ("nfl", "ARI", "SF"), ("nfl", "MIN", "TB"), ("nfl", "LV", "NO"), ("nfl", "LAR", "DEN")]
 
 
 def _load_keys() -> None:
@@ -153,6 +156,8 @@ def _preview_md(game, res, trail, t_src, t_write) -> list[str]:
         out.append("\n**Sources used**\n")
         out += [f"- {s['outlet']}, {s['published'][:16].replace('T', ' ')} UTC: [{s['title']}]({s['url']})"
                 for s in res["sources"]]
+        out.append("")
+        out += _sheet(facts.preview_facts(game))
     dropped = [t for t in trail if t["result"] != "kept"]
     if dropped:
         out.append(f"\n<details><summary>{len(dropped)} candidate article(s) dropped</summary>\n")
@@ -168,7 +173,13 @@ def _recap_md(game, res, t) -> list[str]:
         return out + [f"> {writer.recap_fallback(game)} ({res.get('reason')})\n"]
     b = res["body"]
     return out + [b["recap"] + "\n", f"*{b['bets']}* (added by code from the graded results)\n",
-                  f"**{a['short']}:** {b['away']}\n", f"**{h['short']}:** {b['home']}\n"]
+                  f"**{a['short']}:** {b['away']}\n", f"**{h['short']}:** {b['home']}\n"] + _sheet(facts.recap_facts(game))
+
+
+def _sheet(f: dict) -> list[str]:
+    """The fact sheet the text was written from, so a reviewer can check every claim on the same page."""
+    return ["<details><summary>Fact sheet (built by code from the box score)</summary>\n"] + \
+        [f"- {line}" for line in f["facts"]] + ["\n</details>\n"]
 
 
 def _headlines_md(label, res, t) -> list[str]:
