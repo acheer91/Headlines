@@ -106,7 +106,10 @@ def main() -> None:
         md.append("## Previews\n")
         for league, away, home in PREVIEWS if "previews" in only else []:
             game = _game(_game_id(conn, league, away, home))
-            (arts, trail), t_src = _timed(sources.find_articles, game, _news(conn, league))
+            try:
+                (arts, trail), t_src = _timed(sources.find_articles, game, _news(conn, league))
+            except client.AIError as exc:        # search unavailable and no ESPN articles: the app would retry
+                arts, trail, t_src = [], [{"via": "search", "url": "-", "result": f"search unavailable: {exc}"}], 0.0
             res, t_write = _timed(writer.write_preview, game, arts)
             raw.append({"kind": "preview", "game": f"{away}@{home}", "result": res, "trail": trail})
             md += _preview_md(game, res, trail, t_src, t_write)

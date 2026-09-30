@@ -6,6 +6,7 @@ from datetime import timedelta
 
 import pytest
 
+from app.ai.sources import find_articles as REAL_FIND_ARTICLES
 from test_api import TEST_DB, _ids, _sql, client  # noqa: F401 — the client fixture
 
 pytestmark = pytest.mark.skipif(not TEST_DB, reason="set TEST_DATABASE_URL to run DB tests")
@@ -93,13 +94,18 @@ def test_recap_rewritten_once_after_a_stat_correction(client, fake):  # noqa: F8
     assert basis == f"{row[0]}-{row[1]}"
 
 
-def test_failed_text_is_claimed_again_next_open(client, fake):  # noqa: F811
+def test_failed_text_is_left_alone_on_open_for_30_minutes_then_retried(client, fake):  # noqa: F811
+    from app.ai import jobs
     gid = fake["ids"]["DAL"]
-    fake["result"] = {"status": "failed", "reason": "rate limited: groq 429", "retry_after": 60.0, "model": "fake"}
-    assert client.get(f"/api/games/{gid}/ai").json()["status"] == "failed"
+    fake["result"] = {"status": "failed", "reason": "check failed twice", "model": "fake"}
+    for _ in range(3):
+        assert client.get(f"/api/games/{gid}/ai").json()["status"] == "failed"
+    assert fake["calls"]["recap"] == 1                     # pulls don't pay for the same failure again
     fake["result"] = None
+    assert jobs.write_for_game("recap", gid, "nightly")["status"] == "ready"      # the worker still retries
+    _sql("UPDATE ai_texts SET status = 'failed', updated_at = now() - interval '31 minutes' WHERE game_id = %s", gid)
     assert client.get(f"/api/games/{gid}/ai").json()["status"] == "ready"
-    assert fake["calls"]["recap"] == 2
+    assert fake["calls"]["recap"] == 3
 
 
 def test_no_keys_means_fallback_not_a_crash(client, monkeypatch):  # noqa: F811
@@ -129,14 +135,17 @@ def test_two_writers_one_claim(client, fake):  # noqa: F811
     assert sum(1 for g in got if g is not None) == 1
 
 
-def test_stuck_writing_row_is_reclaimed_after_2_minutes(client, fake):  # noqa: F811
+def test_stuck_writing_row_is_reclaimed_after_16_minutes(client, fake):  # noqa: F811
     from app import db
     from app.ai import store
     gid = fake["ids"]["DAL"]
     with db.connect() as conn:
         assert store.claim(conn, gid, "recap", "b") is not None
         assert store.claim(conn, gid, "recap", "b") is None
-    _sql("UPDATE ai_texts SET updated_at = now() - interval '3 minutes' WHERE game_id = %s", gid)
+    _sql("UPDATE ai_texts SET updated_at = now() - interval '10 minutes' WHERE game_id = %s", gid)
+    with db.connect() as conn:
+        assert store.claim(conn, gid, "recap", "b") is None     # a worker can wait minutes for quota
+    _sql("UPDATE ai_texts SET updated_at = now() - interval '17 minutes' WHERE game_id = %s", gid)
     with db.connect() as conn:
         assert store.claim(conn, gid, "recap", "b") is not None
 
@@ -223,3 +232,91 @@ def test_no_key_in_the_repo():
     hits = [str(p) for p in root.rglob("*") if p.is_file() and not skip & set(p.parts) and p.name != ".env"
             and p.stat().st_size < 2_000_000 and pat.search(p.read_text(encoding="utf-8", errors="ignore"))]
     assert hits == []
+
+
+# ---------- audit fixes (2026-09-29); each was a reproduced bug ----------
+
+def test_late_writer_cannot_overwrite_newer_work(client, fake):  # noqa: F811
+    from app import db
+    from app.ai import store
+    gid = fake["ids"]["DAL"]
+    with db.connect() as conn:
+        a = store.claim(conn, gid, "recap", "20-27", reason="final")
+    _sql("UPDATE ai_texts SET updated_at = now() - interval '17 minutes' WHERE id = %s", a.id)
+    with db.connect() as conn:
+        b = store.claim(conn, gid, "recap", "20-27", reason="open")
+        assert store.save(conn, b, ready("recap"))
+        assert not store.save(conn, a, {"status": "failed", "reason": "check failed twice"})   # dropped
+    assert _sql("SELECT status FROM ai_texts WHERE id = %s", a.id) == [("ready",)]
+
+
+def test_text_is_stored_under_the_basis_it_was_written_from(client, fake):  # noqa: F811
+    from app import db
+    from app.ai import store
+    gid = fake["ids"]["DAL"]
+    with db.connect() as conn:
+        a = store.claim(conn, gid, "recap", "20-27", reason="final")
+    _sql("UPDATE ai_texts SET updated_at = now() - interval '17 minutes' WHERE id = %s", a.id)
+    with db.connect() as conn:
+        b = store.claim(conn, gid, "recap", "20-30", reason="open")          # a stat correction
+        assert not store.save(conn, a, ready("recap"))                        # old-score text dropped
+        assert store.save(conn, b, ready("recap"))
+    assert _sql("SELECT status, basis FROM ai_texts WHERE id = %s", a.id) == [("ready", "20-30")]
+
+
+def test_refresh_keeps_the_last_good_preview_on_screen_and_on_failure(client, fake):  # noqa: F811
+    from app import db
+    from app.ai import jobs, store
+    gid = fake["ids"]["BUF"]
+    assert jobs.write_for_game("preview", gid, "midweek")["status"] == "ready"
+    with db.connect() as conn:
+        c = store.claim(conn, gid, "preview", jobs.row_basis("preview", db.game_by_id(conn, gid)), "new-fp", "refresh")
+    shown = client.get(f"/api/games/{gid}/ai").json()                        # mid-refresh: old text at once
+    assert shown["status"] == "ready" and shown["body"]["preview"] == "p"
+    with db.connect() as conn:
+        assert store.save(conn, c, {"status": "failed", "reason": "check failed twice"})
+    row = _sql("SELECT status, body->>'preview' FROM ai_texts WHERE id = %s", c.id)
+    assert row == [("ready", "p")]                                            # a failed refresh erases nothing
+
+
+def test_rate_limited_search_retries_instead_of_no_fresh_previews(client, fake, monkeypatch):  # noqa: F811
+    from app.ai import client as ai_client, jobs, sources
+    monkeypatch.setattr(sources, "find_articles", REAL_FIND_ARTICLES)    # the real one, with a rate-limited search
+
+    def limited(query):
+        raise ai_client.RateLimited("groq 429", 420.0)
+    monkeypatch.setattr(ai_client, "groq_search", limited)
+    monkeypatch.setattr(sources, "_check_all", lambda cands, *a: [])      # no ESPN articles pass
+    out = jobs.write_for_game("preview", fake["ids"]["BUF"], "midweek")
+    assert out == {"status": "failed", "id": None, "retry_after": 420.0}
+    assert _sql("SELECT count(*) FROM ai_texts WHERE game_id = %s", fake["ids"]["BUF"]) == [(0,)]
+
+
+def test_nightly_job_rewrites_a_recap_after_a_stat_correction(client, fake):  # noqa: F811
+    from app import db
+    from app.ai import jobs, store
+    gid = fake["ids"]["DAL"]
+    _sql("UPDATE games SET start_time = now() - interval '5 hours' WHERE id = %s", gid)
+    with db.connect() as conn:
+        c = store.claim(conn, gid, "recap", "0-0", reason="final")          # written from an old score
+        store.save(conn, c, ready("recap"))
+    assert gid in jobs.unwritten_recaps("nfl", timedelta(days=2))
+
+
+def test_api_returns_at_once_when_no_row_will_come(client, fake, monkeypatch):  # noqa: F811
+    import time
+    import app.main as main
+    monkeypatch.setattr(main.ai_jobs, "write_for_game", lambda *a, **k: {"status": "skipped", "id": None})
+    t = time.monotonic()
+    out = client.get(f"/api/games/{fake['ids']['BUF']}/ai").json()
+    assert out["status"] == "missing" and time.monotonic() - t < 3
+
+
+def test_busy_row_skips_the_article_fetch(client, fake, monkeypatch):  # noqa: F811
+    from app import db
+    from app.ai import jobs, sources, store
+    gid = fake["ids"]["BUF"]
+    with db.connect() as conn:
+        store.claim(conn, gid, "preview", "x", reason="midweek")
+    monkeypatch.setattr(sources, "find_articles", lambda *a, **k: pytest.fail("fetched articles while busy"))
+    assert jobs.write_for_game("preview", gid, "open")["status"] == "busy"

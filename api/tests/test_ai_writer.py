@@ -208,3 +208,43 @@ def test_one_liner_too_long(model):
 
 def test_recap_fallback():
     assert writer.recap_fallback(GAME) == "Final: Bears 27, Eagles 7. Spread: CHI +3 covered by 23."
+
+
+# ---------- audit fixes (2026-09-29) ----------
+
+PRE = dict(GAME, state="pre")
+
+
+@pytest.mark.parametrize("pick,why", [
+    ({"writer": "Jane Doe", "pick": "You should hammer the Bears, lock of the year", "article": 1}, "advice wording"),
+    ({"writer": "Jane Doe", "pick": "Eagles 31-10", "article": 1}, "numbers not in its article"),
+    ({"writer": "Jane Doe", "pick": "the over", "article": 1}, "names neither team"),
+    ({"writer": "Jane Doe", "pick": "Eagles", "article": 7}, "no such article"),
+    ({"writer": "Nobody Here", "pick": "Eagles", "article": 1}, "writer not named near a team"),
+])
+def test_bad_picks_are_dropped(pick, why):
+    assert why in (writer.pick_problem(pick, {1: ARTICLE}.get(pick["article"]), PRE) or "")
+
+
+def test_good_pick_passes():
+    assert writer.pick_problem({"writer": "Jane Doe", "pick": "Eagles", "article": 1}, ARTICLE, PRE) is None
+
+
+def test_saved_extract_follows_the_articles_not_their_order(model):
+    a1 = dict(ARTICLE, url="https://www.espn.com/nfl/story/_/id/1/a", text="Bears defense rolls " * 30)
+    a2 = dict(ARTICLE, url="https://www.espn.com/nfl/story/_/id/2/b", text="Eagles quarterback hurt " * 30)
+    saved = {"storylines": [{"fact": "Eagles QB hurt", "url": a2["url"]}],
+             "edges": {"home": [], "away": [{"fact": "Eagles QB is hurt", "url": a2["url"]}]}, "picks": []}
+    calls = model([{"preview": WORDS, "edges": {"home": [], "away": [{"text": "The Eagles QB is hurt.", "article": 1}]}}])
+    res = writer.write_preview(PRE, [a2, a1], extract=saved)           # same articles, other order
+    assert res["status"] == "ready" and len(calls) == 1                 # no extract call
+    assert '"article": 1' in calls[0]                                   # a2 is article 1 today
+    assert res["body"]["edges"]["away"][0]["url"] == a2["url"]
+    assert res["extract"]["edges"]["away"][0]["url"] == a2["url"]       # stored by URL again
+
+
+def test_extract_is_stored_by_url(model):
+    model([PREVIEW_FACTS, {"preview": WORDS, "edges": {"home": [{"text": "Chicago has 9 takeaways.", "article": 1}],
+                                                        "away": []}}])
+    res = writer.write_preview(PRE, [ARTICLE])
+    assert res["extract"]["edges"]["home"][0] == {"fact": "Bears forced 9 turnovers", "url": ARTICLE["url"]}

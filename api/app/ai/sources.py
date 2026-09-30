@@ -170,13 +170,19 @@ def find_articles(game: dict, news: list[dict], *, now: datetime | None = None,
         try:
             found = client.groq_search(search_query(game))
         except client.AIError as exc:
-            log.warning("preview search failed: %s", exc)
+            if not kept:
+                # A search that couldn't run is not "no fresh previews": raise so the text is retried later
+                # instead of being stored as sourceless (audit, 2026-09-29).
+                raise
+            log.warning("preview search failed, writing from %d ESPN article(s): %s", len(kept), exc)
             found = []
         seen = {a["url"] for a in kept} | {c["url"] for c in espn}
         found = [f for f in found if f["url"] not in seen and outlet(f["url"])]
         kept += _check_all(found[:MAX_FETCH], home, away, now, trail, "search")
     uniq = {a["url"]: a for a in kept}
-    return sorted(uniq.values(), key=lambda a: a["published"], reverse=True)[:MAX_ARTICLES], trail
+    # Newest first, URL as the tie-break, so the same articles always come back in the same order.
+    ranked = sorted(uniq.values(), key=lambda a: (a["published"], a["url"]), reverse=True)
+    return ranked[:MAX_ARTICLES], trail
 
 
 def _check_all(cands: list[dict], home, away, now, trail: list[dict], via: str) -> list[dict]:

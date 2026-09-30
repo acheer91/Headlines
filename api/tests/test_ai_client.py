@@ -103,3 +103,32 @@ def test_unreadable_check_goes_to_the_next_checker(fresh, monkeypatch):
         return {"choices": [{"message": {"content": json.dumps({"by": body["model"]})}}], "usage": {"total_tokens": 5}}
     monkeypatch.setattr(client, "_groq_post", post)
     assert json.loads(client.check("c"))["by"] == "small"
+
+
+def test_all_models_cooling_retries_when_the_first_frees_up(fresh):
+    for m, secs in (("big", 3 * 3600), ("qwen", 2 * 3600), ("small", 5 * 3600)):
+        client.quota.cool(m, secs)
+    with pytest.raises(client.RateLimited) as err:
+        client.write("x")
+    assert err.value.retry_after == pytest.approx(2 * 3600, abs=5)      # not 60 s (audit)
+
+
+def test_reply_allowance_shrinks_to_fit_the_minute(fresh, monkeypatch):
+    seen = []
+    monkeypatch.setattr(client, "_groq_write", lambda p, j, name, max_out, checker: (seen.append(max_out) or ("{}", 1)))
+    client.write("x" * 4 * 6000)                                        # ~6,000 prompt tokens
+    assert seen == [8000 - 6000 - client.MARGIN]
+    with pytest.raises(client.TooLarge):
+        client.write("x" * 4 * 7500)
+
+
+def test_no_key_stops_at_once(fresh, monkeypatch):
+    calls, _ = fresh
+
+    def nokey(body):
+        calls.append(body["model"])
+        raise client.NoKey("GROQ_API_KEY not set")
+    monkeypatch.setattr(client, "_groq_post", nokey)
+    with pytest.raises(client.NoKey):
+        client.write("x")
+    assert calls == ["big"]

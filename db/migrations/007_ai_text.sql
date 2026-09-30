@@ -10,14 +10,16 @@ CREATE TABLE IF NOT EXISTS ai_texts (
     body         JSONB,      -- preview: {preview, edges: {home, away}, picks}; recap: {recap, bets, home, away};
                              -- one_liner: {line}; headlines: {items: [{text, url}]}
     sources      JSONB,      -- previews: [{title, url, outlet, published}]
-    basis        TEXT,       -- what it was written from; a different basis means stale (handoff 2.2):
+    basis        TEXT,       -- what `body` was written from; a different basis means stale (handoff 2.2):
                              -- preview: game date, recap: final score, one_liner: live score
-    fingerprint  TEXT,       -- preview: hash of injuries, kept article URLs and line (game-morning refresh)
+    fingerprint  TEXT,       -- preview: hash of the game facts and kept article URLs (game-morning refresh)
+    claim_basis  TEXT,       -- what the writer holding the claim is writing from; becomes `basis` on save.
+    claim_fingerprint TEXT,  -- A claim never touches body/basis, so the last good text stays until a new one lands.
     extract      JSONB,      -- preview: the article extract, so a refresh can rewrite without re-reading articles
     writer       TEXT,       -- the model that wrote it, and the one that fact-checked it
     checker      TEXT,
     reason       TEXT,       -- midweek | refresh | final | nightly | open | manual
-    attempts     INT NOT NULL DEFAULT 0,
+    attempts     INT NOT NULL DEFAULT 0,  -- also the claim token: only the latest claim's writer may save
     last_error   TEXT,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()

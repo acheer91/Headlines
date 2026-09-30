@@ -52,6 +52,15 @@ class DbQuota:
                 ON CONFLICT (model) DO UPDATE SET until = GREATEST(ai_cooling.until, EXCLUDED.until)""",
                          (model_name, seconds))
 
+    def cooling_left(self, models: list[str]) -> float | None:
+        """Seconds until the first of `models` stops cooling down; None if one of them isn't cooling."""
+        with db.connect() as conn:
+            rows = conn.execute("""
+                SELECT m, extract(epoch FROM (c.until - now())) AS left FROM unnest(%s::text[]) AS m
+                LEFT JOIN ai_cooling c ON c.model = m""", (models,)).fetchall()
+        left = [float(r["left"]) if r["left"] is not None else 0.0 for r in rows]
+        return None if not left or min(left) <= 0 else min(left)
+
     def used(self, handle: object, tokens: int) -> None:
         if handle is not None:
             with db.connect() as conn:

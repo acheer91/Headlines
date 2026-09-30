@@ -46,6 +46,14 @@ class BadReply(AIError):
     """The model's reply broke the requested format (Groq: json_validate_failed). Worth one rewrite."""
 
 
+class TooLarge(AIError):
+    """The prompt can't fit in one model-minute with room for a reply: retrying won't help."""
+
+
+class NoKey(AIError):
+    """No API key configured (the off switch): retrying won't help."""
+
+
 def writer() -> str:
     return os.environ.get("AI_WRITER", "groq")
 
@@ -144,6 +152,13 @@ class MemoryQuota:
     def used(self, handle: object, tokens: int) -> None:
         pass
 
+    def cooling_left(self, models: list[str]) -> float | None:
+        """Seconds until the first of `models` stops cooling down; None if one of them isn't cooling."""
+        now = time.monotonic()
+        with self._lock:
+            left = [self._cooling.get(m, 0) - now for m in models]
+        return None if not left or min(left) <= 0 else min(left)
+
 
 quota = MemoryQuota()
 _mode = threading.local()
@@ -188,13 +203,23 @@ def _failover(models: list[str], prompt: str, json_out: bool, max_out: int, avoi
               checker: bool = False) -> tuple[str, str]:
     order = [m for m in models if m != avoid] or list(models)
     # Groq counts the prompt plus the whole reply allowance against the minute (429s when we counted real usage,
-    # 2026-09-29), so that is what we reserve: ~4 characters a token plus max_out.
-    cost = len(prompt) // 4 + max_out
+    # 2026-09-29), so that is what we reserve: ~4 characters a token plus max_out. One request can never be more
+    # than the minute, so the reply allowance shrinks to fit; a prompt that leaves too little room is refused.
+    prompt_tokens = len(prompt) // 4
+    max_out = min(max_out, GROQ_TPM - prompt_tokens - MARGIN)
+    if max_out < MIN_OUT:
+        raise TooLarge(f"prompt of ~{prompt_tokens} tokens leaves no room for a reply in {GROQ_TPM} a minute")
+    cost = prompt_tokens + max_out
     last: AIError = RateLimited("every model is rate-limited or has no room this minute")
     tried: set[str] = set()
     while True:
         got = quota.reserve([m for m in order if m not in tried], cost, GROQ_TPM, _waiting())
         if got is None:
+            # Every model cooling down: come back when the first one is free (Groq's "try again in 3h"), not in
+            # a minute. A retry at 60 s burned all 8 tries in minutes (audit, 2026-09-29).
+            wait = quota.cooling_left(order)
+            if wait is not None:
+                raise RateLimited(f"every model cooling down for {wait:.0f}s", max(wait, 1.0))
             raise last
         name, handle = got
         tried.add(name)
@@ -209,6 +234,8 @@ def _failover(models: list[str], prompt: str, json_out: bool, max_out: int, avoi
             if not checker:
                 raise                 # a writer's bad JSON is the text's fault: the writer rewrites it
             last = exc                # a checker's bad JSON: ask the next checker (gpt-oss-20b ran out of room, Sep 29)
+        except NoKey:
+            raise                     # every model uses the same key: no point trying the others
         except AIError as exc:        # a 5xx, a timeout, a retired model: try the next one
             last = exc
 
@@ -218,7 +245,7 @@ def _failover(models: list[str], prompt: str, json_out: bool, max_out: int, avoi
 def _groq_post(body: dict) -> dict:
     key = os.environ.get("GROQ_API_KEY")
     if not key:
-        raise AIError("GROQ_API_KEY not set")
+        raise NoKey("GROQ_API_KEY not set")
     try:
         r = httpx.post(GROQ_URL, json=body, headers={"Authorization": f"Bearer {key}"}, timeout=TIMEOUT)
     except httpx.HTTPError as exc:
@@ -237,6 +264,8 @@ def _groq_post(body: dict) -> dict:
 
 MAX_OUT = 3000           # includes the model's reasoning tokens
 CHECK_MAX_OUT = 2000     # the fact-check reply is a short JSON list (plus the model's reasoning)
+MARGIN = 200             # our ~4-characters-a-token estimate runs a little low
+MIN_OUT = 600            # less room than this for a reply isn't worth a call
 REASONING = os.environ.get("GROQ_REASONING", "medium")   # "low" made factual slips (wrong team, wrong bet result)
 tokens_used = 0         # Groq writing tokens this process (the samples script reports it per text)
 
@@ -303,7 +332,7 @@ def _gemini_call(prompt: str, json_out: bool) -> str:
     from google.genai import errors, types
     key = os.environ.get("GEMINI_API_KEY")
     if not key:
-        raise AIError("GEMINI_API_KEY not set")
+        raise NoKey("GEMINI_API_KEY not set")
     if _gemini_client is None:
         from google import genai
         _gemini_client = genai.Client(api_key=key, http_options=types.HttpOptions(timeout=TIMEOUT * 1000))

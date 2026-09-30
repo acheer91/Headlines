@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from .. import db, espn, favorites, games
-from . import sources, store, writer
+from . import client, facts, sources, store, writer
 
 log = logging.getLogger(__name__)
 PACIFIC = ZoneInfo("America/Los_Angeles")
@@ -54,14 +54,19 @@ def row_basis(kind: str, row: dict) -> str:
 
 
 def fingerprint(page: dict, articles: list[dict]) -> str:
-    """What a preview says that can change after it is written: injuries, the line, the articles it used."""
-    line = page.get("line") or {}
-    data = {"injuries": page.get("injuries"), "line": [line.get("details"), line.get("total")],
-            "articles": sorted(a["url"] for a in articles)}
+    """Everything a preview is written from that can change after it is written: the whole game fact sheet
+    (records, ranks, line, stats, injuries without ESPN's shifting return dates, kickoff) and the articles used.
+    Injuries and the line alone missed a record or a rank moving before a game written 6 days ahead (audit)."""
+    data = {"facts": facts.preview_facts(page)["facts"], "articles": sorted(a["url"] for a in articles)}
     return hashlib.sha1(json.dumps(data, sort_keys=True, default=str).encode()).hexdigest()[:16]
 
 
 def write_for_game(kind: str, game_id: int, reason: str, base_url: str = espn.BASE) -> dict:
+    with db.connect() as conn:
+        held = store.get(conn, game_id, kind)
+    if store.being_written(held):
+        # Someone holds a live claim: don't rebuild the page or fetch articles only to find that out.
+        return {"status": "busy", "id": held["id"]}
     page = _page(game_id, base_url)
     if page is None:
         return {"status": "missing", "id": None}
@@ -72,20 +77,27 @@ def write_for_game(kind: str, game_id: int, reason: str, base_url: str = espn.BA
     if kind == "preview":
         with db.connect() as conn:
             news = store.news(conn, [page["league"]])
-        articles, _trail = sources.find_articles(page, news)
+        try:
+            articles, _trail = sources.find_articles(page, news)
+        except client.AIError as exc:
+            # The search couldn't run and ESPN had nothing: retry later, never store "no fresh previews".
+            log.warning("ai preview game %s: no articles yet, search unavailable: %s", game_id, exc)
+            return {"status": "failed", "id": None,
+                    "retry_after": getattr(exc, "retry_after", None) or writer.TRANSIENT_RETRY}
         fp = fingerprint(page, articles)
     with db.connect() as conn:
         before = store.get(conn, game_id, kind)
         if store.current(before, b, fp):
             return {"status": "current", "id": before["id"]}
-        rid = store.claim(conn, game_id, kind, b, fp, reason)
-    if rid is None:
+        c = store.claim(conn, game_id, kind, b, fp, reason)
+    if c is None:
         return {"status": "busy", "id": before["id"] if before else None}
 
     try:
         if kind == "preview":
-            # Game-morning refresh with the same articles: only our own data changed, so reuse the saved extract.
-            same_articles = (before and before["status"] == "ready" and before["extract"]
+            # Game-morning refresh with the same articles: only our own data changed, so reuse the saved extract
+            # (stored by article URL, so it maps onto today's article order).
+            same_articles = (before and before["body"] is not None and before["extract"]
                              and sorted(s["url"] for s in before["sources"] or []) == sorted(a["url"] for a in articles))
             result = writer.write_preview(page, articles, before["extract"] if same_articles else None)
         elif kind == "recap":
@@ -96,10 +108,13 @@ def write_for_game(kind: str, game_id: int, reason: str, base_url: str = espn.BA
         log.exception("ai %s game %s crashed", kind, game_id)
         result = {"status": "failed", "reason": f"crashed: {type(exc).__name__}"}
     with db.connect() as conn:
-        store.save(conn, rid, result)
+        saved = store.save(conn, c, result)
+    if not saved:
+        log.warning("ai %s game %s: claim taken over while writing; result dropped", kind, game_id)
+        return {"status": "busy", "id": c.id}
     log.info("ai %s game %s (%s): %s in %.1fs by %s", kind, game_id, reason, result["status"],
              result.get("seconds", 0), result.get("model"))
-    return {"status": result["status"], "id": rid, "retry_after": result.get("retry_after")}
+    return {"status": result["status"], "id": c.id, "retry_after": result.get("retry_after")}
 
 
 def write_headlines(leagues: list[str], reason: str) -> dict:
@@ -140,11 +155,14 @@ def upcoming(league: str, through: timedelta, kinds: tuple[str, ...] = ("preview
 
 
 def unwritten_recaps(league: str, within: timedelta) -> list[int]:
-    """Finished games in the last `within` with no ready recap (the nightly job)."""
+    """Finished games in the last `within` with no ready recap, or one written from a score that has since been
+    corrected (the nightly job)."""
     with db.connect() as conn:
         return [r["id"] for r in conn.execute("""
             SELECT g.id FROM games g
             LEFT JOIN ai_texts t ON t.game_id = g.id AND t.kind = 'recap'
             WHERE g.league = %s AND g.state = 'post' AND g.completed IS TRUE
-              AND g.start_time > now() - %s AND (t.status IS NULL OR t.status = 'failed')
+              AND g.start_time > now() - %s
+              AND (t.status IS NULL OR t.status = 'failed'
+                   OR t.basis IS DISTINCT FROM g.away_score || '-' || g.home_score)   -- a stat correction
             ORDER BY g.start_time DESC""", (league, within)).fetchall()]

@@ -19,8 +19,10 @@ import time
 from typing import Callable
 
 from . import client, facts, prompts
+from .sources import mentions, team_terms
 
 COPY_WORDS = 8
+TRANSIENT_RETRY = 300.0     # seconds before the worker retries a text that failed on a 5xx or a timeout
 NUM = re.compile(r"\d+(?:\.\d+)?")
 ADVICE = re.compile(r"\b(you should|should bet|take the (over|under|points)|hammer|lock of|best bet|smash|fade|"
                     r"we like|bet on|expect)\b", re.I)     # "Expect a low total" is a prediction
@@ -127,8 +129,11 @@ def _run(fn: Callable[[dict], dict]) -> dict:
         out = {"status": "failed", "reason": f"check failed twice: {exc}"}
     except client.RateLimited as exc:
         out = {"status": "failed", "reason": f"rate limited: {exc}", "retry_after": exc.retry_after}
+    except (client.NoKey, client.TooLarge) as exc:
+        out = {"status": "failed", "reason": str(exc)}                 # retrying can't help
     except client.AIError as exc:
-        out = {"status": "failed", "reason": str(exc)}
+        # A 5xx, a timeout, an unreadable check: worth another try later (the worker retries on retry_after).
+        out = {"status": "failed", "reason": str(exc), "retry_after": TRANSIENT_RETRY}
     return out | {"calls": stats["calls"], "checks": stats.get("checks", 0), "rejected": stats.get("rejected", []),
                   "seconds": round(time.monotonic() - t, 1), "model": client.last_writer(),
                   "checker": client.last_checker()}
@@ -137,8 +142,8 @@ def _run(fn: Callable[[dict], dict]) -> dict:
 # ---------------------------------------------------------------- preview
 
 def write_preview(game: dict, articles: list[dict], extract: dict | None = None) -> dict:
-    """extract: the article extract saved with an earlier version of this preview, for the same articles. The
-    game-morning refresh passes it when only our own data changed (injuries, line), skipping the extract call."""
+    """extract: the article extract saved with an earlier version of this preview (keyed by article URL), for the
+    same articles. The game-morning refresh passes it when only our own data changed, skipping the extract call."""
     if not articles:
         return {"status": "no_sources", "calls": 0, "rejected": [], "seconds": 0.0, "model": client.model()}
     saved = extract
@@ -171,7 +176,9 @@ def write_preview(game: dict, articles: list[dict], extract: dict | None = None)
             extract = _step(prompts.EXTRACT_PREVIEW.format(game=g, articles=arts, home=game["home"]["name"],
                                                            away=game["away"]["name"]), check_extract, stats)
         else:
-            extract = saved
+            # Saved by URL: map onto today's numbering. The same articles can come back in another order, and
+            # positions would then point an edge at the wrong article (audit, 2026-09-29).
+            extract = _by_id(saved, {a["url"]: i for i, a in ids.items()})
         sheet = {"game": gf["facts"], "storylines": extract.get("storylines") or [],
                  "edges": extract.get("edges") or {}}
         fj = json.dumps(sheet, ensure_ascii=False)
@@ -195,15 +202,74 @@ def write_preview(game: dict, articles: list[dict], extract: dict | None = None)
         picks = []
         for p in extract.get("picks") or []:
             a = ids.get(p.get("article")) if isinstance(p, dict) else None
-            # Attributed and linked, and the writer really appears in that article.
-            if (a and isinstance(p.get("writer"), str) and isinstance(p.get("pick"), str) and p["writer"].strip()
-                    and p["writer"] in a["text"]):
-                picks.append({"writer": p["writer"], "outlet": a["outlet"], "pick": p["pick"], "url": a["url"]})
+            why = pick_problem(p, a, game)
+            if why:
+                stats.setdefault("rejected", []).append(f"pick dropped: {why}")
+                continue
+            picks.append({"writer": p["writer"].strip(), "outlet": a["outlet"], "pick": p["pick"].strip(),
+                          "url": a["url"]})
         return {"status": "ready", "body": {"preview": out["preview"], "edges": edges, "picks": picks},
                 "sources": [{k: a[k] for k in ("title", "url", "outlet", "published")} for a in articles],
-                "extract": extract}
+                "extract": _by_url(extract, {i: a["url"] for i, a in ids.items()})}
 
     return _run(go)
+
+
+PICK_WINDOW = 40          # words: a pick's writer and a team must be named this close together in its article
+PICK_MAX_WORDS = 15
+
+
+def pick_problem(p: object, article: dict | None, game: dict) -> str | None:
+    """Why a writer's pick can't be shown, or None. Picks go on screen as quoted from the extract, so they get their
+    own checks (the audit published "You should hammer the Bears, lock of the year" from a coach's quote):
+    a real article, short, no advice words, numbers only from that article, one of the two teams named, and the
+    writer's name within PICK_WINDOW words of a team name in the article."""
+    if not isinstance(p, dict) or article is None:
+        return "no such article"
+    who, pick = p.get("writer"), p.get("pick")
+    if not isinstance(who, str) or not who.strip() or not isinstance(pick, str) or not pick.strip():
+        return "missing writer or pick"
+    if len(pick.split()) > PICK_MAX_WORDS:
+        return "pick too long"
+    if ADVICE.search(pick):
+        return f"advice wording: {ADVICE.search(pick)[0]!r}"
+    body = f"{article['title']} {article['text']}"
+    if not numbers_ok(pick, body):
+        return "numbers not in its article"
+    terms = team_terms(game["home"]) + team_terms(game["away"])
+    if not mentions(pick, terms):
+        return "names neither team"
+    words = body.split()
+    first = who.split()[0].lower()
+    last = who.split()[-1].lower().strip(".,")
+    near = False
+    for i, w in enumerate(words):
+        if w.lower().strip(".,'\"") == last and (i == 0 or first in words[i - 1].lower() or first == last):
+            window = " ".join(words[max(0, i - PICK_WINDOW): i + PICK_WINDOW])
+            if mentions(window, terms):
+                near = True
+                break
+    return None if near else "writer not named near a team in the article"
+
+
+def _by_url(extract: dict, url_of: dict[int, str]) -> dict:
+    """The extract with article numbers replaced by URLs, for storing."""
+    def conv(item):
+        return {k: v for k, v in item.items() if k != "article"} | {"url": url_of.get(item.get("article"))}
+    return {"storylines": [conv(x) for x in extract.get("storylines") or [] if isinstance(x, dict)],
+            "edges": {s: [conv(x) for x in (extract.get("edges") or {}).get(s) or [] if isinstance(x, dict)]
+                      for s in ("home", "away")},
+            "picks": [conv(x) for x in extract.get("picks") or [] if isinstance(x, dict)]}
+
+
+def _by_id(saved: dict, id_of: dict[str, int]) -> dict:
+    """A stored extract mapped onto today's article numbers; items whose article isn't here any more are dropped."""
+    def conv(items):
+        return [{k: v for k, v in x.items() if k != "url"} | {"article": id_of[x["url"]]}
+                for x in items or [] if isinstance(x, dict) and x.get("url") in id_of]
+    return {"storylines": conv(saved.get("storylines")),
+            "edges": {s: conv((saved.get("edges") or {}).get(s)) for s in ("home", "away")},
+            "picks": conv(saved.get("picks"))}
 
 
 # ---------------------------------------------------------------- recap

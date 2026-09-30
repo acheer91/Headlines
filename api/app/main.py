@@ -202,10 +202,14 @@ _ai_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="ai-open")
 
 
 def _ai_out(kind: str | None, row: dict | None) -> dict:
+    """The response for a stored row. While a preview is being refreshed its last good text is served as ready
+    (the 8 AM refresh must not blank a good midweek preview; audit, 2026-09-29)."""
     if not row:
         return {"kind": kind, "status": "missing", "body": None, "sources": None, "updated_at": None}
-    return {"kind": kind, "status": row["status"], "body": row["body"], "sources": row["sources"],
-            "updated_at": row["updated_at"].isoformat()}
+    shown = ai_store.showable(row)
+    status = row["status"] if shown is None or row["status"] != "writing" else "ready"
+    return {"kind": kind, "status": status, "body": row["body"] if shown else None,
+            "sources": row["sources"] if shown else None, "updated_at": row["updated_at"].isoformat()}
 
 
 def _write_on_open(kind: str, game_id: int) -> dict:
@@ -217,8 +221,9 @@ def _write_on_open(kind: str, game_id: int) -> dict:
 def game_ai(game_id: int):
     """The AI text that fits the game now (handoff 2.6): preview (pre), one-liner (live), recap (played final).
     status: ready | no_sources ("No fresh previews") | failed or writing (the app shows fallback text) | missing.
-    Current text comes back at once. Otherwise this request writes it (or waits for whoever is writing it) for up
-    to AI_WAIT seconds; a write that runs longer finishes in the background and the next open is instant."""
+    Current text comes back at once, and so does a text that failed for the same inputs in the last 30 minutes
+    (a pull shouldn't pay for the same failure again). Otherwise this request writes it (or waits for whoever is
+    writing it) for up to AI_WAIT seconds; a write that runs longer finishes in the background."""
     with db.connect() as conn:
         game_row = db.game_by_id(conn, game_id)
         if not game_row:
@@ -227,9 +232,12 @@ def game_ai(game_id: int):
         if kind is None:
             return _ai_out(None, None) | {"status": "none"}
         stored = ai_store.get(conn, game_id, kind)
+    basis = ai_jobs.row_basis(kind, game_row)
     # The api doesn't recompute a preview's fingerprint (that fetches articles): the 8 AM refresh does.
-    if ai_store.current(stored, ai_jobs.row_basis(kind, game_row)):
+    if ai_store.current(stored, basis) or ai_store.failed_recently(stored, basis):
         return _ai_out(kind, stored)
+    if ai_store.being_written(stored) and ai_store.showable(stored):
+        return _ai_out(kind, stored)            # a preview mid-refresh: its last good text, at once
     job = _ai_pool.submit(_write_on_open, kind, game_id)
     deadline = time.monotonic() + AI_WAIT[kind]
     try:
@@ -238,11 +246,13 @@ def game_ai(game_id: int):
         pass
     except Exception:  # noqa: BLE001 — the page still shows fallback text
         log.exception("ai %s for game %s failed", kind, game_id)
-    # Busy (another writer holds the row) or still writing: re-read once a second until the limit.
+    # Busy (another writer holds the row) or still writing: re-read once a second until the limit. Once this
+    # request's own job has finished, a missing or settled row is the answer: no point waiting out the limit.
     while True:
         with db.connect() as conn:
             row = ai_store.get(conn, game_id, kind)
-        if (row and row["status"] != "writing") or time.monotonic() >= deadline:
+        settled = row is not None and (row["status"] != "writing" or ai_store.showable(row) is not None)
+        if settled or (job.done() and row is None) or time.monotonic() >= deadline:
             return _ai_out(kind, row)
         time.sleep(1)
 
