@@ -33,7 +33,8 @@ Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `ph
 `docs/phase4-stage2-temporal-spec.md`. Deploy only after Adam approves samples and Phase 5b is signed off, Tue/Wed.
 - **Models (Groq, free):** writer `openai/gpt-oss-120b`, fact-checker `qwen/qwen3.8-27b`, search `openai/gpt-oss-20b`
   browser search; each fails over to the others (`AI_WRITERS`, `AI_CHECKERS`); a model never checks its own text.
-  Gemini is optional (`AI_WRITER=gemini`; 20 requests/day). Free tier per model: 8K tokens/min, 200K tokens/day on
+  Gemini side pool (headlines, weekday pre-writing, last fallback; Adam) is planned, not built. **Never set
+  `AI_WRITER=gemini` as a fallback:** it moves all writing to Gemini's 20 requests/day and runs out at once. Free tier per model: 8K tokens/min, 200K tokens/day on
   a rolling 24 h window. Bake-off (Sep 29): Qwen as a writer invents claims (streaks, leads) — writer of last resort.
 - **Facts only from inputs, enforced in code** (`app/ai/`): recap and preview game facts are built by code
   (`facts.py`), never read raw by a model; numbers must appear in the facts; bet results are written by code
