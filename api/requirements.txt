@@ -5,3 +5,4 @@ psycopg[binary,pool]==3.3.*
 pytest==9.*
 temporalio==1.33.*
 pytest-asyncio==1.*
+google-genai==2.*
