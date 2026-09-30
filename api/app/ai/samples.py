@@ -141,7 +141,9 @@ def _title(game: dict) -> str:
 
 def _status(res: dict, secs: str) -> str:
     extra = f" · rejected then rewritten: {'; '.join(res['rejected'])}" if res.get("rejected") else ""
-    return f"*{res['status']} · {secs} · {res['calls']} writes + {res.get('checks', 0)} fact checks, {res.get('tokens', 0):,} tokens{extra}*\n"
+    who = f" · written by {res['model']}" + (f", checked by {res['checker']}" if res.get("checker") else "")
+    return (f"*{res['status']} · {secs} · {res['calls']} writes + {res.get('checks', 0)} fact checks, "
+            f"{res.get('tokens', 0):,} tokens{who}{extra}*\n")
 
 
 def _preview_md(game, res, trail, t_src, t_write) -> list[str]:
