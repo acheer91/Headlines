@@ -46,6 +46,20 @@ def test_preview_allowed_ranks_count_from_fewest():
     assert "Season points / game: Ohio State 45.0 (6th nationally), Iowa 32.8 (58th nationally)." in lines
 
 
+def test_live_facts_mark_the_current_quarter():
+    g = load("final_bal_dal")
+    g.update(state="in", status_detail="Q3 4:12", situation={"possession": "BAL", "down_distance": "3rd & 4 at DAL 35"})
+    g["home"]["score"], g["away"]["score"] = 18, 21
+    g["header"]["home"]["linescores"], g["header"]["away"]["linescores"] = [10, 3, 5], [7, 10, 4]
+    lines = facts.live_facts(g)["facts"]
+    assert lines[0] == "Live, Q3 4:12: Baltimore Ravens 21, Dallas Cowboys 18."
+    assert "Baltimore Ravens leads by 3 right now." in lines
+    assert "Points in Q2: Ravens 10, Cowboys 3." in lines
+    assert "Points in Q3 (in progress): Ravens 4, Cowboys 5." in lines
+    assert "Baltimore Ravens has the ball, 3rd & 4 at DAL 35." in lines
+    assert not any("Final" in l or "won by" in l for l in lines)
+
+
 def test_tied_quarter_break():
     g = load("final_phi_chi")
     g["header"]["home"]["linescores"], g["header"]["away"]["linescores"] = [7, 0, 0, 0], [7, 0, 0, 3]

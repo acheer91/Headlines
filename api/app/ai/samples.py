@@ -92,37 +92,42 @@ def _timed(fn, *args):
 
 
 def main() -> None:
+    """SAMPLES_ONLY=recaps (or previews,headlines) limits the run; SAMPLES_OUT writes somewhere else; AI_WRITERS and
+    AI_CHECKERS pin the models (the backup-writer bake-off)."""
     _load_keys()
+    only = {k.strip() for k in os.environ.get("SAMPLES_ONLY", "previews,recaps,headlines").split(",")}
+    out_path = Path(os.environ.get("SAMPLES_OUT", OUT))
     md = [f"# Phase 4 voice samples\n\nGenerated {datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC by "
-          f"`python -m app.ai.samples` · writer `{client.model()}` · search: stored ESPN news, then Groq "
+          f"`python -m app.ai.samples` · writers `{', '.join(client.WRITERS)}` · checkers `{', '.join(client.CHECKERS)}` · search: stored ESPN news, then Groq "
           f"(`{client.GROQ_SEARCH_MODEL}`) limited to {', '.join(sources.SEARCH_SITES)}.\n\n"
           "Times exclude waiting for the free tier's per-minute limit. Targets (Adam): preview 15 s, recap 8 s.\n"]
     raw = []
     with psycopg.connect(db_url(), row_factory=dict_row) as conn:
         md.append("## Previews\n")
-        for league, away, home in PREVIEWS:
+        for league, away, home in PREVIEWS if "previews" in only else []:
             game = _game(_game_id(conn, league, away, home))
             (arts, trail), t_src = _timed(sources.find_articles, game, _news(conn, league))
             res, t_write = _timed(writer.write_preview, game, arts)
             raw.append({"kind": "preview", "game": f"{away}@{home}", "result": res, "trail": trail})
             md += _preview_md(game, res, trail, t_src, t_write)
         md.append("## Recaps\n")
-        for league, away, home in RECAPS:
+        for league, away, home in RECAPS if "recaps" in only else []:
             game = _game(_game_id(conn, league, away, home))
             res, t = _timed(writer.write_recap, game)
             raw.append({"kind": "recap", "game": f"{away}@{home}", "result": res})
             md += _recap_md(game, res, t)
         md.append("## Headlines\n")
         now = datetime.now(timezone.utc)
-        for label, before in (("Now", now), ("As of Sep 28, 11:00 AM PT", datetime(2026, 9, 28, 18, tzinfo=timezone.utc))):
+        runs = (("Now", now), ("As of Sep 28, 11:00 AM PT", datetime(2026, 9, 28, 18, tzinfo=timezone.utc)))
+        for label, before in runs if "headlines" in only else []:
             news = _news(conn, ["nfl", "ncaaf"], before, 30)
             res, t = _timed(writer.write_headlines, news, _finals(conn, before - timedelta(days=4), before))
             raw.append({"kind": "headlines", "as_of": label, "result": res})
             md += _headlines_md(label, res, t)
-    OUT.write_text("\n".join(md), encoding="utf-8", newline="\n")
+    out_path.write_text("\n".join(md), encoding="utf-8", newline="\n")
     Path(os.environ.get("SAMPLES_RAW", Path(tempfile.gettempdir()) / "phase4-samples.raw.json")).write_text(
         json.dumps(raw, indent=1, default=str), encoding="utf-8")
-    print(f"wrote {OUT}")
+    print(f"wrote {out_path}")
 
 
 def _title(game: dict) -> str:

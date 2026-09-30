@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import re
 import time
-from typing import Any, Callable
+from typing import Callable
 
 from . import client, facts, prompts
 
@@ -28,12 +28,6 @@ ADVICE = re.compile(r"\b(you should|should bet|take the (over|under|points)|hamm
 BAD_PERIOD = re.compile(r"\b(fifth|sixth|seventh|eighth|ninth|tenth)[\s\-‐-—]quarter", re.I)  # any hyphen: the model writes U+2011
 # Recaps leave bet results to code (bets_line), so betting words in the prose mean the model restated them.
 BET_TALK = re.compile(r"\b(spread|moneyline|covered|covering|cover|over/under|the (over|under)|push|bets?)\b", re.I)
-# Screen-only fields: nothing in them is a fact about the game.
-DROP = {"logo", "color", "placeholders", "screen", "stale", "error", "summary_updated_at", "summary_available",
-        "summary_behind", "time_valid", "id", "favorite", "last_name", "key", "possession", "captured_after_kickoff",
-        "line_source", "home_spread", "home_ml", "away_ml", "one_liner"}
-
-
 class CheckFailed(Exception):
     pass
 
@@ -56,18 +50,6 @@ def copied(text: str, articles: list[dict], n: int = COPY_WORDS) -> str | None:
             if g in grams:
                 return g
     return None
-
-
-def _strip(v: Any) -> Any:
-    if isinstance(v, dict):
-        return {k: _strip(x) for k, x in v.items() if k not in DROP and x not in (None, [], {})}
-    if isinstance(v, list):
-        return [_strip(x) for x in v]
-    return v
-
-
-def game_facts(game: dict) -> str:
-    return json.dumps(_strip(game), ensure_ascii=False)
 
 
 def _json(prompt: str) -> dict:
@@ -147,7 +129,7 @@ def _run(fn: Callable[[dict], dict]) -> dict:
     except client.AIError as exc:
         out = {"status": "failed", "reason": str(exc)}
     return out | {"calls": stats["calls"], "checks": stats.get("checks", 0), "rejected": stats.get("rejected", []),
-                  "seconds": round(time.monotonic() - t, 1), "model": client.model()}
+                  "seconds": round(time.monotonic() - t, 1), "model": client.last_writer()}
 
 
 # ---------------------------------------------------------------- preview
@@ -259,13 +241,16 @@ def recap_fallback(game: dict) -> str:
 
 def write_one_liner(game: dict) -> dict:
     def go(stats):
-        g = game_facts(game)
+        fj = json.dumps(facts.live_facts(game)["facts"], ensure_ascii=False)
 
         def check(x):
-            _texts_ok([x.get("line")], g)
-            _fact_check([x.get("line")], g, stats)
+            line = x.get("line")
+            _texts_ok([line], fj)
+            if isinstance(line, str) and len(line.split()) > 40:
+                raise CheckFailed(f"one-liner is {len(line.split())} words")
+            _fact_check([line], fj, stats)
 
-        out = _step(prompts.ONE_LINER.format(game=g), check, stats)
+        out = _step(prompts.ONE_LINER.format(facts=fj, voice=prompts.VOICE), check, stats)
         return {"status": "ready", "body": {"line": out["line"]}}
 
     return _run(go)

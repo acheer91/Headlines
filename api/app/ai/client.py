@@ -1,13 +1,15 @@
-"""The outside AI calls: write() for the text, groq_search() for preview articles.
+"""The outside AI calls: write() for the text, check() for the fact check, groq_search() for preview articles.
 
-Writer: Groq (Adam, 2026-09-29, after Gemini's free tier turned out to be 20 requests a day). Gemini stays
-selectable with AI_WRITER=gemini. Keys come from the environment only (GROQ_API_KEY, GEMINI_API_KEY) and are
-never logged, nor are full prompts. Free tiers: a 429 raises RateLimited and the caller shows fallback text;
-anything else raises AIError. One attempt per call, 30 s timeout.
+Writing and checking fail over across free Groq models (Adam, 2026-09-29, option C): each model has its own quota,
+so when one is rate-limited the call moves to the next instead of failing. A model never fact-checks its own text.
+Gemini stays selectable with AI_WRITER=gemini (its free tier is 20 requests a day). Keys come from the environment
+only (GROQ_API_KEY, GEMINI_API_KEY) and are never logged, nor are full prompts. When every model is limited,
+RateLimited reaches the caller, which shows fallback text; any other failure raises AIError. 30 s timeout per call.
 """
 from __future__ import annotations
 
 import os
+import re
 import threading
 import time
 from collections import deque
@@ -17,10 +19,16 @@ import httpx
 TIMEOUT = 30
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_SEARCH_MODEL = "openai/gpt-oss-20b"     # the free models with browser search
-# Free tier per model (headers, 2026-09-29): 1,000 requests a day, 8,000 tokens a minute. Writing on a different
-# model from search keeps their quotas apart.
+# Free tier per model (headers and 429 text, 2026-09-29): 1,000 requests and 200K tokens a day (a rolling 24 h),
+# 8,000 tokens a minute.
 GROQ_TPM = int(os.environ.get("GROQ_TPM", "8000"))
 GEMINI_RPM = int(os.environ.get("GEMINI_RPM", "5"))    # gemini-3.6-flash free tier; 20 requests a day
+
+# Best first. The writer leads with gpt-oss-120b; Qwen checks. Both lists fall back to the other models.
+WRITERS = [m.strip() for m in os.environ.get(
+    "AI_WRITERS", "openai/gpt-oss-120b,qwen/qwen3.8-27b,openai/gpt-oss-20b").split(",") if m.strip()]
+CHECKERS = [m.strip() for m in os.environ.get(
+    "AI_CHECKERS", "qwen/qwen3.8-27b,openai/gpt-oss-20b,openai/gpt-oss-120b").split(",") if m.strip()]
 
 
 class AIError(Exception):
@@ -28,7 +36,9 @@ class AIError(Exception):
 
 
 class RateLimited(AIError):
-    pass
+    def __init__(self, msg: str, retry_after: float = 60.0):
+        super().__init__(msg)
+        self.retry_after = retry_after
 
 
 class BadReply(AIError):
@@ -40,49 +50,115 @@ def writer() -> str:
 
 
 def model() -> str:
+    """The first-choice writing model (what a text is written with unless it failed over)."""
     if writer() == "gemini":
         return os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
-    return os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
+    return WRITERS[0]
+
+
+_last = threading.local()
+
+
+def last_writer() -> str:
+    """The model that wrote this thread's most recent text."""
+    return getattr(_last, "writer", None) or model()
 
 
 def write(prompt: str, *, json_out: bool = False) -> str:
-    """One call to the writing model. Returns the reply text (a JSON string when json_out)."""
-    return _gemini_call(prompt, json_out) if writer() == "gemini" else _groq_write(prompt, json_out)
-
-
-def check_model() -> str:
-    # A different model family from the writer, so it doesn't share the writer's blind spots (Adam, 2026-09-29).
-    return os.environ.get("GROQ_CHECK_MODEL", "qwen/qwen3.8-27b")
+    """One text from the first writing model that has room. Returns the reply (a JSON string when json_out)."""
+    if writer() == "gemini":
+        _last.writer = model()
+        return _gemini_call(prompt, json_out)
+    text, used = _failover(WRITERS, prompt, json_out, MAX_OUT, avoid=None)
+    _last.writer = used
+    return text
 
 
 def check(prompt: str) -> str:
-    """One call to the fact-checking model. Returns a JSON string."""
-    return _groq_write(prompt, True, model_name=check_model())
+    """One fact check, by a model other than the one that wrote the text. Returns a JSON string."""
+    text, _ = _failover(CHECKERS, prompt, True, CHECK_MAX_OUT, avoid=last_writer(), checker=True)
+    return text
 
 
-# ---------------------------------------------------------------- pacing
+def check_model() -> str:
+    return next((m for m in CHECKERS if m != last_writer()), CHECKERS[0])
 
-# Per model: each Groq model has its own per-minute limit. [time, cost] of recent calls.
+
+# ---------------------------------------------------------------- failover and pacing
+
+# Per model: each Groq model has its own per-minute limit. (time, reserved tokens) of recent calls.
 _windows: dict[str, deque] = {}
+_cooling: dict[str, float] = {}     # model -> monotonic time it may be tried again after a 429
 _pace = threading.Lock()
 paced_seconds = 0.0     # total time spent waiting (the samples script subtracts it from timings)
 
 
-def _wait(cost: int, limit: int, key: str) -> None:
-    """Stay under a model's per-minute limit in this process (cost = tokens or 1 request) instead of hitting 429s."""
+def _room(key: str, cost: int, limit: int, now: float) -> bool:
+    w = _windows.setdefault(key, deque())
+    while w and now - w[0][0] >= 60:
+        w.popleft()
+    return sum(c for _, c in w) + cost <= limit or not w
+
+
+def _reserve(models: list[str], cost: int, limit: int) -> str | None:
+    """The first model that isn't cooling down and has room this minute, reserved; else wait for the first one
+    that isn't cooling down. None when every model is cooling down."""
     global paced_seconds
     with _pace:
-        _window = _windows.setdefault(key, deque())
         while True:
             now = time.monotonic()
-            while _window and now - _window[0][0] >= 60:
-                _window.popleft()
-            if sum(c for _, c in _window) + cost <= limit or not _window:
-                _window.append((now, cost))
-                return
-            wait = 60 - (now - _window[0][0]) + 0.1
+            usable = [m for m in models if _cooling.get(m, 0) <= now]
+            if not usable:
+                return None
+            for m in usable:
+                if _room(m, cost, limit, now):
+                    _windows[m].append((now, cost))
+                    return m
+            first = _windows[usable[0]]
+            wait = 60 - (now - first[0][0]) + 0.1
             paced_seconds += wait
             time.sleep(wait)
+
+
+def _wait(cost: int, limit: int, key: str) -> None:
+    """Block until one model (Gemini, search) has room this minute."""
+    _reserve([key], cost, limit)
+
+
+_RETRY = re.compile(r"try again in (?:(\d+)h)?(?:(\d+)m)?(?:([\d.]+)s)?")
+
+
+def _retry_after(text: str) -> float:
+    """Seconds from Groq's 429 text ("Please try again in 6m49.1s"); a minute when it doesn't say."""
+    m = _RETRY.search(text or "")
+    if not m or not any(m.groups()):
+        return 60.0
+    h, mi, s = (float(x) if x else 0.0 for x in m.groups())
+    return h * 3600 + mi * 60 + s
+
+
+def _failover(models: list[str], prompt: str, json_out: bool, max_out: int, avoid: str | None,
+              checker: bool = False) -> tuple[str, str]:
+    order = [m for m in models if m != avoid] or list(models)
+    # Groq counts the prompt plus the whole reply allowance against the minute (429s when we counted real usage,
+    # 2026-09-29), so that is what we reserve: ~4 characters a token plus max_out.
+    cost = len(prompt) // 4 + max_out
+    last: AIError = RateLimited("every model is rate-limited")
+    tried: set[str] = set()
+    while True:
+        name = _reserve([m for m in order if m not in tried], cost, GROQ_TPM)
+        if name is None:
+            raise last
+        tried.add(name)
+        try:
+            return _groq_write(prompt, json_out, name, max_out, checker), name
+        except RateLimited as exc:
+            _cooling[name] = time.monotonic() + exc.retry_after
+            last = exc
+        except BadReply:
+            raise                     # the text's fault, not the model's: the writer rewrites it
+        except AIError as exc:        # a 5xx, a timeout: try the next model
+            last = exc
 
 
 # ---------------------------------------------------------------- Groq
@@ -96,7 +172,7 @@ def _groq_post(body: dict) -> dict:
     except httpx.HTTPError as exc:
         raise AIError(f"groq: {type(exc).__name__}") from None
     if r.status_code == 429:
-        raise RateLimited("groq 429")
+        raise RateLimited(f"groq 429 ({body.get('model')})", _retry_after(r.text))
     if r.status_code == 400 and "json_validate_failed" in r.text:
         raise BadReply("groq: reply was not valid JSON")
     if r.status_code != 200:
@@ -113,25 +189,19 @@ REASONING = os.environ.get("GROQ_REASONING", "medium")   # "low" made factual sl
 tokens_used = 0         # Groq writing tokens this process (the samples script reports it per text)
 
 
-def _groq_write(prompt: str, json_out: bool, model_name: str | None = None) -> str:
-    name = model_name or model()
-    max_out = MAX_OUT if model_name is None else CHECK_MAX_OUT
-    # Groq counts the prompt plus the whole reply allowance against the minute (429s when we counted real usage,
-    # 2026-09-29), so that is what we reserve: ~4 characters a token plus max_out.
-    _wait(len(prompt) // 4 + max_out, GROQ_TPM, name)
+def _groq_write(prompt: str, json_out: bool, name: str, max_out: int, checker: bool) -> str:
     body = {"model": name, "max_completion_tokens": max_out, "messages": [{"role": "user", "content": prompt}]}
     if name.startswith("openai/gpt-oss"):
         body["reasoning_effort"] = REASONING
     else:
         body["reasoning_format"] = "hidden"     # Qwen: keep its thinking out of the JSON reply
-    if model_name is not None:
+    if checker:
         body["temperature"] = 0      # the checker should give the same verdict every time (it missed 1 of 8 once)
     if json_out:
         body["response_format"] = {"type": "json_object"}
     d = _groq_post(body)
     global tokens_used
-    used = (d.get("usage") or {}).get("total_tokens") or 0
-    tokens_used += used
+    tokens_used += (d.get("usage") or {}).get("total_tokens") or 0
     try:
         text = d["choices"][0]["message"]["content"]
     except (KeyError, IndexError):
@@ -151,6 +221,7 @@ def groq_search(query: str) -> list[dict]:
     body = {"model": GROQ_SEARCH_MODEL, "reasoning_effort": "low", "max_completion_tokens": 300,
             "tools": [{"type": "browser_search"}],
             "messages": [{"role": "system", "content": SEARCH_SYSTEM}, {"role": "user", "content": query}]}
+    _wait(2000, GROQ_TPM, GROQ_SEARCH_MODEL)    # search shares gpt-oss-20b's minute with its writing fallback
     try:
         tools = _groq_post(body)["choices"][0]["message"].get("executed_tools") or []
     except (KeyError, IndexError):
