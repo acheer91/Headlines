@@ -152,6 +152,10 @@ class MemoryQuota:
     def used(self, handle: object, tokens: int) -> None:
         pass
 
+    def is_cooling(self, model_name: str) -> bool:
+        with self._lock:
+            return self._cooling.get(model_name, 0) > time.monotonic()
+
     def cooling_left(self, models: list[str]) -> float | None:
         """Seconds until the first of `models` stops cooling down; None if one of them isn't cooling."""
         now = time.monotonic()
@@ -213,14 +217,24 @@ def _failover(models: list[str], prompt: str, json_out: bool, max_out: int, avoi
     last: AIError = RateLimited("every model is rate-limited or has no room this minute")
     tried: set[str] = set()
     while True:
-        got = quota.reserve([m for m in order if m not in tried], cost, GROQ_TPM, _waiting())
-        if got is None:
+        # One queue per model, best first (Adam, 2026-09-29): a model whose minute is full is waited for (worker)
+        # or given up on (a page open, no_wait); the next model is used only when this one is cooling down after
+        # a 429 (daily limit) or erroring. Handing work to the backups whenever the writer's minute was full put
+        # most batch writing on Qwen, which invented claims in 8 of 9 bake-off drafts (audit).
+        name = next((m for m in order if m not in tried and not quota.is_cooling(m)), None)
+        if name is None:
             # Every model cooling down: come back when the first one is free (Groq's "try again in 3h"), not in
             # a minute. A retry at 60 s burned all 8 tries in minutes (audit, 2026-09-29).
             wait = quota.cooling_left(order)
             if wait is not None:
                 raise RateLimited(f"every model cooling down for {wait:.0f}s", max(wait, 1.0))
             raise last
+        got = quota.reserve([name], cost, GROQ_TPM, _waiting())
+        if got is None:
+            if quota.is_cooling(name):         # started cooling meanwhile (another process got a 429)
+                tried.add(name)
+                continue
+            raise RateLimited(f"{name}: no room this minute", 60.0)      # a page open: fallback text now
         name, handle = got
         tried.add(name)
         try:

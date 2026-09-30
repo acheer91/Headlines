@@ -43,6 +43,12 @@ Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `ph
 - **8-day rule is hard** (`dates.py`, from Phase 0): no confirmable date (page or URL) or older than 8 days =
   dropped; none left = "No fresh previews". Articles: stored ESPN news first, Groq search (major outlets only,
   links taken from the tool's raw results, never the model's reply) only when ESPN has fewer than 2.
+- **Written ahead only for the pre-write list** (Adam, 2026-09-29; `app/ai/scope.py`): games with a favorite
+  (`config/favorites.json`) or college ranked vs ranked. Every other text is written the first time its page is
+  opened (~15 s). Checked in activities at the moment a text is due, so the list keeps itself current.
+- **One queue per model, 120b first:** a model whose minute is full is waited for (worker) or given up on (page open:
+  fallback text); the next model is used only when one is cooling down after a 429 or erroring (Qwen invented claims
+  as a writer). Claims carry a token and their own basis; a failed refresh keeps the last good preview.
 - **When text is written (Temporal):** `WriteTextWorkflow` per text (ID `ai-<kind>-<league>-<espn_id>`), activity
   `write_text` on task queue `ai` (3 at once); a rate limit retries after Groq's own wait (`next_retry_delay`), up to
   8 tries / 12 h. Midweek `PreviewBatchWorkflow` (NCAAF Wed+Thu, NFL Thu+Fri, 7 PM PT); the 8 AM `generate_preview`

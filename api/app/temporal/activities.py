@@ -20,6 +20,7 @@ from temporalio.exceptions import ApplicationError
 
 from .. import db, espn, favorites, games, ncaaf, summary
 from ..ai import jobs as ai_jobs
+from ..ai import scope as ai_scope
 from .models import GameRef, GameState, TextJob
 
 log = logging.getLogger(__name__)
@@ -208,7 +209,12 @@ def generate_preview(league: str, espn_id: str) -> None:
     """Game morning (8 AM PT, the Phase 3 step): the preview refresh. It starts WriteTextWorkflow and returns at
     once (this step has no retries and a 30 s limit); that workflow rewrites the preview only when the game day,
     injuries, line or articles changed since it was written midweek, and writes it if it was never written.
-    Activity-only change: GameWorkflow is untouched, so no versioning (spec, GameWorkflow)."""
+    Activity-only change: GameWorkflow is untouched, so no versioning (spec, GameWorkflow). Only games on the
+    pre-write list (app.ai.scope); every other preview is written when its page is opened."""
+    with db.connect() as conn:
+        row = db.game_by_espn_id(conn, league, espn_id)
+    if row is None or not ai_scope.is_prewritten(row):
+        return
     if start_text is None:
         activity.logger.warning("preview refresh for %s %s skipped: no Temporal client", league, espn_id)
         return
@@ -225,6 +231,9 @@ def write_text(job: TextJob) -> str:
         out = ai_jobs.write_headlines([x for x in job.league.split(",") if x], job.reason)
     else:
         row = _stored(job.league, job.espn_id)
+        if not ai_scope.is_prewritten(row):
+            # Off the pre-write list (e.g. the recap GameWorkflow starts at every final): written on open instead.
+            return "skipped"
         out = ai_jobs.write_for_game(job.kind, row["id"], job.reason, base_url=ESPN_BASE)
     if out["status"] == "failed" and out.get("retry_after"):
         wait = min(max(out["retry_after"], 60.0), 3 * 3600.0)
@@ -239,16 +248,16 @@ def write_text(job: TextJob) -> str:
 
 @activity.defn
 def texts_to_write(league: str, what: str, hours: int) -> list[str]:
-    """ESPN ids of games that need a text: 'previews' for games in the next `hours` without a current preview,
-    'recaps' for finals in the last `hours` without a ready recap."""
+    """ESPN ids of games on the pre-write list that need a text: 'previews' for games in the next `hours` without a
+    current preview, 'recaps' for finals in the last `hours` without a current recap."""
     ids = (ai_jobs.upcoming(league, timedelta(hours=hours)) if what == "previews"
            else ai_jobs.unwritten_recaps(league, timedelta(hours=hours)))
     if not ids:
         return []
     with db.connect() as conn:
-        rows = conn.execute("SELECT id, espn_id FROM games WHERE id = ANY(%s)", (ids,)).fetchall()
-    by_id = {r["id"]: r["espn_id"] for r in rows}
-    return [by_id[i] for i in ids if i in by_id]
+        rows = {r["id"]: r for r in (db.game_by_id(conn, i) for i in ids) if r}
+    favs = favorites.load()
+    return [rows[i]["espn_id"] for i in ids if i in rows and ai_scope.is_prewritten(rows[i], favs)]
 
 
 ALL = [sync_schedule, save_line, fetch_game_state, fetch_summary, grade_game, fetch_news, generate_preview,

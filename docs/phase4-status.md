@@ -51,6 +51,16 @@
 - Tests: 307 pass (DB, API, AI, 22 workflow tests, replay 9/9: 4 pre-AI histories + 5 with the patches).
 - Not done: a live end-to-end run on the laptop stack (needs the rebuilt containers and quota), the deploy runbook.
 
+## After the audit (Sep 29, late)
+
+- Two independent audits (correctness; latency and budget). All 8 correctness findings fixed with regression
+  tests (commit `2393080`).
+- **Adam's decision:** write ahead only for favorites and college ranked-vs-ranked games; everything else is written
+  when opened. Writers wait for gpt-oss-120b's minute instead of handing work to Qwen. Expected Saturday: ~10-15
+  previews and ~10-15 recaps written ahead, well inside 120b's 200K a day.
+- Still open from the latency audit: refresh only when a stated fact changed, per-game article cache, loading the
+  AI text alongside the game data, per-step reply allowances, headlines on Gemini.
+
 ## Measured limits (free tiers)
 
 | Model | Per minute | Per day | Notes |

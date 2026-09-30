@@ -199,7 +199,16 @@ def test_db_quota_shares_the_minute_and_cooling(client):  # noqa: F811
 
 # ---------- the activity's retry signal ----------
 
-def test_write_text_rate_limited_retries_after_groqs_wait(client, fake, monkeypatch):  # noqa: F811
+def favorite(monkeypatch, tmp_path, *teams):
+    """Put teams on the pre-write list (the favorites file the worker reads)."""
+    import json
+    f = tmp_path / "favs.json"
+    f.write_text(json.dumps({"nfl": list(teams)}))
+    monkeypatch.setenv("FAVORITES_FILE", str(f))
+
+
+def test_write_text_rate_limited_retries_after_groqs_wait(client, fake, monkeypatch, tmp_path):  # noqa: F811
+    favorite(monkeypatch, tmp_path, "DAL")
     from temporalio.exceptions import ApplicationError
     from temporalio.testing import ActivityEnvironment
     from app.temporal import activities
@@ -213,7 +222,9 @@ def test_write_text_rate_limited_retries_after_groqs_wait(client, fake, monkeypa
     assert ActivityEnvironment().run(activities.write_text, TextJob("recap", "nfl", espn_id, "final")) == "ready"
 
 
-def test_preview_step_starts_the_refresh(client, monkeypatch):  # noqa: F811
+def test_preview_step_starts_the_refresh(client, monkeypatch, tmp_path):  # noqa: F811
+    favorite(monkeypatch, tmp_path, "BUF")
+    _ids(client)
     from temporalio.testing import ActivityEnvironment
     from app.temporal import activities
     started = []
@@ -320,3 +331,21 @@ def test_busy_row_skips_the_article_fetch(client, fake, monkeypatch):  # noqa: F
         store.claim(conn, gid, "preview", "x", reason="midweek")
     monkeypatch.setattr(sources, "find_articles", lambda *a, **k: pytest.fail("fetched articles while busy"))
     assert jobs.write_for_game("preview", gid, "open")["status"] == "busy"
+
+
+def test_games_off_the_prewrite_list_are_left_for_page_opens(client, fake, monkeypatch, tmp_path):  # noqa: F811
+    from temporalio.testing import ActivityEnvironment
+    from app.temporal import activities
+    from app.temporal.models import TextJob
+    favorite(monkeypatch, tmp_path, "NE")                         # none of the fixture's teams
+    started = []
+    monkeypatch.setattr(activities, "start_text", started.append)
+    dal = _sql("SELECT espn_id FROM games WHERE id = %s", fake["ids"]["DAL"])[0][0]
+    env = ActivityEnvironment()
+    assert env.run(activities.write_text, TextJob("recap", "nfl", dal, "final")) == "skipped"
+    env.run(activities.generate_preview, "nfl", "401900001")
+    assert started == [] and fake["calls"]["recap"] == 0
+    _sql("UPDATE games SET start_time = now() + interval '1 day' WHERE id = %s", fake["ids"]["BUF"])
+    assert env.run(activities.texts_to_write, "nfl", "previews", 144) == []
+    favorite(monkeypatch, tmp_path, "BUF")
+    assert env.run(activities.texts_to_write, "nfl", "previews", 144) == ["401900001"]

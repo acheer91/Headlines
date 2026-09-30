@@ -71,10 +71,24 @@ def test_bad_json_is_not_failed_over(fresh, monkeypatch):
         client.write("x")
 
 
-def test_full_minute_moves_to_next_model_instead_of_waiting(fresh, monkeypatch):
+def test_full_minute_is_not_handed_to_a_backup(fresh, monkeypatch):
+    calls, _ = fresh
     monkeypatch.setattr(client, "GROQ_TPM", 5000)
     prompt = "x" * 4000                      # 1,000 + 3,000 reserved: one per model per minute
-    assert [json.loads(client.write(prompt))["by"] for _ in range(3)] == ["big", "qwen", "small"]
+    client.write(prompt)
+    with client.no_wait(), pytest.raises(client.RateLimited):
+        client.write(prompt)                 # a page open: "big" is busy this minute -> fallback, not "qwen"
+    assert calls == ["big"]
+
+
+def test_waiting_writer_sleeps_for_the_good_model(fresh, monkeypatch):
+    calls, _ = fresh
+    monkeypatch.setattr(client, "GROQ_TPM", 5000)
+    slept = []
+    monkeypatch.setattr(client.time, "sleep", lambda s: (slept.append(s), client.quota._windows["big"].clear()))
+    client.write("x" * 4000)
+    client.write("x" * 4000)                 # the worker: waits for "big"'s minute instead of using "qwen"
+    assert calls == ["big", "big"] and len(slept) == 1
 
 
 @pytest.mark.parametrize("text,secs", [("Please try again in 6m49.104s.", 409.104), ("try again in 1h2m3s", 3723),
@@ -83,13 +97,6 @@ def test_retry_after(text, secs):
     assert client._retry_after(text) == pytest.approx(secs)
 
 
-def test_no_wait_fails_fast_when_every_minute_is_full(fresh, monkeypatch):
-    monkeypatch.setattr(client, "GROQ_TPM", 5000)
-    prompt = "x" * 4000
-    for _ in range(3):
-        client.write(prompt)                 # one per model fills every minute
-    with client.no_wait(), pytest.raises(client.RateLimited):
-        client.write(prompt)                 # the api's page open: no waiting behind the free tier
 
 
 def test_unreadable_check_goes_to_the_next_checker(fresh, monkeypatch):
@@ -132,3 +139,21 @@ def test_no_key_stops_at_once(fresh, monkeypatch):
     with pytest.raises(client.NoKey):
         client.write("x")
     assert calls == ["big"]
+
+
+# ---------- the pre-write list (Adam, 2026-09-29) ----------
+
+from app.ai import scope  # noqa: E402
+
+FAVS = {"nfl": ["NE"], "ncaaf": ["TEX"]}
+
+
+@pytest.mark.parametrize("row,want", [
+    ({"league": "nfl", "home_abbr": "BUF", "away_abbr": "NE"}, True),                        # a favorite
+    ({"league": "nfl", "home_abbr": "HOU", "away_abbr": "IND"}, False),                      # any other NFL game
+    ({"league": "ncaaf", "home_abbr": "TEX", "away_abbr": "UTEP"}, True),
+    ({"league": "ncaaf", "home_abbr": "IOWA", "away_abbr": "OSU", "home_rank": 14, "away_rank": 5}, True),
+    ({"league": "ncaaf", "home_abbr": "CLEM", "away_abbr": "MIA", "home_rank": None, "away_rank": 4}, False),
+])
+def test_prewrite_list(row, want):
+    assert scope.is_prewritten(row, FAVS) is want

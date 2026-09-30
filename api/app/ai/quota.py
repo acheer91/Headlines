@@ -52,6 +52,11 @@ class DbQuota:
                 ON CONFLICT (model) DO UPDATE SET until = GREATEST(ai_cooling.until, EXCLUDED.until)""",
                          (model_name, seconds))
 
+    def is_cooling(self, model_name: str) -> bool:
+        with db.connect() as conn:
+            return conn.execute("SELECT 1 FROM ai_cooling WHERE model = %s AND until > now()",
+                                (model_name,)).fetchone() is not None
+
     def cooling_left(self, models: list[str]) -> float | None:
         """Seconds until the first of `models` stops cooling down; None if one of them isn't cooling."""
         with db.connect() as conn:
