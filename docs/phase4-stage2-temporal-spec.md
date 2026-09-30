@@ -1,11 +1,14 @@
 # Phase 4 Stage 2 — AI text on Temporal (proposal)
 
-**Status: proposal for the team and Adam, Sep 29, 2026. Not built.** It replaces the "Stage 2" worker steps of the
+**Status: built Sep 29, 2026 on branch `phase-4-ai-text` (Adam: "move forward with what we can"); not deployed.
+Later changes: pre-write list narrowed to favorites + NCAAF ranked vs ranked, one queue per model (Adam, Sep 29).**
+It replaces the "Stage 2" worker steps of the
 Phase 4 handoff (2.3–2.5) with the plan agreed on Sep 29: several free Groq models with failover, previews written
 midweek, recaps for every final, and durable retries. Evidence and numbers: `phase4-results.md`,
 `phase4-status.md`. Code it builds on: `api/app/ai/` on branch `phase-4-prototype`.
 
-Gates are unchanged: build only after Adam approves the Stage 1 samples and Phase 5b is deployed and signed off.
+Build gate lifted by Adam on Sep 29. Deploy gates: Adam approves the samples, Phase 5b signed off (from the
+original handoff; no code depends on 5b, only on 5a), a Tue/Wed slot.
 
 ## Decisions this needs from Adam
 
