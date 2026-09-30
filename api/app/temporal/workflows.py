@@ -11,16 +11,19 @@ import asyncio
 from datetime import datetime, timedelta
 
 from temporalio import workflow
-from temporalio.common import RetryPolicy
-from temporalio.exceptions import ActivityError
+from temporalio.common import RetryPolicy, WorkflowIDReusePolicy
+from temporalio.exceptions import ActivityError, WorkflowAlreadyStartedError
+from temporalio.workflow import ParentClosePolicy
 
 with workflow.unsafe.imports_passed_through():
     from . import activities as act
-    from .models import GameInput, GameRef, GameState, Times
+    from .models import GameInput, GameRef, GameState, TextJob, Times
 
-__all__ = ["GameWorkflow", "GameInput", "ScheduleSyncWorkflow", "HeadlinesWorkflow", "WORKFLOWS"]
+__all__ = ["GameWorkflow", "GameInput", "ScheduleSyncWorkflow", "HeadlinesWorkflow", "WriteTextWorkflow",
+           "PreviewBatchWorkflow", "LeftoverWorkflow", "WORKFLOWS"]
 
 TASK_QUEUE = "scores"
+AI_QUEUE = "ai"        # Phase 4: AI text activities, at most 3 at once (one per Groq model), never delaying ESPN work
 
 # ESPN policy: 30 s per attempt, retries from 10 s doubling to a 10-minute cap, giving up after 6 hours.
 ESPN_POLICY = dict(
@@ -36,6 +39,17 @@ GRADE_POLICY = dict(
                              maximum_interval=timedelta(minutes=5), maximum_attempts=5),
 )
 NO_RETRY = dict(start_to_close_timeout=timedelta(seconds=30), retry_policy=RetryPolicy(maximum_attempts=1))
+# One AI text: a write can wait minutes for quota. A rate limit retries after the wait Groq names (the activity sets
+# next_retry_delay); anything else backs off from 5 minutes. Up to 8 tries over at most 12 hours.
+TEXT_POLICY = dict(
+    start_to_close_timeout=timedelta(minutes=15),
+    schedule_to_close_timeout=timedelta(hours=12),
+    retry_policy=RetryPolicy(initial_interval=timedelta(minutes=5), backoff_coefficient=2.0,
+                             maximum_interval=timedelta(hours=3), maximum_attempts=8),
+)
+BATCH_AHEAD = timedelta(days=6)           # a midweek batch covers games through the following Monday night
+LEFTOVER_PREVIEWS = timedelta(days=3)     # the nightly job: previews for the next 3 days ...
+LEFTOVER_RECAPS = timedelta(days=2)       # ... and recaps for the last 2
 
 LINE_EVERY = timedelta(days=1)            # save the line on first sight, then daily ...
 LAST_LINE_BEFORE = timedelta(minutes=30)  # ... and a last time 30 minutes before kickoff
@@ -193,9 +207,14 @@ class GameWorkflow:
 
     async def _final(self) -> str:
         graded = await self._grade()
+        if workflow.patched("ai-recap"):
+            await start_text(TextJob("recap", self._league, self._espn_id, "final"))
         await workflow.sleep(REGRADE_AFTER)
         regraded = await self._grade()
         if regraded != graded:
+            if workflow.patched("ai-recap"):
+                # A stat correction changed the score: the recap's basis changed, so it is rewritten once.
+                await start_text(TextJob("recap", self._league, self._espn_id, "final"))
             return f"graded {graded}, regraded {regraded} after a stat correction"
         return f"graded {graded}"
 
@@ -236,7 +255,77 @@ class HeadlinesWorkflow:
         added = 0
         for league in leagues:
             added += await workflow.execute_activity(act.fetch_news, league, result_type=int, **ESPN_POLICY)
+        if workflow.patched("ai-headlines"):
+            await start_text(TextJob("headlines", ",".join(leagues), None, "schedule"),
+                             f"ai-headlines-{workflow.now():%Y%m%d-%H%M}")   # replays identically; one per run
         return added
 
 
-WORKFLOWS = [GameWorkflow, ScheduleSyncWorkflow, HeadlinesWorkflow]
+# ---------- Phase 4: AI text ----------
+
+def text_workflow_id(job: TextJob) -> str:
+    return f"ai-{job.kind}-{job.league}-{job.espn_id}"
+
+
+async def start_text(job: TextJob, workflow_id: str | None = None) -> bool:
+    """Start WriteTextWorkflow for one text and don't wait for it (it can wait hours for quota). The parent may
+    finish first: the child keeps going. False when that text is already being written (same workflow ID)."""
+    try:
+        await workflow.start_child_workflow(
+            WriteTextWorkflow.run, job, id=workflow_id or text_workflow_id(job), task_queue=TASK_QUEUE,
+            parent_close_policy=ParentClosePolicy.ABANDON,
+            id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE)
+        return True
+    except WorkflowAlreadyStartedError:
+        return False
+
+
+@workflow.defn
+class WriteTextWorkflow:
+    """One AI text, written durably: the write_text activity on the `ai` queue, retried for up to 12 hours when
+    every model is rate-limited. Its ID (ai-<kind>-<league>-<espn_id>) makes a second start a no-op."""
+
+    @workflow.run
+    async def run(self, job: TextJob) -> str:
+        try:
+            return await workflow.execute_activity(act.write_text, job, task_queue=AI_QUEUE, result_type=str,
+                                                   **TEXT_POLICY)
+        except ActivityError as exc:
+            # Out of tries: the row stays failed, the page shows template text and the nightly job tries again.
+            workflow.logger.warning("%s gave up: %s", text_workflow_id(job), exc.cause or exc)
+            return f"gave up: {exc.cause or exc}"
+
+
+async def _start_all(leagues: list[str], what: str, ahead: timedelta, reason: str) -> int:
+    started = 0
+    for league in leagues:
+        ids = await workflow.execute_activity(act.texts_to_write, args=[league, what, int(ahead.total_seconds() // 3600)],
+                                              result_type=list[str], **ESPN_POLICY)
+        kind = "preview" if what == "previews" else "recap"
+        for espn_id in ids:
+            started += await start_text(TextJob(kind, league, espn_id, reason))
+    return started
+
+
+@workflow.defn
+class PreviewBatchWorkflow:
+    """Midweek (Adam, 2026-09-29): write the coming weekend's previews ahead. It only starts one WriteTextWorkflow
+    per game; the `ai` queue's limit of 3 at once is what spreads them over the Groq models."""
+
+    @workflow.run
+    async def run(self, leagues: list[str]) -> int:
+        return await _start_all(leagues, "previews", BATCH_AHEAD, "midweek")
+
+
+@workflow.defn
+class LeftoverWorkflow:
+    """Nightly: anything still missing or failed (previews for the next 3 days, recaps for the last 2)."""
+
+    @workflow.run
+    async def run(self, leagues: list[str]) -> int:
+        return (await _start_all(leagues, "previews", LEFTOVER_PREVIEWS, "nightly")
+                + await _start_all(leagues, "recaps", LEFTOVER_RECAPS, "nightly"))
+
+
+WORKFLOWS = [GameWorkflow, ScheduleSyncWorkflow, HeadlinesWorkflow, WriteTextWorkflow, PreviewBatchWorkflow,
+             LeftoverWorkflow]

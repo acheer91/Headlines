@@ -11,14 +11,16 @@ import logging
 import os
 import threading
 import time as _time
-from datetime import datetime, time, timezone
+from datetime import datetime, time, timedelta, timezone
+from typing import Callable
 from zoneinfo import ZoneInfo
 
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from .. import db, espn, favorites, games, ncaaf, summary
-from .models import GameRef, GameState
+from ..ai import jobs as ai_jobs
+from .models import GameRef, GameState, TextJob
 
 log = logging.getLogger(__name__)
 
@@ -195,10 +197,60 @@ def fetch_news(league: str) -> int:
     return added
 
 
+# ---------- Phase 4: AI text ----------
+# Set by the worker at startup: starts a WriteTextWorkflow from this (synchronous) activity thread. A hook, not an
+# import, because the starter imports the workflows and the workflows import this module.
+start_text: Callable[[TextJob], None] | None = None
+
+
 @activity.defn
 def generate_preview(league: str, espn_id: str) -> None:
-    """Game-morning preview. Phase 4 fills this in; Phase 3 only logs."""
-    activity.logger.info("preview placeholder for %s %s (Phase 4)", league, espn_id)
+    """Game morning (8 AM PT, the Phase 3 step): the preview refresh. It starts WriteTextWorkflow and returns at
+    once (this step has no retries and a 30 s limit); that workflow rewrites the preview only when the game day,
+    injuries, line or articles changed since it was written midweek, and writes it if it was never written.
+    Activity-only change: GameWorkflow is untouched, so no versioning (spec, GameWorkflow)."""
+    if start_text is None:
+        activity.logger.warning("preview refresh for %s %s skipped: no Temporal client", league, espn_id)
+        return
+    start_text(TextJob("preview", league, espn_id, "refresh"))
 
 
-ALL = [sync_schedule, save_line, fetch_game_state, fetch_summary, grade_game, fetch_news, generate_preview]
+@activity.defn
+def write_text(job: TextJob) -> str:
+    """Write, fact-check and store one text (app.ai.jobs). Runs on the `ai` task queue. Returns the outcome
+    (ready / failed / no_sources / current / busy / skipped / missing). All models rate-limited: raises a
+    retryable error with Groq's own wait as the next retry delay, so WriteTextWorkflow comes back when the
+    quota is there instead of on a fixed backoff."""
+    if job.kind == "headlines":
+        out = ai_jobs.write_headlines([x for x in job.league.split(",") if x], job.reason)
+    else:
+        row = _stored(job.league, job.espn_id)
+        out = ai_jobs.write_for_game(job.kind, row["id"], job.reason, base_url=ESPN_BASE)
+    if out["status"] == "failed" and out.get("retry_after"):
+        wait = min(max(out["retry_after"], 60.0), 3 * 3600.0)
+        raise ApplicationError(f"{job.kind} {job.espn_id or ''}: every model rate-limited", type="RateLimited",
+                               next_retry_delay=timedelta(seconds=wait))
+    if out["status"] == "busy":
+        # Another writer (a page open) holds the row; it finishes within 2 minutes or its claim expires.
+        raise ApplicationError(f"{job.kind} {job.espn_id}: being written elsewhere", type="Busy",
+                               next_retry_delay=timedelta(minutes=2))
+    return out["status"]
+
+
+@activity.defn
+def texts_to_write(league: str, what: str, hours: int) -> list[str]:
+    """ESPN ids of games that need a text: 'previews' for games in the next `hours` without a current preview,
+    'recaps' for finals in the last `hours` without a ready recap."""
+    ids = (ai_jobs.upcoming(league, timedelta(hours=hours)) if what == "previews"
+           else ai_jobs.unwritten_recaps(league, timedelta(hours=hours)))
+    if not ids:
+        return []
+    with db.connect() as conn:
+        rows = conn.execute("SELECT id, espn_id FROM games WHERE id = ANY(%s)", (ids,)).fetchall()
+    by_id = {r["id"]: r["espn_id"] for r in rows}
+    return [by_id[i] for i in ids if i in by_id]
+
+
+ALL = [sync_schedule, save_line, fetch_game_state, fetch_summary, grade_game, fetch_news, generate_preview,
+       texts_to_write]
+AI = [write_text]        # the `ai` task queue: at most 3 at once, one per Groq model

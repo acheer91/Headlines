@@ -56,6 +56,16 @@ Measured from the API's own 429 responses (Sep 29), not the AI Studio page.
   `python -m app.ai.check_eval` on 12 real sentences from today's runs (8 wrong, 4 right): after telling it the
   score is only known at quarter breaks, **15/15 errors caught, 0/8 false alarms** over two runs; ~0.5–1 s and
   ~1.5K tokens per check. Groq counts prompt + max reply allowance against the minute, so pacing reserves that.
+- **Backup-writer bake-off (Sep 29, 16 week-4 recaps each, 120b excluded):**
+  - Qwen (`qwen3.8-27b`) as writer, gpt-oss-20b checking: 4 of 16 ready. Of the 9 texts with a readable check, 8 first
+    drafts invented claims (streaks, "undefeated", leads inside a quarter, a 9-point lead that never existed) and 4
+    still failed after the rewrite. **Not fit to write; keep it as the checker.**
+  - The other 10 failed on "fact check: unreadable reply": gpt-oss-20b as checker ran out of reply room at medium
+    reasoning. Fixed on `phase-4-ai-text`: gpt-oss checkers use low reasoning and a bad check goes to the next checker.
+    gpt-oss-20b also made 2 wrong calls as a checker (home/away mix-up, a margin misread): Qwen stays first.
+  - gpt-oss-20b as writer: not measured. Its quota was being used by the Qwen run's checks from another process, so
+    the in-memory cooldown blocked the whole run (the collision the shared database quota in Stage 2 prevents).
+  - Consequence: failover writing is a last resort; midweek volume should be planned on gpt-oss-120b alone.
 - Paid Groq for comparison (console.groq.com/docs/models, Sep 29): gpt-oss-120b $0.15/M input, $0.60/M output
   → a Saturday ≈ $0.10, ≈ $2–3 a month; Groq has account spend limits.
 

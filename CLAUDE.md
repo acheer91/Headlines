@@ -27,6 +27,38 @@ bowl games are confirmed with the handoff's December checklist by Dec 12.
   1, 4, 5, 8, 9, 12, 15, 17, 18, 37, 151; every other id seen (20, 21, 24, 25, 27, 29, 30, 31, 32, 48, 177, 179) is FCS.
   Texas is `TEX`.
 
+## Phase 4 — AI text (Stage 2 built 2026-09-29 on branch `phase-4-ai-text`; NOT deployed)
+Scope: previews (preview, edges, writers' picks), recaps and team summaries, the live one-liner, Home headlines.
+Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `phase4-results.md`; Stage 2 design:
+`docs/phase4-stage2-temporal-spec.md`. Deploy only after Adam approves samples and Phase 5b is signed off, Tue/Wed.
+- **Models (Groq, free):** writer `openai/gpt-oss-120b`, fact-checker `qwen/qwen3.8-27b`, search `openai/gpt-oss-20b`
+  browser search; each fails over to the others (`AI_WRITERS`, `AI_CHECKERS`); a model never checks its own text.
+  Gemini is optional (`AI_WRITER=gemini`; 20 requests/day). Free tier per model: 8K tokens/min, 200K tokens/day on
+  a rolling 24 h window. Bake-off (Sep 29): Qwen as a writer invents claims (streaks, leads) — writer of last resort.
+- **Facts only from inputs, enforced in code** (`app/ai/`): recap and preview game facts are built by code
+  (`facts.py`), never read raw by a model; numbers must appear in the facts; bet results are written by code
+  (`bets_line`); no advice or bet words; no 8-word copy from an article; edges/picks must come from the linked
+  article; then a second model fact-checks every text (`writer._fact_check`). Any failure: one rewrite told what
+  was wrong, then status `failed` and the app shows fallback text. Never unchecked text.
+- **8-day rule is hard** (`dates.py`, from Phase 0): no confirmable date (page or URL) or older than 8 days =
+  dropped; none left = "No fresh previews". Articles: stored ESPN news first, Groq search (major outlets only,
+  links taken from the tool's raw results, never the model's reply) only when ESPN has fewer than 2.
+- **When text is written (Temporal):** `WriteTextWorkflow` per text (ID `ai-<kind>-<league>-<espn_id>`), activity
+  `write_text` on task queue `ai` (3 at once); a rate limit retries after Groq's own wait (`next_retry_delay`), up to
+  8 tries / 12 h. Midweek `PreviewBatchWorkflow` (NCAAF Wed+Thu, NFL Thu+Fri, 7 PM PT); the 8 AM `generate_preview`
+  step starts a refresh that rewrites only if the fingerprint (injuries, line, articles) changed; recap at every final
+  (`ai-recap` patch) and again after a changed regrade; headlines after each news pull (`ai-headlines` patch);
+  `LeftoverWorkflow` nightly 9:30 PM PT.
+- **On open (api):** `GET /api/games/{id}/ai` returns current text at once, else writes it within 20 s (preview) or
+  10 s, **never waiting for quota** (`client.no_wait()`); `GET /api/headlines` for Screen A. One-liner reused until
+  the score changes or 15 minutes pass (Adam).
+- **Quota is shared through Postgres** (`AI_QUOTA=db`: `ai_calls`, `ai_cooling`), so the api and worker can't
+  collide; Groq counts prompt + max reply against the minute, so that is what's reserved.
+- **Keys** (`GROQ_API_KEY`, `GEMINI_API_KEY`) live only in `.env`; no key, or removing it, is the off switch (every AI
+  section shows fallback text). Prompts carry only public sports data (free tiers may use prompts for training).
+- **Tests:** `tests/test_ai_*.py` (no live model calls), `test_workflows.py` (every simulated game runs a fake `ai`
+  worker: a waiting AI task stops time-skipping), `test_replay.py` (old histories replay with the patches).
+
 ## Phase 3 — Temporal (built 2026-09-28, deployed to the server 2026-09-29 05:13 UTC)
 Scope: scheduled work off the pull path. ScheduleSync (daily 6:00 AM PT) starts one GameWorkflow per NFL game not yet
 final; GameWorkflow saves the line, runs the (empty) preview step, waits for kickoff, polls for the final every 2.5 min (Adam), grades, and
@@ -234,7 +266,7 @@ web/src/                  Scoreboard.tsx (B), GamePage.tsx (C1 / C2 / D), GameCa
 ## Next phases (don't start without Adam's go-ahead)
 3. (Built, see above.) Not in the Phase 3 handoff, still to do: move the nightly backup (`scripts/backup.sh`, now cron) into Temporal for retries and visibility (Adam, 2026-09-28).
    Until then a failed backup alerts no one: glance at `~/backup.log` and the bucket on the server once a week.
-4. AI text (Claude Haiku-class): extract facts, then write in house voice. 8-day article rule is hard.
+4. AI text: built on `phase-4-ai-text` (Groq free tier; see the Phase 4 section). Not deployed.
 5. 5a NCAAF built (see the top). 5b: NBA, EPL, MLS (scores only).
    Needs a date-window query: NBA and soccer have no weeks.
 6. Deploy to Oracle Cloud always-free, Tailscale only.

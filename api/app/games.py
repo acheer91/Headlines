@@ -342,3 +342,70 @@ def detail(conn, card: dict, stored: dict | None, *, stale: bool, error: str | N
         else:
             out["bets"] = _bets_final(db.bet_results_for_game(conn, card["id"]), home, away)
     return out
+
+
+def card(row: dict, favorites: set[str]) -> dict:
+    """A game's card from its games row, as the scoreboard and the game page show it."""
+    has_line = any(row[k] is not None for k in ("home_spread", "total", "home_ml", "away_ml"))
+    return {
+        "id": row["id"],
+        "league": row["league"],
+        "state": row["state"],  # pre -> C1, in -> C2, post -> D
+        "start_time": row["start_time"].isoformat(),
+        # False for a flexed game with no kickoff set: start_time is ESPN's placeholder, show the date only.
+        "time_valid": row.get("time_valid", True) is not False,
+        # False for a canceled or postponed game (state 'post' but never played).
+        "completed": row.get("completed"),
+        "status_detail": row["status_detail"],
+        "period": row["period"],
+        "clock": row["clock"],
+        "broadcast": row["broadcast"],
+        "venue": row["venue"],
+        "neutral_site": bool(row.get("neutral_site")),
+        "favorite": row["home_abbr"] in favorites or row["away_abbr"] in favorites,
+        "home": {"abbr": row["home_abbr"], "name": row["home_name"], "short": row["home_short"],
+                 "logo": row["home_logo"], "color": row["home_color"], "score": row["home_score"],
+                 "rank": row.get("home_rank")},
+        "away": {"abbr": row["away_abbr"], "name": row["away_name"], "short": row["away_short"],
+                 "logo": row["away_logo"], "color": row["away_color"], "score": row["away_score"],
+                 "rank": row.get("away_rank")},
+        "line": None if not has_line else {
+            "provider": row["odds_provider"],
+            "details": row["odds_details"],
+            "home_spread": None if row["home_spread"] is None else float(row["home_spread"]),
+            "total": None if row["total"] is None else float(row["total"]),
+            "home_ml": row["home_ml"],
+            "away_ml": row["away_ml"],
+            # True when no pre-game line was ever captured and this is a later one.
+            "captured_after_kickoff": row["state"] != "pre" and row["odds_state"] != "pre",
+        },
+    }
+
+
+def page(conn, game_id: int, *, base_url: str = espn.BASE, favorites: dict[str, list[str]] | None = None) -> dict | None:
+    """One game's screen payload, exactly as GET /api/games/{id} returns it (None: no such game). A pull: the
+    summary is refreshed when the cache rule says so and finals are graded. Shared by the api and, in Phase 4,
+    the worker, which writes AI text from the same payload the page shows."""
+    favorites = favorites or {}
+    row = db.game_by_id(conn, game_id)
+    if not row:
+        return None
+    # C1's team season stats (ranks, INTs leader) are fetched in parallel with the summary.
+    team_jobs = start_team_season(conn, row, base_url=base_url) if row["state"] == "pre" else []
+    stored = db.get_summary_view(conn, game_id)
+    stale, error = False, None
+    if needs_refresh(row, stored):
+        ok, error = refresh_summary(conn, row, base_url=base_url)
+        stale = not ok
+        stored = db.get_summary_view(conn, game_id)
+        row = db.game_by_id(conn, game_id)
+    team_season = finish_team_season(conn, row, team_jobs) if team_jobs else None
+    if row["state"] == "post":
+        try:
+            grade_game(conn, game_id)
+        except Exception:  # noqa: BLE001 — show the page even if grading hit a bug
+            conn.rollback()
+            log.exception("grading game %s failed", game_id)
+    c = card(row, set(favorites.get(row["league"], [])))
+    return detail(conn, c, stored, stale=stale, error=error,
+                  team_season=team_season if row["state"] == "pre" else None)

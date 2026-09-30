@@ -14,13 +14,15 @@ import pytest
 import pytest_asyncio
 from temporalio import activity
 from temporalio.client import WorkflowFailureError
+from temporalio.service import RPCError
 from temporalio.exceptions import ApplicationError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
-from app.temporal.models import GameInput, GameRef, GameState, Times
+from app.temporal.models import GameInput, GameRef, GameState, TextJob, Times
 from app.temporal.starter import Starter
-from app.temporal.workflows import TASK_QUEUE, WORKFLOWS, GameWorkflow, HeadlinesWorkflow, ScheduleSyncWorkflow
+from app.temporal.workflows import (AI_QUEUE, TASK_QUEUE, WORKFLOWS, GameWorkflow, HeadlinesWorkflow, LeftoverWorkflow,
+                                    PreviewBatchWorkflow, ScheduleSyncWorkflow, WriteTextWorkflow)
 
 HISTORIES = Path(__file__).parent / "fixtures" / "histories"
 pytestmark = pytest.mark.asyncio(loop_scope="module")
@@ -93,8 +95,10 @@ def st(state, start, hs=None, as_=None, postponed=False, completed=None):
                      state == "post" and not postponed if completed is None else completed)
 
 
-@pytest_asyncio.fixture(scope="module", loop_scope="module")
+@pytest_asyncio.fixture(loop_scope="module")
 async def env():
+    """A test server per test (~1 s each). Shared by the module, a game's AI children (Phase 4) left the next
+    test's clock stuck after the long full-game test (2026-09-29), as ScheduleSync's tests once did."""
     e = await WorkflowEnvironment.start_time_skipping()
     yield e
     await e.shutdown()
@@ -109,15 +113,25 @@ async def fresh_env():
     await e.shutdown()
 
 
-async def run_game(env, fake, start, preview=None, during=None, name=None):
-    """Start a GameWorkflow, optionally run `during(handle)` while it waits, return (result, handle)."""
+async def run_game(env, fake, start, preview=None, during=None, name=None, ai=None):
+    """Start a GameWorkflow, optionally run `during(handle)` while it waits, return (result, handle). A final
+    starts the recap's WriteTextWorkflow (Phase 4), so an `ai` queue worker always runs: without one, its
+    waiting activity stops the time-skipping server from skipping the regrade's hour."""
     preview = preview or start - timedelta(hours=5)
     inp = GameInput("nfl", uuid.uuid4().hex[:8], start.isoformat(), preview.isoformat())
-    async with Worker(env.client, task_queue=TASK_QUEUE, workflows=WORKFLOWS, activities=fake.activities()):
+    ai = ai or FakeAI()
+    async with (Worker(env.client, task_queue=TASK_QUEUE, workflows=WORKFLOWS, activities=fake.activities()),
+                Worker(env.client, task_queue=AI_QUEUE, activities=ai.activities())):
         handle = await env.client.start_workflow(GameWorkflow.run, inp, id=f"nfl-{inp.espn_id}", task_queue=TASK_QUEUE)
         if during:
             await during(handle)
         result = await handle.result()
+        # Let the recap the game started (possibly right before it closed) finish while the ai worker is up;
+        # a leftover waiting AI task would stop time-skipping for the next test.
+        try:
+            await env.client.get_workflow_handle(f"ai-recap-nfl-{inp.espn_id}").result()
+        except RPCError:
+            pass                              # no recap: the game never reached a played final
         if name and os.environ.get("SAVE_HISTORIES"):
             HISTORIES.mkdir(parents=True, exist_ok=True)
             (HISTORIES / f"{name}.json").write_text((await handle.fetch_history()).to_json())
@@ -342,7 +356,119 @@ async def test_completed_game_is_never_reopened(fresh_env):
 async def test_headlines(env):
     fake = Fake()
     worker = Worker(env.client, task_queue=TASK_QUEUE, workflows=WORKFLOWS, activities=fake.activities())
-    async with worker:
+    async with worker, Worker(env.client, task_queue=AI_QUEUE, activities=FakeAI().activities()):
         added = await env.client.execute_workflow(HeadlinesWorkflow.run, ["nfl"], id=f"headlines-{uuid.uuid4()}",
                                                   task_queue=TASK_QUEUE)
     assert added == 3 and len(fake.times("fetch_news")) == 1
+
+
+# ---------- Phase 4: AI text ----------
+
+
+
+class FakeAI:
+    """write_text on the `ai` queue, scripted: `limited` rate-limited attempts first (with Groq's wait)."""
+
+    def __init__(self, limited=0, wait=timedelta(hours=2), todo=None):
+        self.jobs: list[tuple[TextJob, datetime]] = []
+        self.limited = limited
+        self.wait = wait
+        self.todo = todo or {}
+
+    def activities(self):
+        @activity.defn(name="write_text")
+        async def write_text(job: TextJob) -> str:
+            self.jobs.append((job, activity.info().current_attempt_scheduled_time))
+            if self.limited:
+                self.limited -= 1
+                raise ApplicationError("every model rate-limited", type="RateLimited", next_retry_delay=self.wait)
+            return "ready"
+        return [write_text]
+
+    def texts_to_write(self):
+        @activity.defn(name="texts_to_write")
+        async def texts_to_write(league: str, what: str, hours: int) -> list[str]:
+            return self.todo.get((league, what), [])
+        return texts_to_write
+
+
+def ai_worker(env, ai):
+    return Worker(env.client, task_queue=AI_QUEUE, activities=ai.activities())
+
+
+async def test_recap_written_at_the_final(env):
+    start = await now(env) + timedelta(hours=2)
+    fake, ai = Fake(states=[st("post", start, 21, 20)], grades=[[21, 20]]), FakeAI()
+    result, handle = await run_game(env, fake, start, ai=ai)
+    assert result == "graded [21, 20]"
+    assert [(j.kind, j.reason) for j, _ in ai.jobs] == [("recap", "final")]
+    assert close(ai.jobs[0][1], fake.times("grade_game")[0])            # right after the first grade
+
+
+async def test_stat_correction_rewrites_the_recap_once(env):
+    start = await now(env) + timedelta(hours=2)
+    fake = Fake(states=[st("post", start, 24, 17)], grades=[[24, 17], [24, 20]])
+    ai = FakeAI()
+    result, handle = await run_game(env, fake, start, ai=ai)
+    assert "regraded" in result
+    assert len(ai.jobs) == 2 and close(ai.jobs[1][1], fake.times("grade_game")[1])
+
+
+async def test_rate_limited_text_retries_after_groqs_wait(env):
+    ai = FakeAI(limited=1, wait=timedelta(hours=2))
+    job = TextJob("recap", "nfl", uuid.uuid4().hex[:8], "final")
+    async with ai_worker(env, ai), Worker(env.client, task_queue=TASK_QUEUE, workflows=WORKFLOWS, activities=[]):
+        out = await env.client.execute_workflow(WriteTextWorkflow.run, job, id=f"ai-t-{job.espn_id}",
+                                                task_queue=TASK_QUEUE)
+    # The time-skipping test server ignores next_retry_delay (it retries at once), so only the retry is checked
+    # here. On the real server (laptop, Temporal 1.32, 2026-09-29) a 5 s next_retry_delay gave a 5.0 s gap.
+    assert out == "ready" and len(ai.jobs) == 2
+
+
+async def test_text_gives_up_without_failing_the_workflow(env):
+    ai = FakeAI(limited=99, wait=timedelta(hours=1))
+    job = TextJob("recap", "nfl", uuid.uuid4().hex[:8], "final")
+    async with ai_worker(env, ai), Worker(env.client, task_queue=TASK_QUEUE, workflows=WORKFLOWS, activities=[]):
+        out = await env.client.execute_workflow(WriteTextWorkflow.run, job, id=f"ai-t-{job.espn_id}",
+                                                task_queue=TASK_QUEUE)
+    assert out.startswith("gave up") and len(ai.jobs) == 8             # 8 tries, then the nightly job's turn
+
+
+async def test_preview_batch_starts_one_text_per_game(env):
+    ids = [uuid.uuid4().hex[:8] for _ in range(3)]
+    ai = FakeAI(todo={("ncaaf", "previews"): ids})
+    async with ai_worker(env, ai), Worker(env.client, task_queue=TASK_QUEUE, workflows=WORKFLOWS,
+                                          activities=[ai.texts_to_write()]):
+        started = await env.client.execute_workflow(PreviewBatchWorkflow.run, ["ncaaf"], id=f"b-{uuid.uuid4()}",
+                                                    task_queue=TASK_QUEUE)
+        for i in ids:
+            await env.client.get_workflow_handle(f"ai-preview-ncaaf-{i}").result()
+    assert started == 3 and sorted(j.espn_id for j, _ in ai.jobs) == sorted(ids)
+    assert {(j.kind, j.reason) for j, _ in ai.jobs} == {("preview", "midweek")}
+
+
+async def test_leftover_job_covers_previews_and_recaps(env):
+    ai = FakeAI(todo={("nfl", "previews"): ["p1x"], ("nfl", "recaps"): ["r1x"]})
+    async with ai_worker(env, ai), Worker(env.client, task_queue=TASK_QUEUE, workflows=WORKFLOWS,
+                                          activities=[ai.texts_to_write()]):
+        started = await env.client.execute_workflow(LeftoverWorkflow.run, ["nfl"], id=f"l-{uuid.uuid4()}",
+                                                    task_queue=TASK_QUEUE)
+        await env.client.get_workflow_handle("ai-preview-nfl-p1x").result()
+        await env.client.get_workflow_handle("ai-recap-nfl-r1x").result()
+    assert started == 2 and {(j.kind, j.reason) for j, _ in ai.jobs} == {("preview", "nightly"), ("recap", "nightly")}
+
+
+async def test_headlines_run_writes_the_feed(env):
+    fake, ai = Fake(), FakeAI()
+    wid = f"headlines-{uuid.uuid4()}"
+    async with ai_worker(env, ai), Worker(env.client, task_queue=TASK_QUEUE, workflows=WORKFLOWS,
+                                          activities=fake.activities()):
+        handle = await env.client.start_workflow(HeadlinesWorkflow.run, ["nfl", "ncaaf"], id=wid, task_queue=TASK_QUEUE)
+        started = (await handle.describe()).start_time
+        await handle.result()
+        await env.client.get_workflow_handle(f"ai-headlines-{started:%Y%m%d-%H%M}").result()
+        if os.environ.get("SAVE_HISTORIES"):
+            history = await env.client.get_workflow_handle(wid).fetch_history()
+            (HISTORIES / "headlines_ai.json").write_text(history.to_json())
+    [(job, _)] = ai.jobs
+    assert (job.kind, job.league, job.espn_id) == ("headlines", "nfl,ncaaf", None)

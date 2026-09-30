@@ -38,3 +38,13 @@ class GameState:
     start_iso: str
     postponed: bool
     completed: bool         # a played final; a canceled game is 'post' but not completed
+
+
+@dataclass
+class TextJob:
+    """One AI text for WriteTextWorkflow (Phase 4). kind: preview | recap | headlines. For headlines, league is
+    a comma-separated list and espn_id is None. reason: midweek | refresh | final | nightly | schedule | manual."""
+    kind: str
+    league: str
+    espn_id: str | None
+    reason: str

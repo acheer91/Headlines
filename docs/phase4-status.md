@@ -1,7 +1,7 @@
-# Phase 4 — status and handoff (Sep 29, 2026)
+# Phase 4 — status and handoff (Sep 29, 2026, updated evening)
 
-**Stage 1 (prototype, laptop only). Nothing is deployed, nothing is committed.** Work is on local branch
-`phase-4-prototype` (from `main`). Adam has not seen or approved any samples yet. Details and raw numbers:
+**Stage 1 prototype on `phase-4-prototype`; Stage 2 built on `phase-4-ai-text` (from `phase-5a-ncaaf`, worktree
+`../scores-app-p4`). Adam said to move forward with what we can (Sep 29). Nothing is deployed or pushed.** Adam has not seen or approved any samples yet. Details and raw numbers:
 [phase4-results.md](phase4-results.md). Latest samples (partly rate-limited, not for Adam):
 [phase4-samples.md](phase4-samples.md).
 
@@ -16,7 +16,7 @@
 | 1.5 Search + 8-day rule | Built and tested |
 | 1.6 Samples for Adam | **Not ready.** Rerun blocked by Groq's daily limit |
 | 1.7 Timing | Measured; previews 11–27 s total, recaps 3–14 s (targets 15 s / 8 s) |
-| Stage 2 | Not started (needs Adam's approval of samples + Phase 5b signed off) |
+| Stage 2 | **Built and tested locally** (below). Deploy still waits for sample approval, Phase 5b and a Tue/Wed |
 
 ## What changed from the handoff (all Adam's decisions, Sep 29)
 
@@ -33,6 +33,23 @@
   refresh only when injuries/articles changed (rewrite step only); Gemini as a side pool (headlines, weekday
   pre-writing, last fallback); recaps for every final; articles fetched ahead in the headlines job; a nightly job
   that spends leftover quota. **Needs a PRD change and Adam's OK before Stage 2.**
+
+## Stage 2 (built Sep 29 on `phase-4-ai-text`, per `phase4-stage2-temporal-spec.md`)
+
+- Migration `007_ai_text.sql`: `ai_texts` (claim, basis, fingerprint, extract, writer/checker), `ai_calls` +
+  `ai_cooling` (free-tier quota shared by api and worker, `AI_QUOTA=db`).
+- `app/ai/`: `store.py` (claim/save), `jobs.py` (one write path for worker and api), `quota.py` (Postgres quota);
+  client failover across Groq models, `no_wait()` for the api, checker failover on unreadable replies.
+- Temporal: `WriteTextWorkflow` (activity `write_text` on queue `ai`, 3 at once; rate limits retry after Groq's own
+  wait — confirmed 5.0 s on the laptop's real server), `PreviewBatchWorkflow` (NCAAF Wed+Thu, NFL Thu+Fri 7 PM PT),
+  `LeftoverWorkflow` (9:30 PM PT), recap at the final (`ai-recap` patch), headlines (`ai-headlines` patch), the 8 AM
+  step starts a fingerprint refresh (activity-only change).
+- API: `GET /api/games/{id}/ai` (current text at once, else writes within 20 s / 10 s, never waits for quota),
+  `GET /api/headlines`. Web: preview/edges/picks/sources on C1, recap + team summaries on D, AI one-liner on C2,
+  Home (Screen A) headlines with fallback to the NFL board.
+- Compose passes `GROQ_API_KEY`, `GEMINI_API_KEY`, `AI_QUOTA=db`; no key = fallback text everywhere.
+- Tests: 307 pass (DB, API, AI, 22 workflow tests, replay 9/9: 4 pre-AI histories + 5 with the patches).
+- Not done: a live end-to-end run on the laptop stack (needs the rebuilt containers and quota), the deploy runbook.
 
 ## Measured limits (free tiers)
 

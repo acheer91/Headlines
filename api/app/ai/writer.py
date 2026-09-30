@@ -120,23 +120,28 @@ def _run(fn: Callable[[dict], dict]) -> dict:
     """Wrap a writer: timing, call count and the failed status."""
     stats = {"calls": 0}
     t = time.monotonic()
+    client.forget_last()
     try:
         out = fn(stats)
     except CheckFailed as exc:
         out = {"status": "failed", "reason": f"check failed twice: {exc}"}
     except client.RateLimited as exc:
-        out = {"status": "failed", "reason": f"rate limited: {exc}"}
+        out = {"status": "failed", "reason": f"rate limited: {exc}", "retry_after": exc.retry_after}
     except client.AIError as exc:
         out = {"status": "failed", "reason": str(exc)}
     return out | {"calls": stats["calls"], "checks": stats.get("checks", 0), "rejected": stats.get("rejected", []),
-                  "seconds": round(time.monotonic() - t, 1), "model": client.last_writer()}
+                  "seconds": round(time.monotonic() - t, 1), "model": client.last_writer(),
+                  "checker": client.last_checker()}
 
 
 # ---------------------------------------------------------------- preview
 
-def write_preview(game: dict, articles: list[dict]) -> dict:
+def write_preview(game: dict, articles: list[dict], extract: dict | None = None) -> dict:
+    """extract: the article extract saved with an earlier version of this preview, for the same articles. The
+    game-morning refresh passes it when only our own data changed (injuries, line), skipping the extract call."""
     if not articles:
         return {"status": "no_sources", "calls": 0, "rejected": [], "seconds": 0.0, "model": client.model()}
+    saved = extract
 
     def go(stats):
         ids = {i + 1: a for i, a in enumerate(articles)}
@@ -162,8 +167,11 @@ def write_preview(game: dict, articles: list[dict]) -> dict:
                 for e in (x.get("edges") or {}).get(side) or []:
                     edge_ok(e.get("fact"), e.get("article"))
 
-        extract = _step(prompts.EXTRACT_PREVIEW.format(game=g, articles=arts, home=game["home"]["name"],
-                                                       away=game["away"]["name"]), check_extract, stats)
+        if saved is None:
+            extract = _step(prompts.EXTRACT_PREVIEW.format(game=g, articles=arts, home=game["home"]["name"],
+                                                           away=game["away"]["name"]), check_extract, stats)
+        else:
+            extract = saved
         sheet = {"game": gf["facts"], "storylines": extract.get("storylines") or [],
                  "edges": extract.get("edges") or {}}
         fj = json.dumps(sheet, ensure_ascii=False)
@@ -192,7 +200,8 @@ def write_preview(game: dict, articles: list[dict]) -> dict:
                     and p["writer"] in a["text"]):
                 picks.append({"writer": p["writer"], "outlet": a["outlet"], "pick": p["pick"], "url": a["url"]})
         return {"status": "ready", "body": {"preview": out["preview"], "edges": edges, "picks": picks},
-                "sources": [{k: a[k] for k in ("title", "url", "outlet", "published")} for a in articles]}
+                "sources": [{k: a[k] for k in ("title", "url", "outlet", "published")} for a in articles],
+                "extract": extract}
 
     return _run(go)
 

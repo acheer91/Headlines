@@ -15,26 +15,42 @@ from temporalio.client import (Client, Schedule, ScheduleActionStartWorkflow, Sc
                                ScheduleCalendarSpec, ScheduleOverlapPolicy, SchedulePolicy, ScheduleRange,
                                ScheduleSpec, ScheduleUpdate)
 
-from .workflows import TASK_QUEUE, HeadlinesWorkflow, ScheduleSyncWorkflow
+from .workflows import TASK_QUEUE, HeadlinesWorkflow, LeftoverWorkflow, PreviewBatchWorkflow, ScheduleSyncWorkflow
 from .worker import connect
 
 TZ = "America/Los_Angeles"
 LEAGUES = [x.strip() for x in os.environ.get("ENABLED_LEAGUES", "nfl").split(",") if x.strip()]
 
-# schedule id -> (workflow, Pacific hours at minute 0)
-SCHEDULES = {
-    "schedule-sync": (ScheduleSyncWorkflow, [6]),
-    "headlines": (HeadlinesWorkflow, [7, 17]),
-}
+WED, THU, FRI = 3, 4, 5      # Temporal's day_of_week: 0 = Sunday
+
+
+def _schedules() -> dict:
+    """schedule id -> (workflow, leagues, Pacific hours, minute, days of the week or None for every day).
+    Phase 4 (Adam, 2026-09-29): previews are written midweek, NCAAF Wed and Thu evening, NFL Thu and Fri
+    evening; the nightly job catches up at 9:30 PM."""
+    out = {
+        "schedule-sync": (ScheduleSyncWorkflow, LEAGUES, [6], 0, None),
+        "headlines": (HeadlinesWorkflow, LEAGUES, [7, 17], 0, None),
+        "ai-leftover": (LeftoverWorkflow, LEAGUES, [21], 30, None),
+    }
+    if "ncaaf" in LEAGUES:
+        out["ai-previews-ncaaf"] = (PreviewBatchWorkflow, ["ncaaf"], [19], 0, [WED, THU])
+    if "nfl" in LEAGUES:
+        out["ai-previews-nfl"] = (PreviewBatchWorkflow, ["nfl"], [19], 0, [THU, FRI])
+    return out
+
+
+SCHEDULES = _schedules()
 
 
 def build(schedule_id: str) -> Schedule:
-    wf, hours = SCHEDULES[schedule_id]
+    wf, leagues, hours, minute, days = SCHEDULES[schedule_id]
+    cal = ScheduleCalendarSpec(hour=[ScheduleRange(h) for h in hours], minute=[ScheduleRange(minute)],
+                               second=[ScheduleRange(0)],
+                               **({"day_of_week": [ScheduleRange(d) for d in days]} if days else {}))
     return Schedule(
-        action=ScheduleActionStartWorkflow(wf.run, LEAGUES, id=schedule_id, task_queue=TASK_QUEUE),
-        spec=ScheduleSpec(calendars=[ScheduleCalendarSpec(hour=[ScheduleRange(h) for h in hours],
-                                                          minute=[ScheduleRange(0)], second=[ScheduleRange(0)])],
-                          time_zone_name=TZ),
+        action=ScheduleActionStartWorkflow(wf.run, leagues, id=schedule_id, task_queue=TASK_QUEUE),
+        spec=ScheduleSpec(calendars=[cal], time_zone_name=TZ),
         # Laptop or server off at run time: run once when it's back, within 12 hours. Never two at once.
         policy=SchedulePolicy(overlap=ScheduleOverlapPolicy.SKIP, catchup_window=timedelta(hours=12)),
     )
@@ -63,7 +79,8 @@ async def show(client: Client) -> list[dict]:
             "args": [a.data.decode() for a in s.action.args] if isinstance(s.action, ScheduleActionStartWorkflow) else None,
             "task_queue": getattr(s.action, "task_queue", None),
             "time_zone": s.spec.time_zone_name,
-            "calendars": [{"hour": [r.start for r in c.hour], "minute": [r.start for r in c.minute]}
+            "calendars": [{"hour": [r.start for r in c.hour], "minute": [r.start for r in c.minute],
+                           "day_of_week": [f"{r.start}-{r.end or r.start}" for r in c.day_of_week]}
                           for c in s.spec.calendars],
             "overlap": s.policy.overlap.name,
             "paused": s.state.paused,

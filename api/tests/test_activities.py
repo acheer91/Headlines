@@ -25,7 +25,7 @@ def acts(monkeypatch):
     from app.temporal import activities
     from test_api import default_summaries
     with psycopg.connect(TEST_DB) as conn:
-        conn.execute("DROP TABLE IF EXISTS league_calendar, news_items, team_season_stats, team_season_leaders, bet_results, game_summaries,"
+        conn.execute("DROP TABLE IF EXISTS ai_calls, ai_cooling, ai_texts, league_calendar, news_items, team_season_stats, team_season_leaders, bet_results, game_summaries,"
                      " fetch_log, odds_snapshots, games, teams, schema_migrations CASCADE")
         conn.commit()
     migrate.migrate(TEST_DB)

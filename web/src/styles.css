@@ -125,3 +125,12 @@ button { font: inherit; color: inherit; }
 .inj-status.doubtful { color: var(--warn-text); }
 .stats .rank { display: block; font-size: 11px; font-weight: 500; color: var(--muted); }
 .linkish { background: none; border: 0; padding: 0; color: inherit; text-decoration: underline; cursor: pointer; font: inherit; }
+
+/* Phase 4: AI text */
+.ai-text { margin: 0 0 8px; line-height: 1.45; }
+.ai-text:last-child { margin-bottom: 0; }
+.sources { margin: 6px 0 0; }
+.edges + .edges { margin-top: 10px; }
+.edges ul, .picks, .headlines { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+.headlines { padding: 12px 14px 12px 30px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; }
+.headlines a { color: inherit; }

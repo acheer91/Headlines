@@ -9,8 +9,7 @@ from app.ai import client
 @pytest.fixture(autouse=True)
 def fresh(monkeypatch):
     """Clean pacing state, and a fake Groq that answers per model from `plan`."""
-    monkeypatch.setattr(client, "_windows", {})
-    monkeypatch.setattr(client, "_cooling", {})
+    monkeypatch.setattr(client, "quota", client.MemoryQuota())
     monkeypatch.setattr(client, "WRITERS", ["big", "qwen", "small"])
     monkeypatch.setattr(client, "CHECKERS", ["qwen", "small", "big"])
     monkeypatch.setenv("AI_WRITER", "groq")
@@ -82,3 +81,25 @@ def test_full_minute_moves_to_next_model_instead_of_waiting(fresh, monkeypatch):
                                        ("try again in 12.5s", 12.5), ("no hint", 60.0)])
 def test_retry_after(text, secs):
     assert client._retry_after(text) == pytest.approx(secs)
+
+
+def test_no_wait_fails_fast_when_every_minute_is_full(fresh, monkeypatch):
+    monkeypatch.setattr(client, "GROQ_TPM", 5000)
+    prompt = "x" * 4000
+    for _ in range(3):
+        client.write(prompt)                 # one per model fills every minute
+    with client.no_wait(), pytest.raises(client.RateLimited):
+        client.write(prompt)                 # the api's page open: no waiting behind the free tier
+
+
+def test_unreadable_check_goes_to_the_next_checker(fresh, monkeypatch):
+    calls, plan = fresh
+    client.write("x")                        # written by "big"; checkers in order: qwen, small
+
+    def post(body):
+        calls.append(body["model"])
+        if body["model"] == "qwen":
+            raise client.BadReply("groq: reply was not valid JSON")
+        return {"choices": [{"message": {"content": json.dumps({"by": body["model"]})}}], "usage": {"total_tokens": 5}}
+    monkeypatch.setattr(client, "_groq_post", post)
+    assert json.loads(client.check("c"))["by"] == "small"

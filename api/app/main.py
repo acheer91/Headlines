@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import logging
 import os
+import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeout
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,6 +21,10 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import db, espn, favorites, games, migrate, ncaaf
+from .ai import client as ai_client
+from .ai import jobs as ai_jobs
+from .ai import quota as ai_quota
+from .ai import store as ai_store
 
 CACHE_SECONDS = int(os.environ.get("CACHE_SECONDS", "30"))
 ENABLED_LEAGUES = [x.strip() for x in os.environ.get("ENABLED_LEAGUES", "nfl").split(",") if x.strip()]
@@ -37,6 +44,8 @@ async def lifespan(_app: FastAPI):
             log.warning("applied migrations: %s", ", ".join(applied))
     except Exception as exc:  # noqa: BLE001 — /api/health reports a down database; don't crash-loop
         log.error("migrations not applied: %r", exc)
+    if os.environ.get("AI_QUOTA") == "db":
+        ai_quota.install()        # share the free-tier quota with the worker through Postgres
     yield
     db.close_pools()
 
@@ -100,41 +109,7 @@ def _refresh(conn, league: str, week: int | None, season_type: int | None = None
     return True, None
 
 
-def _card(row: dict, favorites: set[str]) -> dict:
-    has_line = any(row[k] is not None for k in ("home_spread", "total", "home_ml", "away_ml"))
-    return {
-        "id": row["id"],
-        "league": row["league"],
-        "state": row["state"],  # pre -> C1, in -> C2, post -> D
-        "start_time": row["start_time"].isoformat(),
-        # False for a flexed game with no kickoff set: start_time is ESPN's placeholder, show the date only.
-        "time_valid": row.get("time_valid", True) is not False,
-        # False for a canceled or postponed game (state 'post' but never played).
-        "completed": row.get("completed"),
-        "status_detail": row["status_detail"],
-        "period": row["period"],
-        "clock": row["clock"],
-        "broadcast": row["broadcast"],
-        "venue": row["venue"],
-        "neutral_site": bool(row.get("neutral_site")),
-        "favorite": row["home_abbr"] in favorites or row["away_abbr"] in favorites,
-        "home": {"abbr": row["home_abbr"], "name": row["home_name"], "short": row["home_short"],
-                 "logo": row["home_logo"], "color": row["home_color"], "score": row["home_score"],
-                 "rank": row.get("home_rank")},
-        "away": {"abbr": row["away_abbr"], "name": row["away_name"], "short": row["away_short"],
-                 "logo": row["away_logo"], "color": row["away_color"], "score": row["away_score"],
-                 "rank": row.get("away_rank")},
-        "line": None if not has_line else {
-            "provider": row["odds_provider"],
-            "details": row["odds_details"],
-            "home_spread": None if row["home_spread"] is None else float(row["home_spread"]),
-            "total": None if row["total"] is None else float(row["total"]),
-            "home_ml": row["home_ml"],
-            "away_ml": row["away_ml"],
-            # True when no pre-game line was ever captured and this is a later one.
-            "captured_after_kickoff": row["state"] != "pre" and row["odds_state"] != "pre",
-        },
-    }
+_card = games.card   # moved to games.py (Phase 4: the worker builds game pages too)
 
 
 _STATE_ORDER = {"in": 0, "pre": 1, "post": 2}
@@ -213,28 +188,73 @@ def game(game_id: int):
     (see games.needs_refresh), and the game's state and score move forward from it. If ESPN
     fails, the stored summary is served with stale=true. Finals are graded here."""
     with db.connect() as conn:
-        row = db.game_by_id(conn, game_id)
-        if not row:
+        out = games.page(conn, game_id, base_url=ESPN_BASE, favorites=_favorites())
+    if out is None:
+        raise HTTPException(404, "game not found")
+    return out
+
+
+# ---------- Phase 4: AI text ----------
+# Written ahead by the worker; a text nobody wrote ahead is written here, on open, within these limits. The api
+# never waits for free-tier quota (client.no_wait): with no room it answers at once and the app shows fallback text.
+AI_WAIT = {"preview": 20.0, "recap": 10.0, "one_liner": 10.0}
+_ai_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="ai-open")
+
+
+def _ai_out(kind: str | None, row: dict | None) -> dict:
+    if not row:
+        return {"kind": kind, "status": "missing", "body": None, "sources": None, "updated_at": None}
+    return {"kind": kind, "status": row["status"], "body": row["body"], "sources": row["sources"],
+            "updated_at": row["updated_at"].isoformat()}
+
+
+def _write_on_open(kind: str, game_id: int) -> dict:
+    with ai_client.no_wait():
+        return ai_jobs.write_for_game(kind, game_id, "open", base_url=ESPN_BASE)
+
+
+@app.get("/api/games/{game_id}/ai")
+def game_ai(game_id: int):
+    """The AI text that fits the game now (handoff 2.6): preview (pre), one-liner (live), recap (played final).
+    status: ready | no_sources ("No fresh previews") | failed or writing (the app shows fallback text) | missing.
+    Current text comes back at once. Otherwise this request writes it (or waits for whoever is writing it) for up
+    to AI_WAIT seconds; a write that runs longer finishes in the background and the next open is instant."""
+    with db.connect() as conn:
+        game_row = db.game_by_id(conn, game_id)
+        if not game_row:
             raise HTTPException(404, "game not found")
-        # C1's team season stats (ranks, INTs leader) are fetched in parallel with the summary.
-        team_jobs = games.start_team_season(conn, row, base_url=ESPN_BASE) if row["state"] == "pre" else []
-        stored = db.get_summary_view(conn, game_id)
-        stale, error = False, None
-        if games.needs_refresh(row, stored):
-            ok, error = games.refresh_summary(conn, row, base_url=ESPN_BASE)
-            stale = not ok
-            stored = db.get_summary_view(conn, game_id)
-            row = db.game_by_id(conn, game_id)
-        team_season = games.finish_team_season(conn, row, team_jobs) if team_jobs else None
-        if row["state"] == "post":
-            try:
-                games.grade_game(conn, game_id)
-            except Exception:  # noqa: BLE001 — show the page even if grading hit a bug
-                conn.rollback()
-                log.exception("grading game %s failed", game_id)
-        card = _card(row, set(_favorites().get(row["league"], [])))
-        return games.detail(conn, card, stored, stale=stale, error=error,
-                            team_season=team_season if row["state"] == "pre" else None)
+        kind = ai_jobs.kind_for(game_row)
+        if kind is None:
+            return _ai_out(None, None) | {"status": "none"}
+        stored = ai_store.get(conn, game_id, kind)
+    # The api doesn't recompute a preview's fingerprint (that fetches articles): the 8 AM refresh does.
+    if ai_store.current(stored, ai_jobs.row_basis(kind, game_row)):
+        return _ai_out(kind, stored)
+    job = _ai_pool.submit(_write_on_open, kind, game_id)
+    deadline = time.monotonic() + AI_WAIT[kind]
+    try:
+        job.result(timeout=AI_WAIT[kind])
+    except FuturesTimeout:
+        pass
+    except Exception:  # noqa: BLE001 — the page still shows fallback text
+        log.exception("ai %s for game %s failed", kind, game_id)
+    # Busy (another writer holds the row) or still writing: re-read once a second until the limit.
+    while True:
+        with db.connect() as conn:
+            row = ai_store.get(conn, game_id, kind)
+        if (row and row["status"] != "writing") or time.monotonic() >= deadline:
+            return _ai_out(kind, row)
+        time.sleep(1)
+
+
+@app.get("/api/headlines")
+def headlines():
+    """Screen A: the newest headline set, or null before the first one is written."""
+    with db.connect() as conn:
+        row = ai_store.latest_headlines(conn)
+    if not row:
+        return None
+    return {"items": row["body"]["items"], "updated_at": row["updated_at"].isoformat()}
 
 
 # Serve the built web app from the same origin (one server, one HTTPS name, no CORS).

@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter, NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { Scoreboard } from "./Scoreboard";
 import { GamePage } from "./GamePage";
+import { Home } from "./Home";
 import { ErrorBoundary } from "./ErrorBoundary";
 import "./styles.css";
 
@@ -44,8 +45,8 @@ function App() {
     <BrowserRouter>
       <RoutedErrorBoundary>
       <Routes>
-        {/* Screen A (headlines) arrives in Phase 4; until then home is the NFL board. */}
-        <Route path="/" element={<Navigate to="/scores/nfl" replace />} />
+        {/* Screen A: the AI headlines (Phase 4); the NFL board until the first set is written. */}
+        <Route path="/" element={<Home />} />
         <Route path="/scores/:league" element={<Scoreboard />} />
         <Route path="/game/:id" element={<GamePage />} />
         <Route path="*" element={<Navigate to="/" replace />} />

@@ -13,6 +13,7 @@ import re
 import threading
 import time
 from collections import deque
+from contextlib import contextmanager
 
 import httpx
 
@@ -76,8 +77,20 @@ def write(prompt: str, *, json_out: bool = False) -> str:
 
 def check(prompt: str) -> str:
     """One fact check, by a model other than the one that wrote the text. Returns a JSON string."""
-    text, _ = _failover(CHECKERS, prompt, True, CHECK_MAX_OUT, avoid=last_writer(), checker=True)
+    text, used = _failover(CHECKERS, prompt, True, CHECK_MAX_OUT, avoid=last_writer(), checker=True)
+    _last.checker = used
     return text
+
+
+def forget_last() -> None:
+    """Start a new text: clear which models wrote and checked the last one."""
+    _last.writer = None
+    _last.checker = None
+
+
+def last_checker() -> str | None:
+    """The model that fact-checked this thread's most recent text."""
+    return getattr(_last, "checker", None)
 
 
 def check_model() -> str:
@@ -86,43 +99,77 @@ def check_model() -> str:
 
 # ---------------------------------------------------------------- failover and pacing
 
-# Per model: each Groq model has its own per-minute limit. (time, reserved tokens) of recent calls.
-_windows: dict[str, deque] = {}
-_cooling: dict[str, float] = {}     # model -> monotonic time it may be tried again after a 429
-_pace = threading.Lock()
-paced_seconds = 0.0     # total time spent waiting (the samples script subtracts it from timings)
+paced_seconds = 0.0     # total time spent waiting for room (the samples script subtracts it from timings)
 
 
-def _room(key: str, cost: int, limit: int, now: float) -> bool:
-    w = _windows.setdefault(key, deque())
-    while w and now - w[0][0] >= 60:
-        w.popleft()
-    return sum(c for _, c in w) + cost <= limit or not w
+class MemoryQuota:
+    """Per-model minute windows and 429 cool-downs inside this process. Fine for one process (tests, the samples
+    script); the api and the worker share quota.DbQuota instead (AI_QUOTA=db), so they can't collide."""
+
+    def __init__(self):
+        self._windows: dict[str, deque] = {}
+        self._cooling: dict[str, float] = {}     # model -> monotonic time it may be tried again
+        self._lock = threading.Lock()
+
+    def _room(self, key: str, cost: int, limit: int, now: float) -> bool:
+        w = self._windows.setdefault(key, deque())
+        while w and now - w[0][0] >= 60:
+            w.popleft()
+        return sum(c for _, c in w) + cost <= limit or not w
+
+    def reserve(self, models: list[str], cost: int, limit: int, wait: bool) -> tuple[str, object] | None:
+        """The first model that isn't cooling down and has room this minute, reserved. With wait, sleep until the
+        first usable model has room; without, None at once. None when every model is cooling down."""
+        global paced_seconds
+        with self._lock:
+            while True:
+                now = time.monotonic()
+                usable = [m for m in models if self._cooling.get(m, 0) <= now]
+                if not usable:
+                    return None
+                for m in usable:
+                    if self._room(m, cost, limit, now):
+                        self._windows[m].append((now, cost))
+                        return m, None
+                if not wait:
+                    return None
+                pause = 60 - (now - self._windows[usable[0]][0][0]) + 0.1
+                paced_seconds += pause
+                time.sleep(pause)
+
+    def cool(self, model_name: str, seconds: float) -> None:
+        with self._lock:
+            self._cooling[model_name] = max(self._cooling.get(model_name, 0), time.monotonic() + seconds)
+
+    def used(self, handle: object, tokens: int) -> None:
+        pass
 
 
-def _reserve(models: list[str], cost: int, limit: int) -> str | None:
-    """The first model that isn't cooling down and has room this minute, reserved; else wait for the first one
-    that isn't cooling down. None when every model is cooling down."""
-    global paced_seconds
-    with _pace:
-        while True:
-            now = time.monotonic()
-            usable = [m for m in models if _cooling.get(m, 0) <= now]
-            if not usable:
-                return None
-            for m in usable:
-                if _room(m, cost, limit, now):
-                    _windows[m].append((now, cost))
-                    return m
-            first = _windows[usable[0]]
-            wait = 60 - (now - first[0][0]) + 0.1
-            paced_seconds += wait
-            time.sleep(wait)
+quota = MemoryQuota()
+_mode = threading.local()
+
+
+@contextmanager
+def no_wait():
+    """Inside this block no call waits for a model's minute to free up: with no room anywhere it raises
+    RateLimited at once. The api uses it so a page open never sits behind the free tier (spec: only the worker
+    waits)."""
+    before = getattr(_mode, "wait", True)
+    _mode.wait = False
+    try:
+        yield
+    finally:
+        _mode.wait = before
+
+
+def _waiting() -> bool:
+    return getattr(_mode, "wait", True)
 
 
 def _wait(cost: int, limit: int, key: str) -> None:
-    """Block until one model (Gemini, search) has room this minute."""
-    _reserve([key], cost, limit)
+    """Hold one call to a single model (Gemini, search) until it has room this minute."""
+    if quota.reserve([key], cost, limit, _waiting()) is None:
+        raise RateLimited(f"{key}: no room this minute")
 
 
 _RETRY = re.compile(r"try again in (?:(\d+)h)?(?:(\d+)m)?(?:([\d.]+)s)?")
@@ -143,21 +190,26 @@ def _failover(models: list[str], prompt: str, json_out: bool, max_out: int, avoi
     # Groq counts the prompt plus the whole reply allowance against the minute (429s when we counted real usage,
     # 2026-09-29), so that is what we reserve: ~4 characters a token plus max_out.
     cost = len(prompt) // 4 + max_out
-    last: AIError = RateLimited("every model is rate-limited")
+    last: AIError = RateLimited("every model is rate-limited or has no room this minute")
     tried: set[str] = set()
     while True:
-        name = _reserve([m for m in order if m not in tried], cost, GROQ_TPM)
-        if name is None:
+        got = quota.reserve([m for m in order if m not in tried], cost, GROQ_TPM, _waiting())
+        if got is None:
             raise last
+        name, handle = got
         tried.add(name)
         try:
-            return _groq_write(prompt, json_out, name, max_out, checker), name
+            text, used = _groq_write(prompt, json_out, name, max_out, checker)
+            quota.used(handle, used)
+            return text, name
         except RateLimited as exc:
-            _cooling[name] = time.monotonic() + exc.retry_after
+            quota.cool(name, exc.retry_after)
             last = exc
-        except BadReply:
-            raise                     # the text's fault, not the model's: the writer rewrites it
-        except AIError as exc:        # a 5xx, a timeout: try the next model
+        except BadReply as exc:
+            if not checker:
+                raise                 # a writer's bad JSON is the text's fault: the writer rewrites it
+            last = exc                # a checker's bad JSON: ask the next checker (gpt-oss-20b ran out of room, Sep 29)
+        except AIError as exc:        # a 5xx, a timeout, a retired model: try the next one
             last = exc
 
 
@@ -184,15 +236,16 @@ def _groq_post(body: dict) -> dict:
 
 
 MAX_OUT = 3000           # includes the model's reasoning tokens
-CHECK_MAX_OUT = 1500     # the fact-check reply is a short JSON list
+CHECK_MAX_OUT = 2000     # the fact-check reply is a short JSON list (plus the model's reasoning)
 REASONING = os.environ.get("GROQ_REASONING", "medium")   # "low" made factual slips (wrong team, wrong bet result)
 tokens_used = 0         # Groq writing tokens this process (the samples script reports it per text)
 
 
-def _groq_write(prompt: str, json_out: bool, name: str, max_out: int, checker: bool) -> str:
+def _groq_write(prompt: str, json_out: bool, name: str, max_out: int, checker: bool) -> tuple[str, int]:
     body = {"model": name, "max_completion_tokens": max_out, "messages": [{"role": "user", "content": prompt}]}
     if name.startswith("openai/gpt-oss"):
-        body["reasoning_effort"] = REASONING
+        # Checking is comparison, not writing; low reasoning leaves the reply room for the JSON.
+        body["reasoning_effort"] = "low" if checker else REASONING
     else:
         body["reasoning_format"] = "hidden"     # Qwen: keep its thinking out of the JSON reply
     if checker:
@@ -201,14 +254,15 @@ def _groq_write(prompt: str, json_out: bool, name: str, max_out: int, checker: b
         body["response_format"] = {"type": "json_object"}
     d = _groq_post(body)
     global tokens_used
-    tokens_used += (d.get("usage") or {}).get("total_tokens") or 0
+    used = (d.get("usage") or {}).get("total_tokens") or 0
+    tokens_used += used
     try:
         text = d["choices"][0]["message"]["content"]
     except (KeyError, IndexError):
         raise AIError("groq: bad reply") from None
     if not text:
         raise AIError("groq: empty reply")
-    return text
+    return text, used
 
 
 SEARCH_SYSTEM = "Run exactly one web search with the user's query, unchanged. Do not open any page. Reply DONE."
@@ -224,6 +278,9 @@ def groq_search(query: str) -> list[dict]:
     _wait(2000, GROQ_TPM, GROQ_SEARCH_MODEL)    # search shares gpt-oss-20b's minute with its writing fallback
     try:
         tools = _groq_post(body)["choices"][0]["message"].get("executed_tools") or []
+    except RateLimited as exc:
+        quota.cool(GROQ_SEARCH_MODEL, exc.retry_after)   # writing and checking skip it too until then
+        raise
     except (KeyError, IndexError):
         raise AIError("groq: bad reply") from None
     out, seen = [], set()
