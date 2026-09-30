@@ -123,10 +123,14 @@ TEXT:
 ONE_LINER = """Write one sentence (under 30 words) summing up this live game right now, for a scores app.
 Return JSON only: {{"line": "..."}}
 
-Use only GAME. Every number must appear in GAME exactly as written. No predictions, no advice, no hype.
+FACTS is a list of plain, exact statements about the game so far (built from the live box score). Use only
+FACTS. Every number must appear in FACTS exactly as written. The quarter marked "(in progress)" isn't over.
+Say what has happened, never how it will end: no predictions, no advice, no hype.
 
-GAME:
-{game}
+{voice}
+
+FACTS:
+{facts}
 """
 
 # ---------------------------------------------------------------- headlines (Screen A)

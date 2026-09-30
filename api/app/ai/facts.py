@@ -134,6 +134,33 @@ def recap_facts(game: dict) -> dict:
     return {"teams": n, "facts": facts}
 
 
+def live_facts(game: dict) -> dict:
+    """The fact sheet for the live one-liner: the game so far, nothing about how it will end."""
+    n = _names(game)
+    short = {s: n[s]["short"] or n[s]["name"] for s in ("home", "away")}
+    h, a = game["home"].get("score"), game["away"].get("score")
+    facts = [f"Live, {game.get('status_detail') or 'in progress'}: {n['away']['name']} {a}, {n['home']['name']} {h}."]
+    if h is not None and a is not None:
+        facts.append("Tied." if h == a else
+                     f"{n['home' if h > a else 'away']['name']} leads by {abs(h - a)} right now.")
+    hdr = game.get("header") or {}
+    hl = (hdr.get("home") or {}).get("linescores") or []
+    al = (hdr.get("away") or {}).get("linescores") or []
+    if hl and len(hl) == len(al):
+        # ESPN's last linescore is the quarter being played, so it is labelled as unfinished.
+        for i, (x, y) in enumerate(zip(al, hl)):
+            done = "" if i < len(hl) - 1 else " (in progress)"
+            facts.append(f"Points in {_period(i)}{done}: {short['away']} {x}, {short['home']} {y}.")
+    sit = game.get("situation") or {}
+    if sit.get("possession"):
+        side = next((s for s in ("home", "away") if n[s]["abbr"] == sit["possession"]), None)
+        who = n[side]["name"] if side else sit["possession"]
+        facts.append(f"{who} has the ball{', ' + sit['down_distance'] if sit.get('down_distance') else ''}.")
+    facts += [f"So far, {line[0].lower()}{line[1:]}" for line in _stat_lines(game, short)]
+    facts += [line.replace("(this game)", "(so far)") for line in _leader_lines(game, short)]
+    return {"teams": n, "facts": facts}
+
+
 def _kickoff(game: dict) -> str | None:
     try:
         t = datetime.fromisoformat(game["start_time"]).astimezone(ET)

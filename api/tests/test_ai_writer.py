@@ -193,5 +193,18 @@ def test_edge_with_unknown_article_fails(model):
     assert writer.write_preview(dict(GAME, state="pre"), [ARTICLE])["status"] == "failed"
 
 
+def test_one_liner_from_live_facts(model):
+    live = dict(GAME, state="in", status_detail="Q3 4:12")
+    calls = model([{"line": "Chicago leads by 20 in the third."}])
+    res = writer.write_one_liner(live)
+    assert res["status"] == "ready" and "Live, Q3 4:12" in calls[0]
+
+
+def test_one_liner_too_long(model):
+    long = {"line": " ".join(["word"] * 45)}
+    model([long, long])
+    assert writer.write_one_liner(dict(GAME, state="in"))["status"] == "failed"
+
+
 def test_recap_fallback():
     assert writer.recap_fallback(GAME) == "Final: Bears 27, Eagles 7. Spread: CHI +3 covered by 23."
