@@ -34,6 +34,9 @@ Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `ph
 - **Models (Groq, free):** writer `openai/gpt-oss-120b`, fact-checker `openai/gpt-oss-20b` (Sep 30),
   search `openai/gpt-oss-20b` browser search; recap box-score claims are checked in code first (`writer.claims_ok`); each fails over to the others (`AI_WRITERS`, `AI_CHECKERS`); a model never checks its own text.
   `or:<id>` names an OpenRouter free model (own pool, 20 requests/min; counted in requests, not tokens): `or:qwen/qwen3.8-27b:free` is the 3rd checker (Oct 1, Adam), never a writer. Qwen on Groq and on OpenRouter count as one model for "never checks its own text". No `OPENROUTER_API_KEY` just leaves that pool out.
+  Library only (Oct 1, Adam; in no list, untested for accuracy): `or:nvidia/nemotron-3-ultra-550b-a55b:free` (reasoning model; key
+  works, streaming works). In `json_object` mode it returned `{}` (finish `length`) 2 of 3 tries; plain mode returned good JSON. Before
+  it goes in `AI_CHECKERS`, drop `response_format` for it and run `check_eval`.
   Gemini side pool (headlines, weekday pre-writing, last fallback; Adam) is planned, not built. **Never set
   `AI_WRITER=gemini` as a fallback:** it moves all writing to Gemini's 20 requests/day and runs out at once. Free tier per model: 8K tokens/min, 200K tokens/day on
   a rolling 24 h window. Bake-off (Sep 29): Qwen as a writer invents claims (streaks, leads) — writer of last resort.
