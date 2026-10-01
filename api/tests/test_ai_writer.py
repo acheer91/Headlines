@@ -47,12 +47,12 @@ def model(monkeypatch):
 
 
 def test_fact_check_problem_rewrites_with_feedback(model, checker):
-    checker.append([{"quote": "Bears led all game", "why": "tied after Q1"}])
-    calls = model([{"recap": f"Bears led all game. {WORDS}", "home": "x", "away": "y"},
+    checker.append([{"quote": "Bears led comfortably throughout", "why": "tied after Q1"}])
+    calls = model([{"recap": f"Bears led comfortably throughout. {WORDS}", "home": "x", "away": "y"},
                    {"recap": f"Bears won. {WORDS}", "home": "x", "away": "y"}])
     res = writer.write_recap(GAME)
     assert res["status"] == "ready" and res["checks"] == 2
-    assert "Bears led all game" in calls[1] and "rejected" in calls[1]     # the rewrite is told what was wrong
+    assert "Bears led comfortably throughout" in calls[1] and "rejected" in calls[1]     # the rewrite is told what was wrong
 
 
 def test_fact_check_problem_twice_fails(model, checker):
@@ -342,10 +342,138 @@ def test_recap_length_tier(fixture, edit, want):
     assert writer.recap_length(g) == want
 
 
-def test_recap_over_its_length_is_rewritten_shorter(model):
+def test_recap_is_about_120_words_while_the_one_minute_read_is_off(model):
+    # Back to ~120 words until Adam confirms 200-230 (2026-10-01): no tiers, no total cap, as before 8d2066a.
+    assert writer.ONE_MINUTE_READ is False
+    calls = model([{"recap": f"Bears won. {WORDS}", "home": " ".join(["x"] * 90), "away": " ".join(["y"] * 90)}])
+    res = writer.write_recap(GAME)
+    assert res["status"] == "ready" and len(calls) == 1
+    assert "about 120 words" in calls[0] and "2-3 sentences, on" in calls[0] and "one-minute" not in calls[0]
+    assert res["length"]["why"] == "about 120 words"
+
+
+def test_recap_over_200_words_is_rewritten(model):
+    calls = model([{"recap": " ".join(["word"] * 201), "home": "x", "away": "y"},
+                   {"recap": f"Bears won. {WORDS}", "home": "x", "away": "y"}])
+    assert writer.write_recap(GAME)["status"] == "ready" and "recap is 201 words" in calls[1]
+
+
+def test_recap_over_its_length_is_rewritten_shorter(model, monkeypatch):
+    monkeypatch.setattr(writer, "ONE_MINUTE_READ", True)
     long = {"recap": f"Bears won. {WORDS}", "home": " ".join(["x"] * 80), "away": " ".join(["y"] * 80)}
     calls = model([long, {"recap": f"Bears won. {WORDS}", "home": "x", "away": "y"}])
     res = writer.write_recap(GAME)
     assert res["status"] == "ready" and "220 in all at most" in calls[1]
     assert res["length"] == {"tier": "standard", "why": "standard", "words": 74}
     assert "about 110 words" in calls[0] and "about 45 words" in calls[0]
+
+
+# ---------- Oct 1 accuracy fixes: comparisons, time inside a quarter, causes (the reviewed errors, 24 + 15) ----------
+
+@pytest.mark.parametrize("fixture,text,why", [
+    # order inside a quarter: only the score at each quarter break is known
+    ("final_phi_chi", "The Bears opened with a 7-0 first quarter and added 3 in the second before the Eagles "
+                      "narrowed the gap.", "'before' inside a quarter"),
+    ("final_car_cle", "The Panthers put three points on the board in the second while the Browns responded with ten.",
+     "'responded' inside a quarter"),
+    ("final_phi_chi", "The Bears added a field goal in the second before the Eagles tied with a touchdown.",
+     "'tied' is a tie the sheet doesn't show"),
+    ("final_atl_gb", "The Packers managed a late field goal to end at 35-14.", "'late field goal'"),
+    ("final_lac_buf", "Chargers opened with a 10-0 lead in the first quarter, the only time they scored first.",
+     "'scored first'"),
+    ("final_lar_den", "Denver won it in the fourth, and the visitors controlled the early minutes.",
+     "'controlled the early'"),
+    # the whole game
+    ("final_nyj_det", "New York managed 24 points despite trailing all game.", "'all game'"),
+    ("final_min_tb", "The Vikings never saw the lead change from start to finish.", "'start to finish'"),
+    ("final_car_cle", "The Browns held on, preserving the lead through the end.", "through the end"),
+    ("final_nyj_det", "Detroit led at halftime and kept a 7-point edge through the third and fourth quarters.",
+     "'edge through the third'"),
+    # causes
+    ("final_ten_nyg", "New York improved to 2-1, bolstered by a clean ball and 34:26 of possession.", "'bolstered'"),
+    ("final_lar_den", "Denver checked out for the first two quarters, allowing Los Angeles to build a 16-0 lead.",
+     "'checked out'"),
+    ("final_lar_den", "The Broncos capitalized on key opportunities.", "'capitalized'"),
+    ("final_phi_chi", "Chicago took advantage of a 13:46 possession edge to control the game.", "'took advantage'"),
+    ("final_lv_no", "The team finished winless in four games before this one.", "'winless'"),
+    # who led, and the right direction
+    ("final_lac_buf", "A field goal in the third kept the Chargers ahead 13-10, then the Bills scored 14.",
+     "did not lead at the break before that quarter"),
+    ("final_lac_buf", "Los Angeles added three points in the third to lead 13-10, the only lead change between "
+                      "quarter breaks.", "never took the lead"),
+    ("final_sea_wsh", "Seattle surged ahead with 14 points in Q4.", "Seahawks did not lead at the end of that quarter"),
+    ("final_lar_den", "The fourth quarter provided the final scramble, with each team adding points to close the gap.",
+     "no gap to close"),
+    ("final_nyj_det", "Detroit outgained the Jets 381 to 335, with a rushing advantage of 131 to 58 and a passing "
+                      "advantage of 250 to 277.", "Jets had more"),
+    ("final_ari_sf", "Turnovers were split, each side accounting for one.", "turnovers were not even"),
+    ("final_lv_no", "The Saints held the ball for over five minutes longer.", "the possession gap was 4:56"),
+    # a number given to the wrong thing
+    ("final_ne_jax", "New England's offense sputtered: 199 passing yards, 83 on the ground, 3 turnovers and only 3 "
+                     "points.", "199 is Drake Maye's own line"),
+    ("final_ne_jax", "New England's offense sputtered: 199 passing yards, 83 on the ground, 3 turnovers and only 3 "
+                     "points.", "Patriots scored 6 in all"),
+    ("final_ten_nyg", "The Giants built a steady lead, scoring three points in the first, six at halftime and three "
+                      "more in the third.", "Giants had 9 at halftime"),
+])
+def test_oct1_claims_rejected(fixture, text, why):
+    assert why in _claims(fixture, text)
+
+
+@pytest.mark.parametrize("fixture,text", [
+    ("final_kc_mia", "The first quarter ended tied 7-7."),
+    ("final_lac_buf", "The Bills answered with 10 points in the second to tie it at halftime."),
+    ("final_lar_den", "Denver scored 16 unanswered points in the third to force a 16‑16 tie."),
+    # across quarters the order is plain from the breaks: only one team scored in each
+    ("final_ten_nyg", "The Giants added 3 in the third before Tennessee's lone touchdown in the fourth quarter."),
+    ("final_sea_wsh", "Both teams scored 7 in the third, keeping the Commanders ahead 24-17."),
+    ("final_nyj_det", "The Lions added seven in the third, extending the lead to seven."),
+    ("final_atl_gb", "The Falcons surged ahead with ten unanswered points in the second."),
+    ("final_atl_gb", "Each side forced one turnover."),
+    ("final_lac_buf", "The Chargers owned the time‑of‑possession edge, 31:22 to 28:38."),
+    ("final_lac_buf", "Buffalo outgained Los Angeles by two total yards, 350 to 348, and held a slight edge in "
+                      "rushing, 176 to 131."),
+    ("final_hou_ind", "The Colts held the ball for 35:13, ten minutes and twenty‑six seconds longer than the Texans."),
+    ("final_lar_den", "Los Angeles opened with a 7‑0 first quarter and extended the lead to 16‑0 by halftime, thanks "
+                      "to 7 points in the first and 9 in the second."),
+    ("final_lar_den", "Denver sat down 0‑16 at halftime but rallied with 16 points in the third quarter and 14 in "
+                      "the fourth to win 30‑26."),
+    ("final_sea_wsh", "Washington never trailed at a quarter break and held on 33-31."),
+    ("final_ne_jax", "Jacksonville had 3 passing touchdowns and a rushing score, and New England had 234 passing yards."),
+])
+def test_oct1_true_claims_pass(fixture, text):
+    assert _claims(fixture, text) == ""
+
+
+@pytest.mark.parametrize("fixture,text", [
+    ("final_atl_gb", "The Falcons allowed 328 yards to Green Bay."),
+    ("final_atl_gb", "The Packers allowed 498 total yards to the Falcons."),
+    ("final_ari_sf", "The 49ers led at every break through the end of the third quarter."),
+])
+def test_cause_rules_leave_plain_stats_alone(fixture, text):
+    assert _claims(fixture, text) == ""
+
+
+def test_allowing_x_to_verb_is_a_cause():
+    assert "'allowing Los Angeles to establish'" in _claims("final_lar_den", "Denver trailed, allowing Los Angeles to "
+                                                                          "establish a 16-0 lead.")
+
+
+def test_advantage_goes_to_the_first_number_not_the_first_team_named():
+    # "Despite Detroit's rushing edge of 131 to 58, the Jets had a passing advantage of 277 to 250" is right.
+    assert _claims("final_nyj_det", "Despite Detroit's rushing edge of 131 to 58, the Jets had a passing advantage of "
+                                    "277 to 250.") == ""
+    assert "Lions had the 250" in _claims("final_nyj_det", "The Lions had a passing advantage of 250 to 277.")
+
+
+def test_live_one_liner_may_say_tied_inside_a_quarter(model):
+    # The order/lead/tie rules are for finished games; "tied 14-14 early in the third" describes a game in progress.
+    g = {"league": "nfl", "state": "in", "status_detail": "3rd 12:00", "home": {"name": "Chicago Bears", "short": "Bears",
+         "score": 14}, "away": {"name": "Philadelphia Eagles", "short": "Eagles", "score": 14},
+         "header": {"home": {"linescores": [7, 7, 0]}, "away": {"linescores": [7, 7, 0]}}}
+    model([{"line": "The Eagles responded in the second quarter and it is tied 14-14."}])
+    assert writer.write_one_liner(g)["status"] == "ready"
+
+
+def test_the_same_line_is_refused_in_a_recap():
+    assert "'responded' inside a quarter" in _claims("final_car_cle", "The Browns responded in the second quarter.")

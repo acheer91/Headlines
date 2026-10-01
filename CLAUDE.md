@@ -36,9 +36,23 @@ Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `ph
   Gemini side pool (headlines, weekday pre-writing, last fallback; Adam) is planned, not built. **Never set
   `AI_WRITER=gemini` as a fallback:** it moves all writing to Gemini's 20 requests/day and runs out at once. Free tier per model: 8K tokens/min, 200K tokens/day on
   a rolling 24 h window. Bake-off (Sep 29): Qwen as a writer invents claims (streaks, leads) — writer of last resort.
-- **Recap length: a one-minute read** (2026-10-01; `writer.recap_length`): standard ~200 words (recap ~110, each
-  team ~45), featured ~230 (120/55) for a favorite, ranked vs ranked, two NFL teams with winning records going in,
-  overtime, a 3-point-or-less margin, or 2+ lead changes. Code rejects a recap more than 10% over; bets line on top.
+- **Recap length: back to ~120 words** (2026-10-01, until Adam confirms 200-230 was his call): the recap paragraph is
+  about 120 words (code accepts 60-200), each team 2-3 sentences. The one-minute-read tiers (standard ~200 words,
+  featured ~230 for a favorite, ranked vs ranked, two winning NFL teams, overtime, a margin of 3 or less, or 2+ lead
+  changes; `writer.recap_length`, commit 8d2066a) are still built: set `writer.ONE_MINUTE_READ = True` to bring them back.
+- **Box-score claims are refused in code** (`writer.claim_problems`, reviewed errors of Sep 30 and Oct 1): a player's
+  numbers come from that player's line; "favored / outgained / advantage of N to M / held the ball N minutes longer" and
+  "each side / split" must match the stats; lead changes, "kept/extended/took the lead", "close the gap", "only N points"
+  and "N at halftime" must match the quarter-break scores; no "before / responded / scored first / late / early" inside a
+  quarter where both teams scored, and "tied" only for a tie shown at a break; no "all game", "start to finish", "through
+  the end", streaks or records going in, and a long list of cause words (bolstered, capitalized, checked out, allowing X
+  to, to control the game, ...). `python -m app.ai.replay` replays them on the saved eval outputs (3dacc26, bffeb78)
+  against `tests/fixtures/ai/known_errors.json` (39 hand-found errors, each tagged by cause): 24/24 and 13/15, 0 of the 6
+  passed-clean texts flagged. Not caught: a "touchdown" for 7 points (borderline). The model fact-checker still runs after.
+- **Review sheet:** `python -m app.ai.review_sheet` writes `docs/phase4-review-sheet.csv` from an eval output (one row
+  per claim, with its facts or article; reviewers fill verdict and cause); `--tally <filled.csv>` counts errors by cause.
+  The eval (`checks/phase4_eval.py`) runs a preflight (branch/commit pushed, Docker answers, the stale
+  `engine.sock`, Groq quota) and then this.
 - **Facts only from inputs, enforced in code** (`app/ai/`): recap and preview game facts are built by code
   (`facts.py`), never read raw by a model; numbers must appear in the facts; bet results are written by code
   (`bets_line`); no advice or bet words; no 8-word copy from an article; edges/picks must come from the linked
@@ -67,7 +81,7 @@ Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `ph
 - **Keys** (`GROQ_API_KEY`, `GEMINI_API_KEY`) live only in `.env`; no key, or removing it, is the off switch (every AI
   section shows fallback text). Prompts carry only public sports data (free tiers may use prompts for training).
 - **Tests:** `tests/test_ai_*.py` (no live model calls), `test_workflows.py` (every simulated game runs a fake `ai`
-  worker: a waiting AI task stops time-skipping), `test_replay.py` (old histories replay with the patches).
+  worker: a waiting AI task stops time-skipping), `test_replay.py` (old histories replay with the patches), `test_ai_replay.py` / `test_ai_review_sheet.py` (need git history; skipped without it).
 
 ## Phase 3 — Temporal (built 2026-09-28, deployed to the server 2026-09-29 05:13 UTC)
 Scope: scheduled work off the pull path. ScheduleSync (daily 6:00 AM PT) starts one GameWorkflow per NFL game not yet

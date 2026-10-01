@@ -40,7 +40,29 @@ BET_TALK = re.compile(r"\b(spread|moneyline|covered|covering|cover|over/under|th
 UNSUPPORTED = re.compile(
     r"\b(dominat\w*|relinquish\w*|wire[\s\-‐-—]to[\s\-‐-—]wire|the game's (only|lone)|"
     r"(two|three|four|five) (more )?scores|because|buoyed|fueled|powered by|off balance|momentum|"
-    r"erased|proved (costly|decisive)|the difference)\b", re.I)
+    r"erased|proved (costly|decisive)|the difference|"
+    # Causes (2026-10-01, from the rerun: "bolstered by a clean ball", "capitalized on key opportunities", "Denver
+    # checked out ... allowing Los Angeles to establish", "to control the game"). A box score shows what happened,
+    # never why. "Thanks to 7 points in the first" only restates the score, so a number after it is fine.
+    r"bolster\w*|boost(?:ed|ing)|propell\w*|spurr\w*|spark(?:ed|ing)|driven by|due to|thanks to(?!\s+\d)|"
+    r"capitaliz\w*|took advantage|checked out|woke up|led to|resulted in|"
+    # "allowing Los Angeles to establish" (a cause), not "allowed 17 points to Atlanta" (a stat): a verb follows "to".
+    r"allow(?:ed|ing)\b[^.,;]{0,40}?\bto\s+(?-i:(?!the\b|an?\b|their\b|its\b|his\b)[a-z]+)|"
+    r"as a result|paid off|turned the tide|"
+    r"control(?:led|ling|s)? (?:the )?(?:game|pace|tempo|contest|flow|action|early)|to control|"
+    # Streaks and records going in: FACTS has only the record after this game ("winless in four games").
+    r"winless|unbeaten|undefeated|streak\w*|in a row|consecutive|straight (?:win|loss|game)s?|"
+    # The whole game: a box score has only the score at each quarter break ("trailing all game", "from start to
+    # finish", "preserving the lead through the end", "kept a 7-point edge through the third and fourth").
+    r"all (?:game|night|afternoon)|start[\s\-‐-—]to[\s\-‐-—]finish|beginning to end|"
+    r"(?:the )?(?:entire|whole) (?:game|contest)|from the opening (?:whistle|kickoff|snap)|"
+    r"(?:through|until|to) the (?:end(?!\s+of\s+(?:the\s+)?(?:first|second|third|fourth|1st|2nd|3rd|4th|half|q[1-4]))|"
+    r"final whistle)|the rest of the way|"
+    r"(?:lead|edge|advantage|margin|cushion)\s+(?:through|throughout)\s+(?:the\s+)?(?:first|second|third|fourth|"
+    r"half|rest|game|contest|end)|"
+    # Inside a quarter: "a late field goal", "controlled the early minutes", "scored first".
+    r"(?:late|early) (?:field goals?|touchdowns?|scores?|points?|drives?|rally|surge|push|run|minutes|moments|"
+    r"stages|going)|(?:scored|struck) first)\b", re.I)
 HYPHEN = "[\\s\\-‐-—]"      # the model writes U+2011 non-breaking hyphens
 TEAM_WORDS = r"[A-Z][\w.'’]*(?:\s[A-Z0-9][\w.'’]*)*"
 CLAUSE = re.compile(r"[,;–—]|:(?!\d)|\b(?:and|while|as|but|with|whereas|despite|after|before)\b")
@@ -58,6 +80,46 @@ STAT_WORDS = [(re.compile(r"possession|the ball|clock", re.I), "possessionTime")
 NAME_SUFFIX = re.compile(r"\s+(jr\.?|sr\.?|ii|iii|iv)$", re.I)
 # A preview quoted an article's older line ("a 14-point favorite") when FACTS had 14.5 (2026-09-30).
 FAVORITE = re.compile(rf"(\d+(?:\.\d+)?){HYPHEN}?point (?:favou?rite|underdog)|favou?red by (\d+(?:\.\d+)?)", re.I)
+
+# Order inside a quarter is unknowable: the sheet has the score at each quarter break only (2026-09-30 eval and the
+# Oct 1 rerun: "added 3 in the second before the Eagles tied", "put three points on the board in the second while the
+# Browns responded with ten"). A sentence naming a quarter may not say what came "before" something or who "responded"
+# (a team can respond to the break score before, so only the same sentence's quarter counts), and "tied" must be a
+# tie the sheet shows at a quarter break.
+QUARTER = re.compile(r"\b(first|second|third|fourth|1st|2nd|3rd|4th|q[1-4]|quarter|period|stanza)\b", re.I)
+QUARTER_NO = {"first": 0, "1st": 0, "q1": 0, "second": 1, "2nd": 1, "q2": 1, "third": 2, "3rd": 2, "q3": 2,
+              "fourth": 3, "4th": 3, "q4": 3}
+BEFORE = re.compile(r"\bbefore\b(?!\s+(?:the\s+)?(?:half|halftime|break|intermission|final|end|clock|game|quarter|"
+                    r"(?:first|second|third|fourth|1st|2nd|3rd|4th)\b))", re.I)
+RESPONDED = re.compile(r"\brespond(?:ed|ing|s)?\b", re.I)
+TIED = re.compile(r"\b(?:tied|ties|tie|tying)\b", re.I)
+EQUAL_SCORE = re.compile(r"(\d+)\s*-\s*(\d+)")
+BREAK_WORDS = [(re.compile(r"half|halftime"), 1), (re.compile(r"end of (?:the )?(?:first|1st|q1)|after (?:the )?(?:first|1st|q1)"), 0),
+               (re.compile(r"end of (?:the )?(?:third|3rd|q3)|after (?:the )?(?:third|3rd|q3)"), 2),
+               (re.compile(r"end of (?:the )?(?:fourth|4th|q4|regulation)|after (?:the )?(?:fourth|4th|q4)"), 3)]
+# "Kept the Chargers ahead 13-10" when the half was tied; "to close the gap" when the quarter began tied.
+KEPT_LEAD = re.compile(r"\b(?:kept|held|maintained|preserv\w+|extended|stretch\w*|widened|retained|protected)\b"
+                       r"[^.]{0,40}?\b(?:ahead|lead|edge|advantage|margin)\b", re.I)
+CLOSE_GAP = re.compile(r"\b(?:clos\w+|narrow\w*|trim\w*|cut\w*)\b[^.]{0,20}?\b(?:gap|deficit)\b", re.I)
+# Comparisons the sentence makes about both teams: "a passing advantage of 250 to 277", "turnovers were split".
+ADVANTAGE = re.compile(r"\b(?:advantage|edge)\b([^.;]{0,30}?)(\d[\d:.,]*)\s+to\s+(\d[\d:.,]*)", re.I)
+SYMMETRIC = re.compile(r"\b(?:each (?:side|team)|both (?:teams|sides|squads)|split|evenly|equal(?:ly)?|matched)\b", re.I)
+TURNOVERS = re.compile(r"turnover|giveaway|takeaway", re.I)
+# A number given to the wrong thing: a player's yards as the team's ("offense sputtered: 199 passing yards", Maye's
+# number), "only 3 points" for a team that scored 6, "six at halftime" for a team that led 9-0 at the half.
+TEAM_YARDS = re.compile(r"(\d[\d,]*)\s+(passing|rushing)\s+yards", re.I)
+ONLY_POINTS = re.compile(r"\b(?:only|just|merely)\s+(\d+)\s+points?\b", re.I)
+WORD_NUM = {w: i for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve thirteen "
+                                       "fourteen fifteen sixteen seventeen eighteen nineteen twenty".split())}
+AT_HALF = re.compile(rf"(?<![\d-])\b(\d+|{'|'.join(WORD_NUM)})\s+(?:points?\s+)?(?:at|by)\s+(?:the\s+)?(?:half|halftime)\b",
+                     re.I)
+# "held the ball for over five minutes longer" when the gap was 4:56.
+LONGER_BY = re.compile(r"\b(over|more than|just over|nearly|almost|just under|about|roughly|around)?\s*"
+                       rf"(\d+|{'|'.join(WORD_NUM)})\s+(?:full\s+)?minutes?\b[^.;]{{0,25}}?\b(?:longer|more)\b", re.I)
+LEAD_CHANGE = re.compile(r"\blead changes?\b|\bchanged hands\b", re.I)
+# "Seattle surged ahead with 14 points in Q4" when Seattle trailed at the end of Q4.
+TOOK_LEAD = re.compile(r"\b(?:surg\w*|pull\w*|mov\w*|went|vault\w*|jump\w*) ahead\b|"
+                       r"\b(?:took|take|seiz\w+|grabb?\w*|regain\w*|retook|snatch\w*) (?:the |a )?lead\b", re.I)
 
 
 class CheckFailed(Exception):
@@ -170,7 +232,9 @@ SENTENCE = re.compile(r"(?<!\bJr\.)(?<!\bSr\.)(?<!\b[A-Z]\.)(?<=[.!?])\s+")
 
 
 def _norm(s: str) -> str:
-    return s.replace("’", "'")
+    """Straight apostrophes and plain hyphens: the model writes U+2019 and the non-breaking hyphen U+2011, so a score
+    like 16‑0 would not read as one. En and em dashes stay: CLAUSE splits on them."""
+    return s.replace("’", "'").translate({0x2010: "-", 0x2011: "-", 0x2012: "-"})
 
 
 def _team_patterns(teams: dict) -> dict[str, re.Pattern]:
@@ -226,11 +290,129 @@ def _stat_key(clause: str) -> str:
     return next((k for p, k in STAT_WORDS if p.search(clause)), "totalYards")
 
 
-def claims_ok(texts: list[str], game: dict, sheet: dict) -> None:
-    """Box-score claims checked in code, before the model checker (2026-09-30 eval, 24 errors in 14 texts):
-    a player's numbers come from that player's line (three recaps gave team totals to the leading rusher and
-    passer); "X favored / outgained / held the ball longer" names the team that really had more; home and road
-    are right; and phrases a box score can't support are refused."""
+def _quarter_no(text: str) -> int | None:
+    m = re.search(r"\b(first|second|third|fourth|1st|2nd|3rd|4th|q[1-4])\b", text, re.I)
+    return QUARTER_NO[m[1].lower()] if m else None
+
+
+def _tie_at_break(sent: str, brks: list) -> bool:
+    """The sentence's 'tied' matches a tie the sheet shows at a quarter break (an equal score, or a named break)."""
+    ties = {i: at for i, at, ht, lead, _ in brks if lead is None}
+    low = sent.lower()
+    if any(m[1] == m[2] and int(m[1]) in ties.values() for m in EQUAL_SCORE.finditer(low)):
+        return True
+    return any(p.search(low) and i in ties for p, i in BREAK_WORDS)
+
+
+def _timing_problems(sent: str, game: dict, sheet: dict, pats: dict, ppats: list, st: dict) -> list[tuple[str, str]]:
+    """(span, what's wrong) for what a sentence says about order, who led when, and comparisons between the teams
+    that the sheet contradicts or can't show. The sheet knows the score only at quarter breaks (Oct 1: the 24 + 15
+    reviewed errors). The span is the exact words flagged, so a sentence with two errors reports each one."""
+    out = []
+    al, hl = facts._linescores(game)
+    brks = facts._breaks(al, hl)
+    sides = [s for _, s in _sides_in(sent, pats)]
+    one = sides[0] if len(set(sides)) == 1 else None
+    short = {s: sheet["teams"][s]["short"] or sheet["teams"][s]["name"] for s in ("home", "away")}
+    if brks and QUARTER.search(sent):
+        # Order is unknowable only in a quarter where both teams scored; "before Tennessee's touchdown in the fourth"
+        # after three Giants quarters is plain from the breaks.
+        named = {QUARTER_NO[m[1].lower()] for m in QUARTER.finditer(sent) if m[1].lower() in QUARTER_NO}
+        both = any(q < len(al) and al[q] and hl[q] for q in named)
+        if BEFORE.search(sent) and both:
+            out.append((sent, "'before' inside a quarter: the score is known only at quarter breaks, so say what "
+                              "each quarter added, not what came first"))
+        if RESPONDED.search(sent) and both:
+            out.append((sent, "'responded' inside a quarter: the order of scores within a quarter isn't known"))
+        if TIED.search(sent) and not _tie_at_break(sent, brks):
+            out.append((sent, "'tied' is a tie the sheet doesn't show at a quarter break; say who led at each break"))
+    for clause in CLAUSE.split(sent):
+        cs = {s for _, s in _sides_in(clause, pats)}
+        qn = _quarter_no(clause)
+        if brks and qn is not None and len(cs) == 1 and KEPT_LEAD.search(clause) and 0 <= qn <= len(brks):
+            side = next(iter(cs))
+            if (brks[qn - 1][3] if qn else None) != side:
+                out.append((clause, f"{short[side]} did not lead at the break before that quarter, so nothing was "
+                                    f"kept or extended"))
+        if brks and len(cs) == 1 and TOOK_LEAD.search(clause):
+            # The quarter in the clause, else the first one named after it ("surged ahead with 14 points in Q4").
+            tq = qn if qn is not None else _quarter_no(sent[sent.find(clause) + len(clause):])
+            side = next(iter(cs))
+            if tq is not None and tq < len(brks) and brks[tq][3] != side:
+                out.append((clause, f"{short[side]} did not lead at the end of that quarter"))
+        if SYMMETRIC.search(clause) and TURNOVERS.search(clause):
+            row = st.get("turnovers") or {}
+            h, a = facts._int(row.get("home")), facts._int(row.get("away"))
+            if h is not None and a is not None and h != a:
+                out.append((clause, f"turnovers were not even (giveaways: {short['away']} {a}, {short['home']} {h})"))
+    if brks and CLOSE_GAP.search(sent):
+        qn = _quarter_no(sent)
+        if qn and qn <= len(brks) and brks[qn - 1][3] is None:
+            out.append((CLOSE_GAP.search(sent)[0], "there was no gap to close: the score was tied at the break "
+                                                   "before that quarter"))
+    for m in ADVANTAGE.finditer(sent):
+        # "advantage of 250 to 277" gives the advantage to whoever has the first number, whatever the sentence's subject.
+        key = next((k for p, k in STAT_WORDS if p.search(sent[max(0, m.start() - 30):m.start()] + m[1])), None)
+        row = st.get(key) or {}
+        first = next((s for s in ("home", "away") if str(row.get(s)).replace(",", "") == m[2].replace(",", "")), None)
+        if first and _stat_winner(key, st) != first:
+            win = _stat_winner(key, st)
+            out.append((sent[max(0, m.start() - 30):m.end()], f"{short[first]} had the {m[2]}, not the advantage: "
+                        f"FACTS show {'no edge' if win is None else short[win] + ' had more'} there"))
+    top = st.get("possessionTime") or {}
+    gap = None
+    h, a = facts.clock_seconds(top.get("home")), facts.clock_seconds(top.get("away"))
+    if h is not None and a is not None:
+        gap = abs(h - a)
+    for m in LONGER_BY.finditer(sent):
+        n = (int(m[2]) if m[2].isdigit() else WORD_NUM[m[2].lower()]) * 60
+        qual = (m[1] or "").lower()
+        if gap is None:
+            continue
+        ok = (gap > n if qual in ("over", "more than", "just over") else
+              n - 60 < gap <= n if qual in ("nearly", "almost", "just under") else
+              abs(gap - n) <= 60 if qual in ("about", "roughly", "around") else n <= gap < n + 60)
+        if not ok:
+            out.append((m[0], f"the possession gap was {gap // 60}:{gap % 60:02d}; use that"))
+    if one:
+        if LEAD_CHANGE.search(sent) and not re.search(r"\b(no|never|zero|without)\b", sent, re.I):
+            movers = {lead for *_, lead, changed in brks if changed}
+            if movers and one not in movers:
+                out.append((sent, f"{short[one]} never took the lead from the other team at a quarter break "
+                                  f"(FACTS name who did)"))
+        if not any(pt.search(sent) for pt, _ in ppats):
+            for m in TEAM_YARDS.finditer(sent):
+                n = m[1].replace(",", "")
+                row = st.get("netPassingYards" if m[2].lower() == "passing" else "rushingYards") or {}
+                if n not in {str(facts._int(row.get("home"))), str(facts._int(row.get("away")))}:
+                    owner = next((p for p in sheet.get("players") or [] if n in NUM.findall(p["value"])), None)
+                    if owner:
+                        out.append((m[0], f"{n} is {owner['name']}'s own line, not the team's"))
+        pts = game[one].get("score")
+        for m in ONLY_POINTS.finditer(sent):
+            ok = {pts} | (set(hl if one == "home" else al) if QUARTER.search(sent) else set())
+            if int(m[1]) not in ok:
+                out.append((m[0], f"{short[one]} scored {pts} in all ('only' is a claim: use FACTS' exact numbers)"))
+        for m in AT_HALF.finditer(sent):
+            n = int(m[1]) if m[1].isdigit() else WORD_NUM[m[1].lower()]
+            if len(brks) > 1 and n != brks[1][2 if one == "home" else 1]:
+                out.append((m[0], f"{short[one]} had {brks[1][2 if one == 'home' else 1]} at halftime in all"))
+    return out
+
+
+def claims_ok(texts: list[str], game: dict, sheet: dict, final: bool = True) -> None:
+    probs = claim_problems(texts, game, sheet, final)
+    if probs:
+        raise CheckFailed("; ".join(msg for _, msg in probs))
+
+
+def claim_problems(texts: list[str], game: dict, sheet: dict, final: bool = True) -> list[tuple[str, str]]:
+    """(the words flagged, what's wrong) for every box-score claim the code refuses, before the model checker (2026-09-30
+    eval, 24 errors in 14 texts): a player's numbers come from that player's line (three recaps gave team totals
+    to the leading rusher and passer); "X favored / outgained / held the ball longer" names the team that really
+    had more; home and road are right; and phrases a box score can't support are refused. `final` is False for the
+    live one-liner: the order, lead and tie rules (_timing_problems) are about a finished game's quarter breaks, and
+    "tied 14-14 early in the third" is a true statement of a game in progress."""
     pats = _team_patterns(sheet["teams"])
     ppats = _player_patterns(sheet.get("players") or [], pats)
     st = sheet.get("stats") or {}
@@ -242,8 +424,8 @@ def claims_ok(texts: list[str], game: dict, sheet: dict) -> None:
     probs = []
     for text in texts:
         text = _norm(text)
-        probs += [f"{m[0]!r}: a box score can't show that; leave it out" for m in UNSUPPORTED.finditer(text)]
         for sent in SENTENCE.split(text):
+            probs += [(m[0], f"{m[0]!r}: a box score can't show that; leave it out") for m in UNSUPPORTED.finditer(sent)]
             for clause in CLAUSE.split(sent):
                 who = [p for pt, p in ppats if pt.search(clause)]
                 if who:
@@ -251,15 +433,15 @@ def claims_ok(texts: list[str], game: dict, sheet: dict) -> None:
                     extra = [n for n in NUM.findall(clause) if n not in allowed]
                     if extra:
                         lines = "; ".join(f"{p['name']}: {p['value']}" for p in who)
-                        probs.append(f"{clause.strip()!r}: {', '.join(extra)} isn't on the player's line "
-                                     f"({lines}). Team totals belong to the team, not a player")
+                        probs.append((clause, f"{clause.strip()!r}: {', '.join(extra)} isn't on the player's line "
+                                           f"({lines}). Team totals belong to the team, not a player"))
                 m = FAVORED.search(clause)
                 if m and _side_of(m[1], pats):
                     key, side = _stat_key(clause[:m.start()] + clause[m.end():]), _side_of(m[1], pats)
                     win = _stat_winner(key, st)
                     if win != side:
-                        probs.append(f"{clause.strip()!r}: FACTS show "
-                                     f"{'no edge' if win is None else short[win] + ' had more'} there")
+                        probs.append((clause, f"{clause.strip()!r}: FACTS show "
+                                           f"{'no edge' if win is None else short[win] + ' had more'} there"))
                 m = OUTGAINED.search(clause)
                 if m:
                     obj = _side_of(m[1], pats) if m[1] else None
@@ -267,23 +449,25 @@ def claims_ok(texts: list[str], game: dict, sheet: dict) -> None:
                     side = ({"home": "away", "away": "home"}[obj] if obj else before[-1][1] if before else None)
                     win = _stat_winner(_stat_key(clause), st)
                     if side and win != side:
-                        probs.append(f"{clause.strip()!r}: FACTS show "
-                                     f"{'no edge' if win is None else short[win] + ' had more yards'}")
+                        probs.append((clause, f"{clause.strip()!r}: FACTS show "
+                                           f"{'no edge' if win is None else short[win] + ' had more yards'}"))
                 m = LONGER.search(clause)
                 if m:
                     before = _sides_in(clause[:m.start()], pats)
                     win = _stat_winner("possessionTime", st)
                     if before and win != before[-1][1]:
-                        probs.append(f"{clause.strip()!r}: FACTS show "
-                                     f"{'even' if win is None else short[win] + ' had the ball longer'}")
+                        probs.append((clause, f"{clause.strip()!r}: FACTS show "
+                                           f"{'even' if win is None else short[win] + ' had the ball longer'}"))
+            if final:
+                probs += [(span, f"{span.strip()!r}: {msg}")
+                          for span, msg in _timing_problems(sent, game, sheet, pats, ppats, st)]
             sides = {s for _, s in _sides_in(sent, pats)}
             if len(sides) == 1 and not game.get("neutral_site"):
                 side = sides.pop()
                 if ROAD.search(sent) and side == "home" or AT_HOME.search(sent) and side == "away":
-                    probs.append(f"{sent.strip()!r}: {sheet['teams'][side]['name']} were the "
-                                 f"{'home' if side == 'home' else 'visiting'} team")
-    if probs:
-        raise CheckFailed("; ".join(probs))
+                    probs.append((sent, f"{sent.strip()!r}: {sheet['teams'][side]['name']} were the "
+                                       f"{'home' if side == 'home' else 'visiting'} team"))
+    return probs
 
 
 def _run(fn: Callable[[dict], dict]) -> dict:
@@ -453,8 +637,11 @@ def _by_id(saved: dict, id_of: dict[str, int]) -> dict:
 
 # ---------------------------------------------------------------- recap
 
-# A one-minute read (decided 2026-10-01): recap paragraph and each team paragraph, in words. The bets line (~16
-# words, code) comes on top.
+# A one-minute read (8d2066a, 2026-10-01): recap paragraph and each team paragraph, in words. The bets line (~16
+# words, code) comes on top. OFF until Adam confirms 200-230 words was his call (2026-10-01): the recap goes back to
+# about 120 words and two or three sentences a team. Set True to turn the tiers back on (recap_length picks one).
+ONE_MINUTE_READ = False
+FLAT_RECAP_WORDS = 120
 RECAP_WORDS = {"standard": (110, 45), "featured": (120, 55)}
 LENGTH_SLACK = 1.1          # code rejects a recap screen more than 10% over its length
 
@@ -493,9 +680,12 @@ def recap_length(game: dict) -> tuple[str, str]:
 
 def write_recap(game: dict) -> dict:
     """One call: the fact sheet comes from code (facts.recap_facts), so there is no extract step to misread."""
-    tier, why = recap_length(game)
-    recap_w, team_w = RECAP_WORDS[tier]
-    cap = round((recap_w + 2 * team_w) * LENGTH_SLACK)
+    if ONE_MINUTE_READ:
+        tier, why = recap_length(game)
+        recap_w, team_w = RECAP_WORDS[tier]
+        cap = round((recap_w + 2 * team_w) * LENGTH_SLACK)
+    else:
+        tier, why, recap_w, team_w, cap = "standard", "about 120 words", FLAT_RECAP_WORDS, None, None
 
     def go(stats):
         sheet = facts.recap_facts(game)
@@ -507,7 +697,10 @@ def write_recap(game: dict) -> dict:
             claims_ok(texts, game, sheet)
             words = len((x.get("recap") or "").split())
             total = sum(len(t.split()) for t in texts)
-            if words < 60 or total > cap:
+            if cap is None:
+                if not 60 <= words <= 200:
+                    raise CheckFailed(f"recap is {words} words")
+            elif words < 60 or total > cap:
                 raise CheckFailed(f"recap is {words} words and {total} in all; keep the recap at about {recap_w} "
                                   f"words, each team at about {team_w}, {cap} in all at most")
             bet = next((BET_TALK.search(t) for t in texts if BET_TALK.search(t)), None)
@@ -517,7 +710,10 @@ def write_recap(game: dict) -> dict:
 
         out = _step(prompts.WRITE_RECAP.format(facts=fj, voice=prompts.VOICE, guardrails=prompts.GUARDRAILS,
                                                home=game["home"]["name"], away=game["away"]["name"],
-                                               recap_words=recap_w, team_words=team_w),
+                                               recap_words=recap_w,
+                                               team_len=f"2-3 sentences, about {team_w} words" if team_w
+                                               else "2-3 sentences",
+                                               length_note=prompts.ONE_MINUTE_NOTE if team_w else ""),
                     check_write, stats)
         # Bet results are the graded text itself, added by code: the model once called a push a win (2026-09-29).
         return {"status": "ready", "body": {"recap": out["recap"], "bets": bets_line(game),
@@ -550,7 +746,7 @@ def write_one_liner(game: dict) -> dict:
         def check(x):
             line = x.get("line")
             _texts_ok([line], fj)
-            claims_ok([line], game, sheet)
+            claims_ok([line], game, sheet, final=False)
             if isinstance(line, str) and len(line.split()) > 40:
                 raise CheckFailed(f"one-liner is {len(line.split())} words")
             _fact_check([line], fj, stats)

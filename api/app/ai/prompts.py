@@ -82,13 +82,10 @@ FACTS:
 WRITE_RECAP = """You write the post-game recap for a personal scores app. Return JSON only:
 {{
   "recap": "about {recap_words} words on how the game went. Don't mention bets, lines or the spread: the app adds them",
-  "home": "2-3 sentences, about {team_words} words, on {home}'s day",
-  "away": "2-3 sentences, about {team_words} words, on {away}'s day"
+  "home": "{team_len}, on {home}'s day",
+  "away": "{team_len}, on {away}'s day"
 }}
-
-The whole recap is a one-minute read. Those lengths are the most this game deserves: when FACTS has less worth
-saying, write less. Never pad, and don't repeat in a team's paragraph a stat the recap already gave.
-
+{length_note}
 FACTS is a list of plain, exact statements about the final. Each one is true exactly as written; restate them,
 don't reinterpret them. Scoring and who led are given per quarter: say which quarter something happened in, or
 who led when, only as FACTS states it. The score is known only at quarter breaks, so never say a team took or
@@ -99,10 +96,20 @@ Also (each of these was a real error):
   belong to the team: never "128 rushing yards from Swift" when 128 is the team's rushing total.
 - Home team, who had the ball longer, who gained more yards, and when the lead changed are each stated in FACTS:
   repeat those lines, don't work them out.
-- No causes: say what happened, never why ("kept them off balance", "limited any momentum", "buoyed by").
+- No causes: say what happened, never why ("kept them off balance", "limited any momentum", "buoyed by",
+  "bolstered by", "capitalized on", "checked out", "woke up", "allowing X to", "to control the game", "took
+  advantage", "thanks to", "due to", "led to"). No streaks or records going in ("winless", "unbeaten", "streak").
 - Don't name the kind or count of scoring plays ("a late field goal", "two more scores", "the game's only
   touchdown"); a player's touchdowns as FACTS lists them are fine.
 - Never "dominated" or "never relinquished". "Only", "just" and "over" are claims too: use FACTS' exact numbers.
+- Never about the whole game: not "all game", "from start to finish", "through the end", "the rest of the way",
+  "a lead through the third and fourth". Say who led at each quarter break, as FACTS gives it.
+- Inside a quarter, say only what that quarter added. Never "before" (one score before another), "responded",
+  "scored first", "late", "early", or "tied" except a tie FACTS shows at a quarter break ("tied 7-7 after the first").
+- Comparisons point the way FACTS says: the team with more is the one FACTS' edge line names. Write "N to M" with
+  the first team's number first. "Each side", "split" or "even" only when FACTS shows the two numbers equal.
+  "Kept" or "extended" a lead only for a team that led at the break before; "close the gap" only for a team that
+  trailed then.
 
 {voice}
 
@@ -110,6 +117,12 @@ Also (each of these was a real error):
 
 FACTS:
 {facts}
+"""
+
+# Added to WRITE_RECAP only while writer.ONE_MINUTE_READ is on.
+ONE_MINUTE_NOTE = """
+The whole recap is a one-minute read. Those lengths are the most this game deserves: when FACTS has less worth
+saying, write less. Never pad, and don't repeat in a team's paragraph a stat the recap already gave.
 """
 
 # ---------------------------------------------------------------- fact check (every text; a different model)

@@ -1,0 +1,329 @@
+[
+ {
+  "id": 1,
+  "run": "3dacc26",
+  "game": "osu_iowa",
+  "anchor": "14-point favorite",
+  "tag": "other",
+  "sub": "stale number (14 vs the line's 14.5)"
+ },
+ {
+  "id": 2,
+  "run": "3dacc26",
+  "game": "phi_chi",
+  "anchor": "128 rushing yards from D'Andre Swift",
+  "tag": "other",
+  "sub": "team total given to a player"
+ },
+ {
+  "id": 3,
+  "run": "3dacc26",
+  "game": "phi_chi",
+  "anchor": "141 passing yards from Jalen Hurts",
+  "tag": "other",
+  "sub": "team total given to a player"
+ },
+ {
+  "id": 4,
+  "run": "3dacc26",
+  "game": "phi_chi",
+  "anchor": "107 rushing yards from Saquon Barkley",
+  "tag": "other",
+  "sub": "team total given to a player"
+ },
+ {
+  "id": 5,
+  "run": "3dacc26",
+  "game": "phi_chi",
+  "anchor": "added 3 in the second before the Eagles narrowed the gap",
+  "tag": "temporal claim",
+  "sub": "order of scores inside a quarter"
+ },
+ {
+  "id": 6,
+  "run": "3dacc26",
+  "game": "phi_chi",
+  "anchor": "kept them off balance",
+  "tag": "invented cause",
+  "sub": "cause the sheet can't support"
+ },
+ {
+  "id": 7,
+  "run": "3dacc26",
+  "game": "ne_jax",
+  "anchor": "offense sputtered: 199 passing yards",
+  "tag": "other",
+  "sub": "player's number given to the team"
+ },
+ {
+  "id": 8,
+  "run": "3dacc26",
+  "game": "ne_jax",
+  "anchor": "and only 3 points",
+  "tag": "other",
+  "sub": "wrong number (team scored 6)"
+ },
+ {
+  "id": 9,
+  "run": "3dacc26",
+  "game": "ne_jax",
+  "anchor": "limited any momentum",
+  "tag": "invented cause",
+  "sub": "cause the sheet can't support"
+ },
+ {
+  "id": 10,
+  "run": "3dacc26",
+  "game": "atl_gb",
+  "anchor": "the Packers managed a late field goal",
+  "tag": "temporal claim",
+  "sub": "'late' inside a quarter; Q4 was 7 points, not a field goal"
+ },
+ {
+  "id": 11,
+  "run": "3dacc26",
+  "game": "atl_gb",
+  "anchor": "Time of possession favored Green Bay",
+  "tag": "wrong comparison",
+  "sub": "direction (Atlanta had the ball longer)"
+ },
+ {
+  "id": 12,
+  "run": "3dacc26",
+  "game": "lac_buf",
+  "anchor": "the only time they scored first",
+  "tag": "temporal claim",
+  "sub": "who scored first inside a quarter"
+ },
+ {
+  "id": 13,
+  "run": "3dacc26",
+  "game": "lac_buf",
+  "anchor": "the only lead change between quarter breaks",
+  "tag": "wrong team",
+  "sub": "lead change credited to the wrong team and quarter (Buffalo's, Q4)"
+ },
+ {
+  "id": 14,
+  "run": "3dacc26",
+  "game": "car_cle",
+  "anchor": "preserving the lead through the end",
+  "tag": "temporal claim",
+  "sub": "a lead inside a quarter"
+ },
+ {
+  "id": 15,
+  "run": "3dacc26",
+  "game": "nyj_det",
+  "anchor": "kept a 7-point edge through the third and fourth quarters",
+  "tag": "temporal claim",
+  "sub": "margin between quarter breaks"
+ },
+ {
+  "id": 16,
+  "run": "3dacc26",
+  "game": "ten_nyg",
+  "anchor": "adding two more scores",
+  "tag": "other",
+  "sub": "count of scoring plays"
+ },
+ {
+  "id": 17,
+  "run": "3dacc26",
+  "game": "ten_nyg",
+  "anchor": "Giants dominated possession",
+  "tag": "other",
+  "sub": "banned word 'dominated'"
+ },
+ {
+  "id": 18,
+  "run": "3dacc26",
+  "game": "ten_nyg",
+  "anchor": "scored the game's only touchdown",
+  "tag": "other",
+  "sub": "kind of scoring play"
+ },
+ {
+  "id": 19,
+  "run": "3dacc26",
+  "game": "ten_nyg",
+  "anchor": "six at halftime",
+  "tag": "other",
+  "sub": "wrong number (9-0 at the half)"
+ },
+ {
+  "id": 20,
+  "run": "3dacc26",
+  "game": "ari_sf",
+  "anchor": "the Cardinals dominated possession at 38:44",
+  "tag": "other",
+  "sub": "banned word 'dominated'"
+ },
+ {
+  "id": 21,
+  "run": "3dacc26",
+  "game": "ari_sf",
+  "anchor": "Turnovers were split, each side accounting for one",
+  "tag": "wrong team",
+  "sub": "turnovers committed vs forced mixed up"
+ },
+ {
+  "id": 22,
+  "run": "3dacc26",
+  "game": "min_tb",
+  "anchor": "scoring 16 points on the road",
+  "tag": "wrong team",
+  "sub": "home team called the road team"
+ },
+ {
+  "id": 23,
+  "run": "3dacc26",
+  "game": "lv_no",
+  "anchor": "held the ball for over five minutes longer",
+  "tag": "wrong comparison",
+  "sub": "size of the gap (4:56)"
+ },
+ {
+  "id": 24,
+  "run": "3dacc26",
+  "game": "lv_no",
+  "anchor": "four turnovers erased much of the advantage",
+  "tag": "invented cause",
+  "sub": "cause the sheet can't support"
+ },
+ {
+  "id": 25,
+  "run": "bffeb78",
+  "game": "phi_chi",
+  "anchor": "added a field goal in the second before the Eagles tied with a touchdown",
+  "tag": "temporal claim",
+  "sub": "order inside a quarter; no tie existed",
+  "severity": "hard"
+ },
+ {
+  "id": 26,
+  "run": "bffeb78",
+  "game": "phi_chi",
+  "anchor": "a 127-yard total-yard advantage to control the game",
+  "tag": "invented cause",
+  "sub": "cause",
+  "severity": "soft"
+ },
+ {
+  "id": 27,
+  "run": "bffeb78",
+  "game": "ne_jax",
+  "anchor": "added a touchdown in the fourth",
+  "tag": "other",
+  "sub": "kind of scoring play (7 points)",
+  "severity": "soft"
+ },
+ {
+  "id": 28,
+  "run": "bffeb78",
+  "game": "lac_buf",
+  "anchor": "kept the Chargers ahead 13-10",
+  "tag": "wrong comparison",
+  "sub": "who led (tied 10-10 at the half)",
+  "severity": "hard"
+ },
+ {
+  "id": 29,
+  "run": "bffeb78",
+  "game": "car_cle",
+  "anchor": "the Browns responded with ten",
+  "tag": "temporal claim",
+  "sub": "order inside a quarter",
+  "severity": "soft"
+ },
+ {
+  "id": 30,
+  "run": "bffeb78",
+  "game": "nyj_det",
+  "anchor": "a passing advantage of 250 to 277",
+  "tag": "wrong comparison",
+  "sub": "direction (Jets had more passing yards)",
+  "severity": "hard"
+ },
+ {
+  "id": 31,
+  "run": "bffeb78",
+  "game": "nyj_det",
+  "anchor": "despite trailing all game",
+  "tag": "temporal claim",
+  "sub": "'all game' (tied after Q1)",
+  "severity": "hard"
+ },
+ {
+  "id": 32,
+  "run": "bffeb78",
+  "game": "ten_nyg",
+  "anchor": "lone touchdown in the fourth",
+  "tag": "other",
+  "sub": "kind of scoring play (7 points)",
+  "severity": "soft"
+ },
+ {
+  "id": 33,
+  "run": "bffeb78",
+  "game": "ten_nyg",
+  "anchor": "bolstered by a clean ball",
+  "tag": "invented cause",
+  "sub": "cause",
+  "severity": "soft"
+ },
+ {
+  "id": 34,
+  "run": "bffeb78",
+  "game": "min_tb",
+  "anchor": "control the pace of the contest from start to finish",
+  "tag": "invented cause",
+  "sub": "cause + 'start to finish'",
+  "severity": "soft"
+ },
+ {
+  "id": 35,
+  "run": "bffeb78",
+  "game": "lv_no",
+  "anchor": "finished winless in four games before this one",
+  "tag": "other",
+  "sub": "invented record (2-0 going in)",
+  "severity": "hard"
+ },
+ {
+  "id": 36,
+  "run": "bffeb78",
+  "game": "lar_den",
+  "anchor": "controlled the early minutes",
+  "tag": "temporal claim",
+  "sub": "inside the first quarter",
+  "severity": "soft"
+ },
+ {
+  "id": 37,
+  "run": "bffeb78",
+  "game": "lar_den",
+  "anchor": "Denver checked out for the first two quarters",
+  "tag": "invented cause",
+  "sub": "cause",
+  "severity": "soft"
+ },
+ {
+  "id": 38,
+  "run": "bffeb78",
+  "game": "lar_den",
+  "anchor": "each team adding points to close the gap",
+  "tag": "wrong comparison",
+  "sub": "who led (tied 16-16 after Q3)",
+  "severity": "hard"
+ },
+ {
+  "id": 39,
+  "run": "bffeb78",
+  "game": "lar_den",
+  "anchor": "the Broncos capitalized on key opportunities",
+  "tag": "invented cause",
+  "sub": "cause",
+  "severity": "soft"
+ }
+]
