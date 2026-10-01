@@ -98,7 +98,7 @@ def main() -> None:
     only = {k.strip() for k in os.environ.get("SAMPLES_ONLY", "previews,recaps,headlines").split(",")}
     out_path = Path(os.environ.get("SAMPLES_OUT", OUT))
     md = [f"# Phase 4 voice samples\n\nGenerated {datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC by "
-          f"`python -m app.ai.samples` · writers `{', '.join(client.WRITERS)}` · checkers `{', '.join(client.CHECKERS)}` · search: stored ESPN news, then Groq "
+          f"`python -m app.ai.samples` · writers `{', '.join(client.route()[0])}` · checkers `{', '.join(client.route()[1])}` · search: stored ESPN news, then Groq "
           f"(`{client.GROQ_SEARCH_MODEL}`) limited to {', '.join(sources.SEARCH_SITES)}.\n\n"
           "Times exclude waiting for the free tier's per-minute limit. Targets (Adam): preview 15 s, recap 8 s.\n"]
     raw = []

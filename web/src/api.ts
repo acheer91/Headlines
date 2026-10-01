@@ -144,16 +144,17 @@ export type Pick = { writer: string; outlet: string; pick: string; url: string }
 export type Source = { title: string; url: string; outlet: string; published: string };
 
 export type AiText = {
-  kind: "preview" | "recap" | "one_liner" | null;
+  kind: "preview" | "recap" | null;
   /** ready | no_sources ("No fresh previews") | failed or writing (show fallback text) | missing | none */
   status: "ready" | "no_sources" | "failed" | "writing" | "missing" | "none";
   body:
     | { preview: string; edges: { home: Edge[]; away: Edge[] }; picks: Pick[] }
     | { recap: string; bets: string; home: string; away: string }
-    | { line: string }
     | null;
   sources: Source[] | null;
   updated_at: string | null;
+  /** When the shown text was written (a failed refresh keeps the last good preview). */
+  written_at: string | null;
 };
 
 /** The AI text that fits the game now. The server may write it on the spot (up to ~20 s for a preview). */

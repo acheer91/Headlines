@@ -126,9 +126,8 @@ export function GamePage() {
 
 function Detail({ g, ai, aiLoading }: { g: GameDetail; ai: AiText | null; aiLoading: boolean }) {
   const noData = g.summary_available ? "ESPN didn't send this" : "Not available yet";
-  // Live: the AI one-liner when it's ready, else ESPN's own line (the PRD's template fallback).
-  const aiLine = ai?.kind === "one_liner" && ai.status === "ready" && ai.body && "line" in ai.body ? ai.body.line : null;
-  const oneLiner = aiLine ?? g.one_liner;
+  // Live: the box-score template (CTO, 2026-10-01: no AI one-liner).
+  const oneLiner = g.one_liner;
   return (
     <main className="list">
       <Matchup g={g} />
@@ -404,10 +403,12 @@ function PreviewSections({ g, ai, loading }: { g: GameDetail; ai: AiText | null;
     | null;
   const waiting = loading && !body;
   const fallback = ai?.status === "no_sources" ? "No fresh previews" : "Preview unavailable right now.";
+  if (ai?.status === "none") return null; // a league without AI text (AI_LEAGUES)
   return (
     <>
       <Section title="Preview">
         {body ? <p className="ai-text">{body.preview}</p> : <p className="muted empty">{waiting ? "Writing the preview…" : fallback}</p>}
+        {body && ai?.written_at && <p className="muted small">Updated {updatedAt(ai.written_at)}</p>}
         {body && ai?.sources && ai.sources.length > 0 && (
           <p className="muted small sources">
             From{" "}

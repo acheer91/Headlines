@@ -2,7 +2,8 @@
 
 python -m app.ai.check_eval   (laptop only; uses the check model's quota, not the writer's)
 Each case is a sentence the writer really produced, the game it was about, and whether it's wrong.
-AI_CHECKERS=<model> picks the checker to test.
+AI_CHECKERS=<model> picks the checker to test. The sentences were written by gpt-oss-120b, and a checker from the
+writer's family is refused (NoChecker), so testing gpt-oss-20b needs AI_WRITERS set to a writer from another family.
 """
 from __future__ import annotations
 

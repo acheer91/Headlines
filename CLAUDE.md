@@ -28,18 +28,26 @@ bowl games are confirmed with the handoff's December checklist by Dec 12.
   Texas is `TEX`.
 
 ## Phase 4 — AI text (Stage 2 built 2026-09-29 on branch `phase-4-ai-text`; NOT deployed)
-Scope: previews (preview, edges, writers' picks), recaps and team summaries, the live one-liner, Home headlines.
+Scope: previews (preview, edges, writers' picks), recaps and team summaries, Home headlines. The live one-liner is
+the box-score template (`summary.one_liner`), no AI (CTO, 2026-10-01).
 Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `phase4-results.md`; Stage 2 design:
 `docs/phase4-stage2-temporal-spec.md`. Deploy only after Adam approves samples and Phase 5b is signed off, Tue/Wed.
-- **Models (Groq, free):** writer `openai/gpt-oss-120b`, fact-checker `openai/gpt-oss-20b` (Sep 30),
-  search `openai/gpt-oss-20b` browser search; recap box-score claims are checked in code first (`writer.claims_ok`); each fails over to the others (`AI_WRITERS`, `AI_CHECKERS`); a model never checks its own text.
-  `or:<id>` names an OpenRouter free model (own pool, 20 requests/min; counted in requests, not tokens): `or:qwen/qwen3.8-27b:free` is the 3rd checker (Oct 1, Adam), never a writer. Qwen on Groq and on OpenRouter count as one model for "never checks its own text". No `OPENROUTER_API_KEY` just leaves that pool out.
-  Library only (Oct 1, Adam; in no list, untested for accuracy): `or:nvidia/nemotron-3-ultra-550b-a55b:free` (reasoning model; key
-  works, streaming works). In `json_object` mode it returned `{}` (finish `length`) 2 of 3 tries; plain mode returned good JSON. Before
-  it goes in `AI_CHECKERS`, drop `response_format` for it and run `check_eval`.
-  Gemini side pool (headlines, weekday pre-writing, last fallback; Adam) is planned, not built. **Never set
-  `AI_WRITER=gemini` as a fallback:** it moves all writing to Gemini's 20 requests/day and runs out at once. Free tier per model: 8K tokens/min, 200K tokens/day on
-  a rolling 24 h window. Bake-off (Sep 29): Qwen as a writer invents claims (streaks, leads) — writer of last resort.
+- **Routing (CTO, 2026-10-01; `client.ROUTES`):** one row per kind (recap, preview, headlines): writer
+  `openai/gpt-oss-120b`, **no backup writer** (with 120b out: recap = stats-only template, preview "unavailable",
+  headlines keep the last set), checker `qwen/qwen3.8-27b` on Groq, overflow `or:qwen/qwen3.8-27b:free` (OpenRouter,
+  only while Groq's Qwen is cooling or out of budget). Rules: one named writer + at most one named backup, every
+  failover logged (`ai failover: ...`); **the checker is never the writer's family** (`client.family`, the vendor:
+  gpt-oss-20b can't check gpt-oss-120b); no such checker = `NoChecker`, the text fails closed, never unchecked.
+  A model's name picks the provider: `or:<id>` OpenRouter, `gemini-*` Gemini, else Groq. `AI_WRITERS` (at most 2) /
+  `AI_CHECKERS` override every route (samples bake-off, `check_eval` only). Search: `openai/gpt-oss-20b`.
+  Deferred (CTO): preview extraction on 20b, Gemini for headlines (after the key is replaced), Nemotron trial.
+  Nemotron-3-Ultra (`or:nvidia/nemotron-3-ultra-550b-a55b:free`): in `json_object` mode it returned `{}` 2 of 3 tries.
+- **Daily budgets** (`client._over_budget`, both quotas' `spent_today`): Groq 200K tokens per model on a rolling 24 h
+  (`GROQ_TPD`), Gemini 20 requests per model (`GEMINI_RPD`), OpenRouter free **50 requests a day for the whole account**
+  (`OPENROUTER_RPD`; more keys add nothing; $10 of credits would make it 1,000, CTO: not now). A model that has spent
+  its budget is cooled down and skipped before it is asked. Bake-off (Sep 29): Qwen as a writer invents claims.
+- **AI leagues:** `AI_LEAGUES` (default and compose: `nfl`), separate from `ENABLED_LEAGUES`. Other leagues get no AI
+  text: not written ahead, not on open (`/ai` says `none`, the app hides the preview block), not in headlines.
 - **Recap length: back to ~120 words** (2026-10-01, until Adam confirms 200-230 was his call): the recap paragraph is
   about 120 words (code accepts 60-200), each team 2-3 sentences. The one-minute-read tiers (standard ~200 words,
   featured ~230 for a favorite, ranked vs ranked, two winning NFL teams, overtime, a margin of 3 or less, or 2+ lead
@@ -83,8 +91,9 @@ Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `ph
   (`ai-recap` patch) and again after a changed regrade; headlines after each news pull (`ai-headlines` patch);
   `LeftoverWorkflow` nightly 9:30 PM PT.
 - **On open (api):** `GET /api/games/{id}/ai` returns current text at once, else writes it within 20 s (preview) or
-  10 s, **never waiting for quota** (`client.no_wait()`); `GET /api/headlines` for Screen A. One-liner reused until
-  the score changes or 15 minutes pass (Adam).
+  10 s, **never waiting for quota** (`client.no_wait()`); `GET /api/headlines` for Screen A. A live game has no AI text
+  (`none`). `written_at` (migration 008) is when the shown text was written: a failed refresh keeps the last good
+  preview, and the app shows "Updated <time>" under it (CTO: acceptable with the timestamp).
 - **Quota is shared through Postgres** (`AI_QUOTA=db`: `ai_calls`, `ai_cooling`), so the api and worker can't
   collide; Groq counts prompt + max reply against the minute, so that is what's reserved.
 - **Keys** (`GROQ_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`) live only in `.env`; no key, or removing it, is the off switch (every AI

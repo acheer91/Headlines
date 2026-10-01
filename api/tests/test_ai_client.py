@@ -10,9 +10,9 @@ from app.ai import client
 def fresh(monkeypatch):
     """Clean pacing state, and a fake Groq that answers per model from `plan`."""
     monkeypatch.setattr(client, "quota", client.MemoryQuota())
-    monkeypatch.setattr(client, "WRITERS", ["big", "qwen", "small"])
+    monkeypatch.setattr(client, "WRITERS", ["big", "qwen"])
     monkeypatch.setattr(client, "CHECKERS", ["qwen", "small", "big"])
-    monkeypatch.setenv("AI_WRITER", "groq")
+    client.forget_last()
     calls, plan = [], {}
 
     def post(body):
@@ -50,7 +50,7 @@ def test_server_error_fails_over(fresh):
 
 def test_every_model_limited_raises_rate_limited(fresh):
     _, plan = fresh
-    plan.update(big="429", qwen="429", small="429")
+    plan.update(big="429", qwen="429")
     with pytest.raises(client.RateLimited):
         client.write("x")
 
@@ -155,8 +155,16 @@ FAVS = {"nfl": ["NE"], "ncaaf": ["TEX"]}
     ({"league": "ncaaf", "home_abbr": "IOWA", "away_abbr": "OSU", "home_rank": 14, "away_rank": 5}, True),
     ({"league": "ncaaf", "home_abbr": "CLEM", "away_abbr": "MIA", "home_rank": None, "away_rank": 4}, False),
 ])
-def test_prewrite_list(row, want):
+def test_prewrite_list(row, want, monkeypatch):
+    monkeypatch.setattr(scope, "AI_LEAGUES", {"nfl", "ncaaf"})
     assert scope.is_prewritten(row, FAVS) is want
+
+
+def test_ai_leagues_default_to_nfl_only():
+    # CTO, 2026-10-01: college football gets no AI text until someone turns it on (AI_LEAGUES).
+    assert scope.AI_LEAGUES == {"nfl"}
+    assert not scope.is_prewritten({"league": "ncaaf", "home_abbr": "TEX", "away_abbr": "UTEP"}, FAVS)
+    assert scope.is_prewritten({"league": "nfl", "home_abbr": "BUF", "away_abbr": "NE"}, FAVS)
 
 
 # ---------- OpenRouter free models ("or:<id>"), Oct 1 ----------
@@ -266,3 +274,101 @@ def test_qwen_on_openrouter_does_not_check_qwen_from_groq(fresh, monkeypatch):
     client.write("x")                                   # written by Groq's qwen/q
     assert json.loads(client.check("c"))["by"] == "small"
     assert client.check_model() == "small"
+
+
+# ---------- CTO rules (2026-10-01): routes, families, failover log, daily budgets ----------
+
+def test_family_is_the_vendor():
+    assert client.family("openai/gpt-oss-120b") == client.family("openai/gpt-oss-20b") == "openai"
+    assert client.family("or:qwen/qwen3.8-27b:free") == client.family("qwen/qwen3.8-27b") == "qwen"
+    assert client.family("gemini-3.6-flash") == "gemini"
+
+
+def test_gpt_oss_never_checks_gpt_oss(fresh, monkeypatch):
+    calls, _ = fresh
+    monkeypatch.setattr(client, "WRITERS", ["openai/gpt-oss-120b"])
+    monkeypatch.setattr(client, "CHECKERS", ["openai/gpt-oss-20b", "qwen/q"])
+    client.write("x")
+    assert json.loads(client.check("c"))["by"] == "qwen/q"
+    assert "openai/gpt-oss-20b" not in calls and client.check_model() == "qwen/q"
+
+
+def test_no_checker_outside_the_family_fails_closed(fresh, monkeypatch):
+    calls, _ = fresh
+    monkeypatch.setattr(client, "WRITERS", ["openai/gpt-oss-120b"])
+    monkeypatch.setattr(client, "CHECKERS", ["openai/gpt-oss-20b", "openai/gpt-oss-120b"])
+    client.write("x")
+    with pytest.raises(client.NoChecker):          # it once fell back to the whole list, the writer included
+        client.check("c")
+    assert calls == ["openai/gpt-oss-120b"] and client.check_model() is None
+
+
+def test_routes_name_one_writer_and_a_checker_from_another_family(monkeypatch):
+    monkeypatch.setattr(client, "WRITERS", [])
+    monkeypatch.setattr(client, "CHECKERS", [])
+    for kind, r in client.ROUTES.items():
+        writers, checkers = client.route(kind)
+        assert writers == [r.writer] + ([r.backup] if r.backup else []) and len(writers) <= 2
+        assert all(client.family(c) != client.family(w) for c in checkers for w in writers), kind
+    assert client.route("recap") == (["openai/gpt-oss-120b"], ["qwen/qwen3.8-27b", "or:qwen/qwen3.8-27b:free"])
+    client.begin("preview")
+    assert client.model() == "openai/gpt-oss-120b"
+    with pytest.raises(ValueError):
+        client.begin("one_liner")                   # no AI one-liner any more
+
+
+def test_at_most_one_backup_writer(monkeypatch):
+    monkeypatch.setenv("AI_WRITERS", "a/x,b/y,c/z")
+    with pytest.raises(ValueError):
+        client._override("AI_WRITERS", 2)
+
+
+def test_failover_is_logged(fresh, caplog):
+    _, plan = fresh
+    plan["big"] = "429"
+    with caplog.at_level("WARNING", logger="app.ai.client"):
+        client.write("x")
+    assert "ai failover: writer big -> qwen" in caplog.text
+
+
+def test_spent_daily_budget_is_skipped_before_asking(fresh, monkeypatch):
+    calls, _ = fresh
+    monkeypatch.setattr(client, "GROQ_TPD", 2999)              # less than one call's reservation (~3,000)
+    with pytest.raises(client.RateLimited) as err:
+        client.write("x")
+    assert calls == [] and client.quota.is_cooling("big") and err.value.retry_after > 59
+
+
+def test_daily_spend_counts_tokens_used_and_requests():
+    q = client.MemoryQuota()
+    _, h = q.reserve(["a"], 3000, 8000, False)
+    q.used(h, 5)
+    q.reserve(["a"], 3000, 8000, False)                        # not reported yet: its reservation counts
+    assert q.spent_today("a", False)[0] == 3005 and q.spent_today("a", True)[0] == 2
+    q.reserve(["or:v/a:free"], 1, 20, False)
+    q.reserve(["or:v/b:free"], 1, 20, False)
+    assert q.spent_today("or:", True)[0] == 2 and q.spent_today("or:v/a:free", True)[0] == 1
+
+
+def test_openrouter_daily_budget_is_the_whole_accounts(fresh, monkeypatch):
+    calls, _ = fresh
+    monkeypatch.setattr(client, "OPENROUTER_RPD", 1)
+    monkeypatch.setattr(client, "CHECKERS", ["or:v/a:free", "or:v/b:free", "small"])
+    seen = []
+    monkeypatch.setattr(client, "_openrouter_post", lambda body: seen.append(body["model"]) or _or_reply("{}"))
+    client.write("x")
+    client.check("c1")
+    assert json.loads(client.check("c2"))["by"] == "small"     # the account's one request a day is spent
+    assert seen == ["v/a:free"]
+
+
+def test_gemini_in_a_route_has_its_requests_a_day(fresh, monkeypatch):
+    monkeypatch.setattr(client, "WRITERS", ["gemini-x"])
+    monkeypatch.setattr(client, "GEMINI_RPD", 1)
+    asked = []
+    monkeypatch.setattr(client, "_gemini_call", lambda prompt, json_out, name: asked.append(name) or "{}")
+    assert client.write("x") == "{}" and client.last_writer() == "gemini-x"
+    assert json.loads(client.check("c"))["by"] == "qwen"       # a checker from another family
+    with pytest.raises(client.RateLimited):
+        client.write("y")
+    assert asked == ["gemini-x"]

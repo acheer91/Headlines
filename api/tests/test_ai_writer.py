@@ -193,17 +193,21 @@ def test_edge_with_unknown_article_fails(model):
     assert writer.write_preview(dict(GAME, state="pre"), [ARTICLE])["status"] == "failed"
 
 
-def test_one_liner_from_live_facts(model):
-    live = dict(GAME, state="in", status_detail="Q3 4:12")
-    calls = model([{"line": "Chicago leads by 20 in the third."}])
-    res = writer.write_one_liner(live)
-    assert res["status"] == "ready" and "Live, Q3 4:12" in calls[0]
+def test_no_checker_outside_the_family_fails_closed_without_a_retry(model, monkeypatch):
+    def check(prompt):
+        raise client.NoChecker("no checker outside the openai family")
+    monkeypatch.setattr(client, "check", check)
+    model([{"recap": f"Bears won. {WORDS}", "home": "x", "away": "y"}])
+    res = writer.write_recap(GAME)
+    assert res["status"] == "failed" and "retry_after" not in res     # never published unchecked, never retried
 
 
-def test_one_liner_too_long(model):
-    long = {"line": " ".join(["word"] * 45)}
-    model([long, long])
-    assert writer.write_one_liner(dict(GAME, state="in"))["status"] == "failed"
+def test_each_text_runs_on_its_own_route(model, monkeypatch):
+    kinds = []
+    monkeypatch.setattr(client, "begin", kinds.append)
+    model([{"recap": f"Bears won. {WORDS}", "home": "x", "away": "y"}])
+    writer.write_recap(GAME)
+    assert kinds == ["recap"]
 
 
 def test_recap_fallback():
@@ -466,13 +470,15 @@ def test_advantage_goes_to_the_first_number_not_the_first_team_named():
     assert "Lions had the 250" in _claims("final_nyj_det", "The Lions had a passing advantage of 250 to 277.")
 
 
-def test_live_one_liner_may_say_tied_inside_a_quarter(model):
+def test_live_claims_may_say_tied_inside_a_quarter():
     # The order/lead/tie rules are for finished games; "tied 14-14 early in the third" describes a game in progress.
+    # No live text uses this now (the one-liner is the template, CTO 2026-10-01); kept for an AI one later.
+    from app.ai import facts
     g = {"league": "nfl", "state": "in", "status_detail": "3rd 12:00", "home": {"name": "Chicago Bears", "short": "Bears",
          "score": 14}, "away": {"name": "Philadelphia Eagles", "short": "Eagles", "score": 14},
          "header": {"home": {"linescores": [7, 7, 0]}, "away": {"linescores": [7, 7, 0]}}}
-    model([{"line": "The Eagles responded in the second quarter and it is tied 14-14."}])
-    assert writer.write_one_liner(g)["status"] == "ready"
+    line = "The Eagles responded in the second quarter and it is tied 14-14."
+    assert writer.claim_problems([line], g, facts.live_facts(g), final=False) == []
 
 
 def test_the_same_line_is_refused_in_a_recap():

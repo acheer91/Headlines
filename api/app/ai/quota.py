@@ -12,7 +12,7 @@ import time
 from .. import db
 from . import client
 
-KEEP = "2 days"      # ai_calls rows older than this are pruned: they only feed the per-minute sum and daily totals
+KEEP = "2 days"      # ai_calls rows older than this are pruned: they feed the per-minute sum and the 24 h budgets
 
 
 class DbQuota:
@@ -65,6 +65,20 @@ class DbQuota:
                 LEFT JOIN ai_cooling c ON c.model = m""", (models,)).fetchall()
         left = [float(r["left"]) if r["left"] is not None else 0.0 for r in rows]
         return None if not left or min(left) <= 0 else min(left)
+
+    def spent_today(self, pool: str, requests: bool) -> tuple[float, float]:
+        """(spent in the last 24 h, seconds until the oldest of it leaves the window) for a model, or for every model
+        under a prefix pool ("or:", OpenRouter's account-wide budget). Spent is requests, or tokens used (reserved
+        until the call reports)."""
+        with db.connect() as conn:
+            row = conn.execute("""
+                SELECT CASE WHEN %(req)s THEN count(*) ELSE coalesce(sum(coalesce(used, reserved)), 0) END AS spent,
+                       extract(epoch FROM (min(at) + interval '24 hours' - now())) AS frees_in
+                FROM ai_calls
+                WHERE (CASE WHEN %(prefix)s THEN starts_with(model, %(pool)s) ELSE model = %(pool)s END)
+                  AND at > now() - interval '24 hours'""",
+                               {"req": requests, "prefix": pool.endswith(":"), "pool": pool}).fetchone()
+        return float(row["spent"]), max(float(row["frees_in"] or 0), 0.0)
 
     def used(self, handle: object, tokens: int) -> None:
         if handle is not None:

@@ -13,7 +13,6 @@ from typing import NamedTuple
 
 from psycopg.types.json import Jsonb
 
-ONE_LINER_TTL = timedelta(minutes=15)   # Adam, 2026-09-29: reused until the score changes or 15 minutes pass
 # A row stuck at 'writing' this long can be claimed again. Longer than the worker's 15-minute activity limit, since
 # a worker writer can wait minutes for quota while holding its claim.
 WRITING_TIMEOUT = timedelta(minutes=16)
@@ -37,11 +36,7 @@ def current(row: dict | None, basis: str, fingerprint: str | None = None) -> boo
     """Ready (or checked and sourceless) and written from what the game looks like now."""
     if not row or row["status"] not in ("ready", "no_sources") or row["basis"] != basis:
         return False
-    if fingerprint is not None and row["fingerprint"] != fingerprint:
-        return False
-    if row["kind"] == "one_liner":
-        return _age(row) < ONE_LINER_TTL
-    return True
+    return fingerprint is None or row["fingerprint"] == fingerprint
 
 
 def being_written(row: dict | None) -> bool:
@@ -79,11 +74,10 @@ def claim(conn, game_id: int, kind: str, basis: str, fingerprint: str | None = N
             WHERE ai_texts.status = 'failed'
                OR (ai_texts.status IN ('ready', 'no_sources') AND (
                       ai_texts.basis IS DISTINCT FROM EXCLUDED.claim_basis
-                   OR ai_texts.fingerprint IS DISTINCT FROM EXCLUDED.claim_fingerprint
-                   OR (ai_texts.kind = 'one_liner' AND ai_texts.updated_at < now() - %(ttl)s)))
+                   OR ai_texts.fingerprint IS DISTINCT FROM EXCLUDED.claim_fingerprint))
                OR (ai_texts.status = 'writing' AND ai_texts.updated_at < now() - %(stuck)s)
         RETURNING id, attempts""", {"g": game_id, "k": kind, "b": basis, "f": fingerprint, "r": reason,
-                                    "ttl": ONE_LINER_TTL, "stuck": WRITING_TIMEOUT}).fetchone()
+                                    "stuck": WRITING_TIMEOUT}).fetchone()
     conn.commit()
     return Claim(row["id"], row["attempts"]) if row else None
 
@@ -97,7 +91,7 @@ def save(conn, c: Claim, result: dict) -> bool:
         row = conn.execute("""
             UPDATE ai_texts SET status = %s, body = %s, sources = %s, extract = %s, writer = %s, checker = %s,
                                 basis = claim_basis, fingerprint = claim_fingerprint, last_error = NULL,
-                                updated_at = now()
+                                written_at = now(), updated_at = now()
             WHERE id = %s AND status = 'writing' AND attempts = %s RETURNING id""",
                            (result["status"], Jsonb(result.get("body")), Jsonb(result.get("sources")),
                             Jsonb(result.get("extract")), result.get("model"), result.get("checker"),
@@ -115,10 +109,10 @@ def save(conn, c: Claim, result: dict) -> bool:
 
 def save_headlines(conn, result: dict, reason: str) -> int:
     row = conn.execute("""
-        INSERT INTO ai_texts (kind, status, body, writer, checker, reason, last_error, attempts)
-        VALUES ('headlines', %s, %s, %s, %s, %s, %s, 1) RETURNING id""",
+        INSERT INTO ai_texts (kind, status, body, writer, checker, reason, last_error, attempts, written_at)
+        VALUES ('headlines', %s, %s, %s, %s, %s, %s, 1, CASE WHEN %s = 'ready' THEN now() END) RETURNING id""",
                        (result["status"], Jsonb(result.get("body")), result.get("model"), result.get("checker"),
-                        reason, result.get("reason"))).fetchone()
+                        reason, result.get("reason"), result["status"])).fetchone()
     conn.commit()
     return row["id"]
 

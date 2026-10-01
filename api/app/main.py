@@ -24,6 +24,7 @@ from . import db, espn, favorites, games, migrate, ncaaf
 from .ai import client as ai_client
 from .ai import jobs as ai_jobs
 from .ai import quota as ai_quota
+from .ai import scope as ai_scope
 from .ai import store as ai_store
 
 CACHE_SECONDS = int(os.environ.get("CACHE_SECONDS", "30"))
@@ -197,7 +198,7 @@ def game(game_id: int):
 # ---------- Phase 4: AI text ----------
 # Written ahead by the worker; a text nobody wrote ahead is written here, on open, within these limits. The api
 # never waits for free-tier quota (client.no_wait): with no room it answers at once and the app shows fallback text.
-AI_WAIT = {"preview": 20.0, "recap": 10.0, "one_liner": 10.0}
+AI_WAIT = {"preview": 20.0, "recap": 10.0}
 _ai_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="ai-open")
 
 
@@ -205,11 +206,14 @@ def _ai_out(kind: str | None, row: dict | None) -> dict:
     """The response for a stored row. While a preview is being refreshed its last good text is served as ready
     (the 8 AM refresh must not blank a good midweek preview; audit, 2026-09-29)."""
     if not row:
-        return {"kind": kind, "status": "missing", "body": None, "sources": None, "updated_at": None}
+        return {"kind": kind, "status": "missing", "body": None, "sources": None, "updated_at": None,
+                "written_at": None}
     shown = ai_store.showable(row)
     status = row["status"] if shown is None or row["status"] != "writing" else "ready"
     return {"kind": kind, "status": status, "body": row["body"] if shown else None,
-            "sources": row["sources"] if shown else None, "updated_at": row["updated_at"].isoformat()}
+            "sources": row["sources"] if shown else None, "updated_at": row["updated_at"].isoformat(),
+            # When the shown text was written: a failed refresh keeps the last good preview (CTO, 2026-10-01).
+            "written_at": row["written_at"].isoformat() if shown and row["written_at"] else None}
 
 
 def _write_on_open(kind: str, game_id: int) -> dict:
@@ -219,7 +223,8 @@ def _write_on_open(kind: str, game_id: int) -> dict:
 
 @app.get("/api/games/{game_id}/ai")
 def game_ai(game_id: int):
-    """The AI text that fits the game now (handoff 2.6): preview (pre), one-liner (live), recap (played final).
+    """The AI text that fits the game now (handoff 2.6): preview (pre), recap (played final); none live (the
+    one-liner is the box-score template) or in a league without AI text (AI_LEAGUES).
     status: ready | no_sources ("No fresh previews") | failed or writing (the app shows fallback text) | missing.
     Current text comes back at once, and so does a text that failed for the same inputs in the last 30 minutes
     (a pull shouldn't pay for the same failure again). Otherwise this request writes it (or waits for whoever is
@@ -229,7 +234,7 @@ def game_ai(game_id: int):
         if not game_row:
             raise HTTPException(404, "game not found")
         kind = ai_jobs.kind_for(game_row)
-        if kind is None:
+        if kind is None or not ai_scope.ai_league(game_row["league"]):
             return _ai_out(None, None) | {"status": "none"}
         stored = ai_store.get(conn, game_id, kind)
     basis = ai_jobs.row_basis(kind, game_row)

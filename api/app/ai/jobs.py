@@ -17,11 +17,11 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from .. import db, espn, favorites, games
-from . import client, facts, sources, store, writer
+from . import client, facts, scope, sources, store, writer
 
 log = logging.getLogger(__name__)
 PACIFIC = ZoneInfo("America/Los_Angeles")
-STATE_FOR = {"preview": "pre", "recap": "post", "one_liner": "in"}
+STATE_FOR = {"preview": "pre", "recap": "post"}
 
 
 def _page(game_id: int, base_url: str) -> dict | None:
@@ -33,16 +33,17 @@ def basis(kind: str, page: dict) -> str:
     """What a text is written from; a different basis makes the stored text stale (handoff 2.2)."""
     if kind == "preview":        # the game day: a moved kickoff means a new preview
         return datetime.fromisoformat(page["start_time"]).astimezone(PACIFIC).date().isoformat()
-    return f"{page['away'].get('score')}-{page['home'].get('score')}"     # recap: the final; one-liner: the score
+    return f"{page['away'].get('score')}-{page['home'].get('score')}"     # recap: the final
 
 
 def kind_for(row: dict) -> str | None:
-    """Which text a game page shows now (handoff 2.6): preview before, one-liner during, recap after a played
-    final; nothing for a canceled or postponed game."""
+    """Which text a game page shows now (handoff 2.6): preview before, recap after a played final; nothing live
+    (CTO, 2026-10-01: the live one-liner is the box-score template, summary.one_liner) or for a canceled or
+    postponed game."""
     if row["state"] == "pre":
         return "preview"
     if row["state"] == "in":
-        return "one_liner"
+        return None
     return "recap" if row.get("completed") else None
 
 
@@ -70,7 +71,8 @@ def write_for_game(kind: str, game_id: int, reason: str, base_url: str = espn.BA
     page = _page(game_id, base_url)
     if page is None:
         return {"status": "missing", "id": None}
-    if page["state"] != STATE_FOR[kind] or (kind == "recap" and not page.get("completed")):
+    if (page["state"] != STATE_FOR[kind] or (kind == "recap" and not page.get("completed"))
+            or not scope.ai_league(page["league"])):
         return {"status": "skipped", "id": None}
     b = basis(kind, page)
     articles, fp = [], None
@@ -100,10 +102,8 @@ def write_for_game(kind: str, game_id: int, reason: str, base_url: str = espn.BA
             same_articles = (before and before["body"] is not None and before["extract"]
                              and sorted(s["url"] for s in before["sources"] or []) == sorted(a["url"] for a in articles))
             result = writer.write_preview(page, articles, before["extract"] if same_articles else None)
-        elif kind == "recap":
-            result = writer.write_recap(page)
         else:
-            result = writer.write_one_liner(page)
+            result = writer.write_recap(page)
     except Exception as exc:  # noqa: BLE001 — a bug must not leave the row stuck at 'writing'
         log.exception("ai %s game %s crashed", kind, game_id)
         result = {"status": "failed", "reason": f"crashed: {type(exc).__name__}"}
@@ -118,6 +118,9 @@ def write_for_game(kind: str, game_id: int, reason: str, base_url: str = espn.BA
 
 
 def write_headlines(leagues: list[str], reason: str) -> dict:
+    leagues = [lg for lg in leagues if scope.ai_league(lg)]
+    if not leagues:
+        return {"status": "skipped", "id": None}
     with db.connect() as conn:
         news = store.news(conn, leagues, days=2, limit=30)
         finals = conn.execute("""

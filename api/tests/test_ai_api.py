@@ -17,8 +17,7 @@ ARTICLE = {"url": "https://www.espn.com/nfl/story/_/id/1/x", "outlet": "ESPN", "
 
 def ready(kind, **extra):
     body = {"preview": {"preview": "p", "edges": {"home": [], "away": []}, "picks": []},
-            "recap": {"recap": "r", "bets": "", "home": "h", "away": "a"},
-            "one_liner": {"line": "l"}}[kind]
+            "recap": {"recap": "r", "bets": "", "home": "h", "away": "a"}}[kind]
     return {"status": "ready", "body": body, "model": "fake", "checker": "fake-check", "seconds": 0.1, **extra}
 
 
@@ -26,7 +25,7 @@ def ready(kind, **extra):
 def fake(client, monkeypatch):  # noqa: F811
     """Count writer calls per kind; articles from `state['articles']`."""
     from app.ai import sources, writer
-    state = {"calls": {"preview": [], "recap": 0, "one_liner": 0}, "articles": [ARTICLE], "result": None}
+    state = {"calls": {"preview": [], "recap": 0}, "articles": [ARTICLE], "result": None}
 
     def preview(page, articles, extract=None):
         state["calls"]["preview"].append(extract)
@@ -39,13 +38,8 @@ def fake(client, monkeypatch):  # noqa: F811
         state["calls"]["recap"] += 1
         return state["result"] or ready("recap")
 
-    def one_liner(page):
-        state["calls"]["one_liner"] += 1
-        return state["result"] or ready("one_liner")
-
     monkeypatch.setattr(writer, "write_preview", preview)
     monkeypatch.setattr(writer, "write_recap", recap)
-    monkeypatch.setattr(writer, "write_one_liner", one_liner)
     monkeypatch.setattr(sources, "find_articles", lambda page, news, **kw: (list(state["articles"]), []))
     state["ids"] = _ids(client)
     return state
@@ -63,7 +57,9 @@ def test_recap_written_on_open_then_instant(client, fake):  # noqa: F811
 def test_kind_follows_the_game_state(client, fake):  # noqa: F811
     ids = fake["ids"]
     assert client.get(f"/api/games/{ids['BUF']}/ai").json()["kind"] == "preview"
-    assert client.get(f"/api/games/{ids['KC']}/ai").json()["kind"] == "one_liner"
+    live = client.get(f"/api/games/{ids['KC']}/ai").json()       # live: the box-score template, no AI (CTO, Oct 1)
+    assert live["kind"] is None and live["status"] == "none"
+    assert _sql("SELECT count(*) FROM ai_texts WHERE game_id = %s", ids["KC"]) == [(0,)]
 
 
 def test_preview_without_fresh_articles_is_no_sources(client, fake):  # noqa: F811
@@ -71,14 +67,28 @@ def test_preview_without_fresh_articles_is_no_sources(client, fake):  # noqa: F8
     assert client.get(f"/api/games/{fake['ids']['BUF']}/ai").json()["status"] == "no_sources"
 
 
-def test_one_liner_reused_for_15_minutes_then_rewritten(client, fake):  # noqa: F811
-    gid = fake["ids"]["KC"]
-    client.get(f"/api/games/{gid}/ai")
-    client.get(f"/api/games/{gid}/ai")
-    assert fake["calls"]["one_liner"] == 1
-    _sql("UPDATE ai_texts SET updated_at = now() - interval '16 minutes' WHERE game_id = %s", gid)
-    client.get(f"/api/games/{gid}/ai")
-    assert fake["calls"]["one_liner"] == 2
+def test_league_without_ai_text_writes_nothing(client, fake, monkeypatch):  # noqa: F811
+    from app.ai import jobs, scope
+    monkeypatch.setattr(scope, "AI_LEAGUES", {"ncaaf"})               # NFL off: the fixture's games are NFL
+    out = client.get(f"/api/games/{fake['ids']['DAL']}/ai").json()
+    assert out["kind"] is None and out["status"] == "none"
+    assert jobs.write_for_game("recap", fake["ids"]["DAL"], "final")["status"] == "skipped"
+    assert jobs.write_headlines(["nfl"], "schedule")["status"] == "skipped"
+    assert fake["calls"]["recap"] == 0
+
+
+def test_written_at_is_when_the_shown_text_was_written(client, fake):  # noqa: F811
+    from app.ai import jobs
+    gid = fake["ids"]["BUF"]
+    first = client.get(f"/api/games/{gid}/ai").json()
+    assert first["status"] == "ready" and first["written_at"]
+    _sql("UPDATE ai_texts SET written_at = now() - interval '2 days' WHERE game_id = %s", gid)
+    fake["articles"] = [dict(ARTICLE, url="https://www.espn.com/nfl/story/_/id/2/y")]      # new articles: a refresh
+    fake["result"] = {"status": "failed", "reason": "check failed twice", "model": "fake"}
+    jobs.write_for_game("preview", gid, "refresh")
+    kept = client.get(f"/api/games/{gid}/ai").json()
+    assert kept["status"] == "ready" and kept["body"]["preview"] == "p"     # the last good preview stays
+    assert kept["written_at"] < first["written_at"]                         # and says when it was written
 
 
 def test_recap_rewritten_once_after_a_stat_correction(client, fake):  # noqa: F811
@@ -113,7 +123,7 @@ def test_no_keys_means_fallback_not_a_crash(client, monkeypatch):  # noqa: F811
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
     monkeypatch.setattr(sources, "find_articles", lambda page, news, **kw: ([ARTICLE], []))
     ids = _ids(client)
-    for team in ("DAL", "BUF", "KC"):
+    for team in ("DAL", "BUF"):                  # KC is live: no AI text at all
         out = client.get(f"/api/games/{ids[team]}/ai")
         assert out.status_code == 200 and out.json()["status"] == "failed"
 
@@ -195,6 +205,24 @@ def test_db_quota_shares_the_minute_and_cooling(client):  # noqa: F811
     assert q.reserve(["m3"], 10, 8000, wait=False) is None
     q.used(a[1], 1234)
     assert _sql("SELECT used FROM ai_calls WHERE id = %s", a[1]) == [(1234,)]
+
+
+def test_db_quota_counts_the_day(client):  # noqa: F811
+    from app.ai.quota import DbQuota
+    q = DbQuota()
+    a = q.reserve(["t1"], 5000, 8000, wait=False)
+    q.used(a[1], 1200)
+    q.reserve(["t2"], 3000, 8000, wait=False)                           # not reported yet: its reservation counts
+    assert q.spent_today("t1", False)[0] == 1200 and q.spent_today("t2", False)[0] == 3000
+    q.reserve(["or:v/a:free"], 1, 20, wait=False)
+    q.reserve(["or:v/b:free"], 1, 20, wait=False)
+    assert q.spent_today("or:", True)[0] == 2                           # OpenRouter: one budget for the account
+    assert q.spent_today("or:v/a:free", True)[0] == 1
+    _sql("UPDATE ai_calls SET at = now() - interval '23 hours' WHERE model = 't1'")
+    spent, frees_in = q.spent_today("t1", False)
+    assert spent == 1200 and 3500 < frees_in <= 3600                   # back in about an hour
+    _sql("UPDATE ai_calls SET at = now() - interval '25 hours' WHERE model = 't1'")
+    assert q.spent_today("t1", False) == (0.0, 0.0)
 
 
 # ---------- the activity's retry signal ----------

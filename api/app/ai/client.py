@@ -1,43 +1,87 @@
 """The outside AI calls: write() for the text, check() for the fact check, groq_search() for preview articles.
 
-Writing and checking fail over across free Groq models (Adam, 2026-09-29, option C): each model has its own quota,
-so when one is rate-limited the call moves to the next instead of failing. A model never fact-checks its own text.
-A model named "or:<id>" is an OpenRouter free model (Adam, 2026-10-01): its own pool, so it backs up the checkers
-(not the writers: Qwen as a writer invents claims). Gemini stays selectable with AI_WRITER=gemini (its free tier is
-20 requests a day). Keys come from the environment only (GROQ_API_KEY, GEMINI_API_KEY, OPENROUTER_API_KEY) and are
-never logged, nor are full prompts. When every model is limited,
+Who writes and checks each kind of text is ROUTES (CTO, 2026-10-01): one named writer and at most one named backup,
+every failover logged (the voice changes with the writer, so it never rotates freely); one checker, never from the
+writer's family (gpt-oss-20b doesn't check gpt-oss-120b), plus an overflow pool used only while the checker is
+cooling down or out of budget. With no checker outside the writer's family the text fails closed. A model's name
+picks its provider: "or:<id>" is an OpenRouter free model, "gemini-*" is Gemini, anything else is Groq.
+
+Every model also has a daily budget (Groq's rolling 24 h of tokens, OpenRouter's and Gemini's requests a day),
+counted in the quota both the api and the worker share: a model that has spent it is skipped like one cooling down
+after a 429, so routing stops before the provider says no. Keys come from the environment only (GROQ_API_KEY,
+GEMINI_API_KEY, OPENROUTER_API_KEY) and are never logged, nor are full prompts. When every model is limited,
 RateLimited reaches the caller, which shows fallback text; any other failure raises AIError. 30 s timeout per call.
 """
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import threading
 import time
 from collections import deque
 from contextlib import contextmanager
+from typing import NamedTuple
 
 import httpx
 
+log = logging.getLogger(__name__)
 TIMEOUT = 30
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_SEARCH_MODEL = "openai/gpt-oss-20b"     # the free models with browser search
 # Free tier per model (headers and 429 text, 2026-09-29): 1,000 requests and 200K tokens a day (a rolling 24 h),
 # 8,000 tokens a minute.
 GROQ_TPM = int(os.environ.get("GROQ_TPM", "8000"))
-GEMINI_RPM = int(os.environ.get("GEMINI_RPM", "5"))    # gemini-3.6-flash free tier; 20 requests a day
+GROQ_TPD = int(os.environ.get("GROQ_TPD", "200000"))
+GEMINI_RPM = int(os.environ.get("GEMINI_RPM", "5"))    # gemini-3.6-flash free tier
+GEMINI_RPD = int(os.environ.get("GEMINI_RPD", "20"))   # per model; Google resets at midnight PT, we count 24 h back
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_PREFIX = "or:"
 OPENROUTER_RPM = int(os.environ.get("OPENROUTER_RPM", "20"))    # free models: 20 requests a minute, no token limit
+# Free models, the whole account (more keys add nothing), under $10 of credits ever bought (OpenRouter's docs,
+# 2026-10-01). CTO: overflow only, no credits.
+OPENROUTER_RPD = int(os.environ.get("OPENROUTER_RPD", "50"))
 
-# Best first. The writer leads with gpt-oss-120b; gpt-oss-20b checks. Both lists fall back to the other models.
-# Checker order (check_eval, 2026-09-30): 20b and Qwen each caught 11 of 15 errors; 20b raised no false alarms in 8
-# correct sentences, including one Qwen rejected that night, and Qwen wrote its reasoning into its replies.
-WRITERS = [m.strip() for m in os.environ.get(
-    "AI_WRITERS", "openai/gpt-oss-120b,qwen/qwen3.8-27b,openai/gpt-oss-20b").split(",") if m.strip()]
-CHECKERS = [m.strip() for m in os.environ.get(
-    "AI_CHECKERS", "openai/gpt-oss-20b,qwen/qwen3.8-27b,or:qwen/qwen3.8-27b:free,openai/gpt-oss-120b").split(",") if m.strip()]
+
+class Route(NamedTuple):
+    writer: str
+    backup: str | None       # the one named backup writer; None = the text fails closed to its fallback
+    checker: str             # never the writer's family
+    overflow: str | None     # the checker's extra pool, only while the checker is cooling down or out of budget
+
+
+_120B, _QWEN, _QWEN_OR = "openai/gpt-oss-120b", "qwen/qwen3.8-27b", "or:qwen/qwen3.8-27b:free"
+# CTO, 2026-10-01. No backup writers: Qwen invents claims as a writer and 20b is untested as one, so with 120b out a
+# recap is the stats-only template, a preview "unavailable", and headlines keep the last set. Qwen on Groq checks
+# (its own quota, another family); OpenRouter's 50 a day is overflow. check_eval (2026-09-30): Qwen caught 11 of 15
+# errors and rejected 1 of 8 correct sentences: a false rejection costs a template, so watch the rejection rate.
+# Headlines move to Gemini (writer) and 20b (checker) once the Gemini key is replaced and the budgets are measured.
+ROUTES = {
+    "recap": Route(_120B, None, _QWEN, _QWEN_OR),
+    "preview": Route(_120B, None, _QWEN, _QWEN_OR),
+    "headlines": Route(_120B, None, _QWEN, _QWEN_OR),
+}
+DEFAULT_KIND = "recap"      # for tools that call write()/check() outside a text (check_eval)
+
+
+def _override(var: str, most: int | None = None) -> list[str]:
+    """AI_WRITERS / AI_CHECKERS pin the models for every kind (the samples bake-off, check_eval); unset = ROUTES."""
+    ms = [m.strip() for m in os.environ.get(var, "").split(",") if m.strip()]
+    if most and len(ms) > most:
+        raise ValueError(f"{var} names {len(ms)} models: one writer and at most one backup")
+    return ms
+
+
+WRITERS = _override("AI_WRITERS", 2)
+CHECKERS = _override("AI_CHECKERS")
+
+
+def route(kind: str | None = None) -> tuple[list[str], list[str]]:
+    """(writers, checkers) for a kind of text, best first."""
+    r = ROUTES[kind or DEFAULT_KIND]
+    return (WRITERS or [m for m in (r.writer, r.backup) if m],
+            CHECKERS or [m for m in (r.checker, r.overflow) if m])
 
 
 class AIError(Exception):
@@ -62,18 +106,34 @@ class NoKey(AIError):
     """No API key configured (the off switch): retrying won't help."""
 
 
-def writer() -> str:
-    return os.environ.get("AI_WRITER", "groq")
-
-
-def model() -> str:
-    """The first-choice writing model (what a text is written with unless it failed over)."""
-    if writer() == "gemini":
-        return os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
-    return WRITERS[0]
+class NoChecker(AIError):
+    """No checker outside the writer's family is configured: retrying won't help, and the text is never published
+    unchecked."""
 
 
 _last = threading.local()
+
+
+def begin(kind: str | None) -> None:
+    """Start a new text of this kind (a ROUTES key): its models, and no memory of who wrote or checked the last."""
+    if kind is not None and kind not in ROUTES:
+        raise ValueError(f"no route for {kind!r}")
+    _last.kind = kind
+    _last.writer = None
+    _last.checker = None
+
+
+def forget_last() -> None:
+    begin(None)
+
+
+def _kind() -> str | None:
+    return getattr(_last, "kind", None)
+
+
+def model() -> str:
+    """This text's first-choice writer (what it is written with unless it failed over)."""
+    return route(_kind())[0][0]
 
 
 def last_writer() -> str:
@@ -82,26 +142,17 @@ def last_writer() -> str:
 
 
 def write(prompt: str, *, json_out: bool = False) -> str:
-    """One text from the first writing model that has room. Returns the reply (a JSON string when json_out)."""
-    if writer() == "gemini":
-        _last.writer = model()
-        return _gemini_call(prompt, json_out)
-    text, used = _failover(WRITERS, prompt, json_out, MAX_OUT, avoid=None)
+    """One text from the kind's writer (or its named backup). Returns the reply (a JSON string when json_out)."""
+    text, used = _failover(route(_kind())[0], prompt, json_out, MAX_OUT, avoid=None)
     _last.writer = used
     return text
 
 
 def check(prompt: str) -> str:
-    """One fact check, by a model other than the one that wrote the text. Returns a JSON string."""
-    text, used = _failover(CHECKERS, prompt, True, CHECK_MAX_OUT, avoid=last_writer(), checker=True)
+    """One fact check, by a model from another family than the one that wrote the text. Returns a JSON string."""
+    text, used = _failover(route(_kind())[1], prompt, True, CHECK_MAX_OUT, avoid=last_writer(), checker=True)
     _last.checker = used
     return text
-
-
-def forget_last() -> None:
-    """Start a new text: clear which models wrote and checked the last one."""
-    _last.writer = None
-    _last.checker = None
 
 
 def last_checker() -> str | None:
@@ -109,21 +160,24 @@ def last_checker() -> str | None:
     return getattr(_last, "checker", None)
 
 
-def check_model() -> str:
-    return next((m for m in CHECKERS if _same_model(m) != _same_model(last_writer())), CHECKERS[0])
+def check_model() -> str | None:
+    """The first checker allowed to check the last writer's text; None if there is none."""
+    return next((m for m in route(_kind())[1] if family(m) != family(last_writer())), None)
 
 
 # ---------------------------------------------------------------- failover and pacing
 
 paced_seconds = 0.0     # total time spent waiting for room (the samples script subtracts it from timings)
+DAY = 24 * 3600
 
 
 class MemoryQuota:
-    """Per-model minute windows and 429 cool-downs inside this process. Fine for one process (tests, the samples
-    script); the api and the worker share quota.DbQuota instead (AI_QUOTA=db), so they can't collide."""
+    """Per-model minute windows, daily spend and 429 cool-downs inside this process. Fine for one process (tests,
+    the samples script); the api and the worker share quota.DbQuota instead (AI_QUOTA=db), so they can't collide."""
 
     def __init__(self):
         self._windows: dict[str, deque] = {}
+        self._day: dict[str, deque] = {}         # model -> [monotonic time, reserved, used or None] for 24 h
         self._cooling: dict[str, float] = {}     # model -> monotonic time it may be tried again
         self._lock = threading.Lock()
 
@@ -146,7 +200,9 @@ class MemoryQuota:
                 for m in usable:
                     if self._room(m, cost, limit, now):
                         self._windows[m].append((now, cost))
-                        return m, None
+                        entry = [now, cost, None]
+                        self._day.setdefault(m, deque()).append(entry)
+                        return m, entry
                 if not wait:
                     return None
                 pause = 60 - (now - self._windows[usable[0]][0][0]) + 0.1
@@ -158,7 +214,26 @@ class MemoryQuota:
             self._cooling[model_name] = max(self._cooling.get(model_name, 0), time.monotonic() + seconds)
 
     def used(self, handle: object, tokens: int) -> None:
-        pass
+        if handle is not None:
+            with self._lock:
+                handle[2] = tokens
+
+    def spent_today(self, pool: str, requests: bool) -> tuple[float, float]:
+        """(spent in the last 24 h, seconds until the oldest of it leaves the window) for a model, or for every
+        model whose name starts with `pool` when pool is a prefix ("or:"). Spent is requests, or tokens used
+        (reserved until the call reports)."""
+        now = time.monotonic()
+        spent, oldest = 0, None
+        with self._lock:
+            for m, d in self._day.items():
+                if not (m == pool or (pool.endswith(":") and m.startswith(pool))):
+                    continue
+                while d and now - d[0][0] >= DAY:
+                    d.popleft()
+                spent += len(d) if requests else sum(e[1] if e[2] is None else e[2] for e in d)
+                if d and (oldest is None or d[0][0] < oldest):
+                    oldest = d[0][0]
+        return spent, (DAY - (now - oldest)) if oldest is not None else 0.0
 
     def is_cooling(self, model_name: str) -> bool:
         with self._lock:
@@ -193,10 +268,43 @@ def _waiting() -> bool:
     return getattr(_mode, "wait", True)
 
 
-def _wait(cost: int, limit: int, key: str) -> None:
-    """Hold one call to a single model (Gemini, search) until it has room this minute."""
-    if quota.reserve([key], cost, limit, _waiting()) is None:
+def _wait(cost: int, limit: int, key: str) -> object:
+    """Hold one call to a single model (search) until it has room this minute. Returns the quota handle."""
+    day = _over_budget(key, cost)
+    if day is not None:
+        raise RateLimited(f"{key}: today's budget is spent", day)
+    got = quota.reserve([key], cost, limit, _waiting())
+    if got is None:
         raise RateLimited(f"{key}: no room this minute")
+    return got[1]
+
+
+def _is_gemini(name: str) -> bool:
+    return name.startswith("gemini")
+
+
+def _minute(name: str, cost: int) -> tuple[int, int]:
+    """(what one call costs, the minute's limit): Groq limits tokens a minute, OpenRouter and Gemini requests."""
+    if _is_openrouter(name):
+        return 1, OPENROUTER_RPM
+    if _is_gemini(name):
+        return 1, GEMINI_RPM
+    return cost, GROQ_TPM
+
+
+def _over_budget(name: str, cost: int) -> float | None:
+    """None when `name` has room in today's budget for a call costing `cost` (tokens, or 1 request); else seconds
+    until its oldest call leaves the 24 h window. OpenRouter's budget is the whole account's (pool "or:")."""
+    if _is_openrouter(name):
+        pool, requests, limit = OPENROUTER_PREFIX, True, OPENROUTER_RPD
+    elif _is_gemini(name):
+        pool, requests, limit = name, True, GEMINI_RPD
+    else:
+        pool, requests, limit = name, False, GROQ_TPD
+    spent, frees_in = quota.spent_today(pool, requests)
+    if spent + (1 if requests else cost) <= limit:
+        return None
+    return max(frees_in, 60.0)
 
 
 _RETRY = re.compile(r"try again in (?:(\d+)h)?(?:(\d+)m)?(?:([\d.]+)s)?")
@@ -213,7 +321,10 @@ def _retry_after(text: str) -> float:
 
 def _failover(models: list[str], prompt: str, json_out: bool, max_out: int, avoid: str | None,
               checker: bool = False) -> tuple[str, str]:
-    order = [m for m in models if avoid is None or _same_model(m) != _same_model(avoid)] or list(models)
+    order = [m for m in models if avoid is None or family(m) != family(avoid)]
+    if not order:
+        # Never fall back to the writer's own family (it once fell back to the whole list here).
+        raise NoChecker(f"no checker outside the {family(avoid)} family in {models}")
     # Groq counts the prompt plus the whole reply allowance against the minute (429s when we counted real usage,
     # 2026-09-29), so that is what we reserve: ~4 characters a token plus max_out. One request can never be more
     # than the minute, so the reply allowance shrinks to fit; a prompt that leaves too little room is refused.
@@ -237,8 +348,17 @@ def _failover(models: list[str], prompt: str, json_out: bool, max_out: int, avoi
             if wait is not None:
                 raise RateLimited(f"every model cooling down for {wait:.0f}s", max(wait, 1.0))
             raise last
-        # Groq limits tokens a minute; an OpenRouter free model limits requests a minute.
-        got = quota.reserve([name], *((1, OPENROUTER_RPM) if _is_openrouter(name) else (cost, GROQ_TPM)), _waiting())
+        each, limit = _minute(name, cost)
+        day = _over_budget(name, each)
+        if day is not None:
+            # Today's budget is spent: skip it like a 429 until its oldest call leaves the 24 h window (both
+            # processes see the cool-down), instead of asking and being refused.
+            log.warning("ai budget: %s has spent today's budget; skipped for %.0fs", name, day)
+            quota.cool(name, day)
+            tried.add(name)
+            last = RateLimited(f"{name}: today's budget is spent", day)
+            continue
+        got = quota.reserve([name], each, limit, _waiting())
         if got is None:
             if quota.is_cooling(name):         # started cooling meanwhile (another process got a 429)
                 tried.add(name)
@@ -249,9 +369,14 @@ def _failover(models: list[str], prompt: str, json_out: bool, max_out: int, avoi
         try:
             if _is_openrouter(name):
                 text, used = _openrouter_write(prompt, json_out, name, max_out, checker)
+            elif _is_gemini(name):
+                text, used = _gemini_call(prompt, json_out, name), 1
             else:
                 text, used = _groq_write(prompt, json_out, name, max_out, checker)
-            quota.used(handle, 1 if _is_openrouter(name) else used)
+            quota.used(handle, used)
+            if name != order[0]:
+                log.warning("ai failover: %s %s -> %s (%s)", "checker" if checker else "writer", order[0], name,
+                            "cooling down" if order[0] not in tried else last)
             return text, name
         except RateLimited as exc:
             quota.cool(name, exc.retry_after)
@@ -261,9 +386,9 @@ def _failover(models: list[str], prompt: str, json_out: bool, max_out: int, avoi
                 raise                 # a writer's bad JSON is the text's fault: the writer rewrites it
             last = exc                # a checker's bad JSON: ask the next checker (gpt-oss-20b ran out of room, Sep 29)
         except NoKey as exc:
-            if not _is_openrouter(name):
+            if not (_is_openrouter(name) or _is_gemini(name)):
                 raise                 # every Groq model uses the same key: no point trying the others
-            last = exc                # no OpenRouter key: that pool is just left out
+            last = exc                # no OpenRouter or Gemini key: that pool is just left out
         except AIError as exc:        # a 5xx, a timeout, a retired model: try the next one
             last = exc
 
@@ -275,8 +400,15 @@ def _is_openrouter(name: str) -> bool:
 
 
 def _same_model(name: str) -> str:
-    """The model behind a pool's name: Qwen on Groq and Qwen on OpenRouter are one model, and it never checks its own text."""
+    """The model behind a pool's name: Qwen on Groq and Qwen on OpenRouter are one model."""
     return name.removeprefix(OPENROUTER_PREFIX).removesuffix(":free")
+
+
+def family(name: str) -> str:
+    """The model's family: its vendor before the '/' (openai/gpt-oss-120b and -20b are both openai), else the name's
+    first word (gemini-3.6-flash -> gemini). A checker never shares the writer's family (CTO, 2026-10-01)."""
+    m = _same_model(name)
+    return (m.split("/", 1)[0] if "/" in m else m.split("-", 1)[0]).lower()
 
 
 def _openrouter_post(body: dict) -> dict:
@@ -402,9 +534,11 @@ def groq_search(query: str) -> list[dict]:
     body = {"model": GROQ_SEARCH_MODEL, "reasoning_effort": "low", "max_completion_tokens": 300,
             "tools": [{"type": "browser_search"}],
             "messages": [{"role": "system", "content": SEARCH_SYSTEM}, {"role": "user", "content": query}]}
-    _wait(2000, GROQ_TPM, GROQ_SEARCH_MODEL)    # search shares gpt-oss-20b's minute with its writing fallback
+    handle = _wait(2000, GROQ_TPM, GROQ_SEARCH_MODEL)    # search shares gpt-oss-20b's minute and day
     try:
-        tools = _groq_post(body)["choices"][0]["message"].get("executed_tools") or []
+        d = _groq_post(body)
+        quota.used(handle, (d.get("usage") or {}).get("total_tokens") or 2000)
+        tools = d["choices"][0]["message"].get("executed_tools") or []
     except RateLimited as exc:
         quota.cool(GROQ_SEARCH_MODEL, exc.retry_after)   # writing and checking skip it too until then
         raise
@@ -420,12 +554,12 @@ def groq_search(query: str) -> list[dict]:
     return out
 
 
-# ---------------------------------------------------------------- Gemini (AI_WRITER=gemini)
+# ---------------------------------------------------------------- Gemini ("gemini-*" in a route)
 
 _gemini_client = None
 
 
-def _gemini_call(prompt: str, json_out: bool) -> str:
+def _gemini_call(prompt: str, json_out: bool, name: str) -> str:
     global _gemini_client
     from google.genai import errors, types
     key = os.environ.get("GEMINI_API_KEY")
@@ -434,12 +568,11 @@ def _gemini_call(prompt: str, json_out: bool) -> str:
     if _gemini_client is None:
         from google import genai
         _gemini_client = genai.Client(api_key=key, http_options=types.HttpOptions(timeout=TIMEOUT * 1000))
-    _wait(1, GEMINI_RPM, model())
     # Low thinking: the default level took 20-30 s and hit the timeout on a 3 KB prompt; low took ~3 s (2026-09-29).
     cfg = types.GenerateContentConfig(thinking_config=types.ThinkingConfig(thinking_level="low"),
                                       response_mime_type="application/json" if json_out else None)
     try:
-        resp = _gemini_client.models.generate_content(model=model(), contents=prompt, config=cfg)
+        resp = _gemini_client.models.generate_content(model=name, contents=prompt, config=cfg)
     except errors.APIError as exc:
         if exc.code == 429:
             raise RateLimited(f"gemini 429: {exc.status}") from None

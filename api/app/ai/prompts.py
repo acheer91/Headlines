@@ -200,21 +200,6 @@ TEXT:
 {text}
 """
 
-# ---------------------------------------------------------------- live one-liner (C2)
-
-ONE_LINER = """Write one sentence (under 30 words) summing up this live game right now, for a scores app.
-Return JSON only: {{"line": "..."}}
-
-FACTS is a list of plain, exact statements about the game so far (built from the live box score). Use only
-FACTS. Every number must appear in FACTS exactly as written. The quarter marked "(in progress)" isn't over.
-Say what has happened, never how it will end: no predictions, no advice, no hype.
-
-{voice}
-
-FACTS:
-{facts}
-"""
-
 # ---------------------------------------------------------------- headlines (Screen A)
 
 EXTRACT_HEADLINES = """You pick the news for a sports app's home screen. Return JSON only.

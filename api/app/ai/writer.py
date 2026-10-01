@@ -7,7 +7,7 @@ game facts too, with the model extracting only from the articles. Checks, enforc
   * no betting advice words;
   * no run of COPY_WORDS words copied from an article;
   * edges and picks point at an article we actually passed in, and a pick's writer is named in that article;
-  * recaps and one-liners: a player's numbers come from that player's line, "X favored / outgained" and home or
+  * recaps: a player's numbers come from that player's line, "X favored / outgained" and home or
     road match the box score, and claims a box score can't support are refused (claims_ok);
   * a preview's point spread is our own line (line_ok).
 A failed check reruns that step once; a second failure returns status "failed" and the app shows fallback text.
@@ -516,18 +516,18 @@ def claim_problems(texts: list[str], game: dict, sheet: dict, final: bool = True
     return probs
 
 
-def _run(fn: Callable[[dict], dict]) -> dict:
-    """Wrap a writer: timing, call count and the failed status."""
+def _run(kind: str, fn: Callable[[dict], dict]) -> dict:
+    """Wrap a writer: its kind's models (client.ROUTES), timing, call count and the failed status."""
     stats = {"calls": 0}
     t = time.monotonic()
-    client.forget_last()
+    client.begin(kind)
     try:
         out = fn(stats)
     except CheckFailed as exc:
         out = {"status": "failed", "reason": f"check failed twice: {exc}"}
     except client.RateLimited as exc:
         out = {"status": "failed", "reason": f"rate limited: {exc}", "retry_after": exc.retry_after}
-    except (client.NoKey, client.TooLarge) as exc:
+    except (client.NoKey, client.NoChecker, client.TooLarge) as exc:
         out = {"status": "failed", "reason": str(exc)}                 # retrying can't help
     except client.AIError as exc:
         # A 5xx, a timeout, an unreadable check: worth another try later (the worker retries on retry_after).
@@ -543,7 +543,8 @@ def write_preview(game: dict, articles: list[dict], extract: dict | None = None)
     """extract: the article extract saved with an earlier version of this preview (keyed by article URL), for the
     same articles. The game-morning refresh passes it when only our own data changed, skipping the extract call."""
     if not articles:
-        return {"status": "no_sources", "calls": 0, "rejected": [], "seconds": 0.0, "model": client.model()}
+        return {"status": "no_sources", "calls": 0, "rejected": [], "seconds": 0.0,
+                "model": client.route("preview")[0][0]}
     saved = extract
 
     def go(stats):
@@ -611,7 +612,7 @@ def write_preview(game: dict, articles: list[dict], extract: dict | None = None)
                 "sources": [{k: a[k] for k in ("title", "url", "outlet", "published")} for a in articles],
                 "extract": _by_url(extract, {i: a["url"] for i, a in ids.items()})}
 
-    return _run(go)
+    return _run("preview", go)
 
 
 def line_ok(text: str, game: dict) -> None:
@@ -776,7 +777,7 @@ def write_recap(game: dict) -> dict:
                 "length": {"tier": tier, "why": why,
                            "words": sum(len(out[k].split()) for k in ("recap", "home", "away"))}}
 
-    return _run(go)
+    return _run("recap", go)
 
 
 def bets_line(game: dict) -> str:
@@ -789,27 +790,6 @@ def recap_fallback(game: dict) -> str:
     h, a = game["home"], game["away"]
     return " ".join(x for x in (f"Final: {h['short']} {h.get('score')}, {a['short']} {a.get('score')}.",
                                 bets_line(game)) if x)
-
-
-# ---------------------------------------------------------------- live one-liner
-
-def write_one_liner(game: dict) -> dict:
-    def go(stats):
-        sheet = facts.live_facts(game)
-        fj = json.dumps(sheet["facts"], ensure_ascii=False)
-
-        def check(x):
-            line = x.get("line")
-            _texts_ok([line], fj)
-            claims_ok([line], game, sheet, final=False)
-            if isinstance(line, str) and len(line.split()) > 40:
-                raise CheckFailed(f"one-liner is {len(line.split())} words")
-            _fact_check([line], fj, stats)
-
-        out = _step(prompts.ONE_LINER.format(facts=fj, voice=prompts.VOICE), check, stats)
-        return {"status": "ready", "body": {"line": out["line"]}}
-
-    return _run(go)
 
 
 # ---------------------------------------------------------------- headlines
@@ -842,4 +822,4 @@ def write_headlines(news: list[dict], finals: list[str]) -> dict:
                  for i in out["items"]]
         return {"status": "ready", "body": {"items": items}}
 
-    return _run(go)
+    return _run("headlines", go)
