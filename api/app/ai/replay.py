@@ -115,9 +115,9 @@ def flagged(texts: list[str], game: dict) -> list[tuple[str, str]]:
             out.append((writer.BAD_PERIOD.search(t)[0], "no such quarter"))
         if writer.ADVICE.search(t):
             out.append((writer.ADVICE.search(t)[0], "advice wording"))
-        bet = writer.BET_TALK.search(t)
+        bet = writer.bet_talk([t])
         if bet:
-            out.append((bet[0], "bet talk"))
+            out.append((bet, "bet talk"))
     out += writer.claim_problems(texts, game, sheet)
     return out
 

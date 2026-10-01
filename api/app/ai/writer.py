@@ -25,6 +25,8 @@ from . import client, facts, prompts
 from .sources import mentions, team_terms
 
 COPY_WORDS = 8
+RECAP_VOICE = True          # Adam's house style and example recaps in the recap prompt; False = the plain prompt (Oct 1)
+EXAMPLE_COPY_WORDS = 6      # a run this long (no numbers) copied from one of the prompt's example recaps is refused
 TRANSIENT_RETRY = 300.0     # seconds before the worker retries a text that failed on a 5xx or a timeout
 WHY_CHARS = 200             # a fact-check reason longer than this is the checker's reasoning, not a reason
 NUM = re.compile(r"\d+(?:\.\d+)?")
@@ -33,14 +35,30 @@ ADVICE = re.compile(r"\b(you should|should bet|take the (over|under|points)|hamm
 # Football has four quarters; number words escape the digit check ("a seventh-quarter touchdown", 2026-09-29).
 BAD_PERIOD = re.compile(r"\b(fifth|sixth|seventh|eighth|ninth|tenth)[\s\-‐-—]quarter", re.I)  # any hyphen: the model writes U+2011
 # Recaps leave bet results to code (bets_line), so betting words in the prose mean the model restated them.
-BET_TALK = re.compile(r"\b(spread|moneyline|covered|covering|cover|over/under|the (over|under)|push|bets?)\b", re.I)
+BET_TALK = re.compile(r"\b(spread|moneyline|covered|covering|cover|over/under|the (over|under)|bets?)\b", re.I)
+# A bet's push, not "Seattle's fourth-quarter push" (Adam's sample, 2026-10-01): only with another betting word.
+BET_PUSH = re.compile(r"\bpush\b(?=.*\b(?:line|total|odds|wager|bets?|spread)\b)|"
+                      r"\b(?:line|total|odds|wager|bets?|spread)\b.*\bpush\b", re.I | re.S)
+
+
+def bet_talk(texts: list[str]) -> str | None:
+    """The first betting word in the prose, or None."""
+    for t in texts:
+        m = BET_TALK.search(t)
+        if m:
+            return m[0]
+        if BET_PUSH.search(t):
+            return "push"
+    return None
 # Claims a box score can't support, so code rejects them instead of hoping the checker does (2026-09-30 eval:
 # "dominated possession", "never relinquishing the lead", "the game's only touchdown", "kept them off balance").
 # Text is normalized to straight apostrophes first (_norm).
 UNSUPPORTED = re.compile(
     r"\b(dominat\w*|relinquish\w*|wire[\s\-‐-—]to[\s\-‐-—]wire|the game's (only|lone)|"
     r"(two|three|four|five) (more )?scores|because|buoyed|fueled|powered by|off balance|momentum|"
-    r"erased|proved (costly|decisive)|the difference|"
+    r"erased|proved (costly|decisive)|"
+    # "The difference was the turnover column" (Adam's sample) restates a stat; any other "difference" is a cause.
+    r"the difference(?!\s+(?:was|is|came down to)\s+the\s+(?:turnover|takeaway|giveaway|penalt|yardage|possession)\w*)|"
     # Causes (2026-10-01, from the rerun: "bolstered by a clean ball", "capitalized on key opportunities", "Denver
     # checked out ... allowing Los Angeles to establish", "to control the game"). A box score shows what happened,
     # never why. "Thanks to 7 points in the first" only restates the score, so a number after it is fine.
@@ -73,7 +91,7 @@ ROAD = re.compile(r"\b(on the road|road (win|loss|victory|team)|away from home)\
 AT_HOME = re.compile(r"\b(at home|home (win|loss|victory|crowd|fans))\b", re.I)
 # Which team stat a "favored X" clause is about; the first match wins, so rushing/passing come before yards.
 STAT_WORDS = [(re.compile(r"possession|the ball|clock", re.I), "possessionTime"),
-              (re.compile(r"rush|on the ground", re.I), "rushingYards"),
+              (re.compile(r"rush|on the ground|ground game", re.I), "rushingYards"),
               (re.compile(r"pass|through the air", re.I), "netPassingYards"),
               (re.compile(r"turnover|giveaway|takeaway", re.I), "takeaways"),
               (re.compile(r"yard", re.I), "totalYards")]
@@ -86,9 +104,24 @@ FAVORITE = re.compile(rf"(\d+(?:\.\d+)?){HYPHEN}?point (?:favou?rite|underdog)|f
 # Browns responded with ten"). A sentence naming a quarter may not say what came "before" something or who "responded"
 # (a team can respond to the break score before, so only the same sentence's quarter counts), and "tied" must be a
 # tie the sheet shows at a quarter break.
-QUARTER = re.compile(r"\b(first|second|third|fourth|1st|2nd|3rd|4th|q[1-4]|quarter|period|stanza)\b", re.I)
 QUARTER_NO = {"first": 0, "1st": 0, "q1": 0, "second": 1, "2nd": 1, "q2": 1, "third": 2, "3rd": 2, "q3": 2,
               "fourth": 3, "4th": 3, "q4": 3}
+# A quarter is "in the second", "the second quarter", "Q4": not "a second touchdown" or "a 14-second drive".
+Q_THE = re.compile(r"\b(?:in|of|during|through|into|after|by|until|before|to)\s+the\s+(first|second|third|fourth)\b"
+                   r"(?!\s+(?:touchdown|field|score|time|down|straight|interception|possession|drive|team|half))", re.I)
+Q_NAMED = re.compile(r"\b(?:(first|second|third|fourth|1st|2nd|3rd|4th)[\s-]+(?:quarter|period|stanza|frame)|"
+                     r"(q[1-4]))\b", re.I)
+QUARTER_WORD = re.compile(r"\b(?:quarter|period|stanza)\b", re.I)
+
+
+def _quarters(text: str) -> list[int]:
+    """The quarters a text names, in order (0 = first), none for 'a second touchdown' or 'a 14-second drive'."""
+    hits = [(m.start(), m[1]) for m in Q_THE.finditer(text)] + [(m.start(), m[1] or m[2]) for m in Q_NAMED.finditer(text)]
+    return [QUARTER_NO[w.lower()] for _, w in sorted(hits)]
+
+
+def _has_quarter(text: str) -> bool:
+    return bool(_quarters(text) or QUARTER_WORD.search(text))
 BEFORE = re.compile(r"\bbefore\b(?!\s+(?:the\s+)?(?:half|halftime|break|intermission|final|end|clock|game|quarter|"
                     r"(?:first|second|third|fourth|1st|2nd|3rd|4th)\b))", re.I)
 RESPONDED = re.compile(r"\brespond(?:ed|ing|s)?\b", re.I)
@@ -115,7 +148,8 @@ AT_HALF = re.compile(rf"(?<![\d-])\b(\d+|{'|'.join(WORD_NUM)})\s+(?:points?\s+)?
                      re.I)
 # "held the ball for over five minutes longer" when the gap was 4:56.
 LONGER_BY = re.compile(r"\b(over|more than|just over|nearly|almost|just under|about|roughly|around)?\s*"
-                       rf"(\d+|{'|'.join(WORD_NUM)})\s+(?:full\s+)?minutes?\b[^.;]{{0,25}}?\b(?:longer|more)\b", re.I)
+                       rf"(\d+|{'|'.join(WORD_NUM)})\s+(?:full\s+)?minutes?(?:\s+and\s+[\w-]+\s+seconds?)?\s+(?:longer|more)\b",
+                       re.I)
 LEAD_CHANGE = re.compile(r"\blead changes?\b|\bchanged hands\b", re.I)
 # "Seattle surged ahead with 14 points in Q4" when Seattle trailed at the end of Q4.
 TOOK_LEAD = re.compile(r"\b(?:surg\w*|pull\w*|mov\w*|went|vault\w*|jump\w*) ahead\b|"
@@ -210,11 +244,23 @@ def checker_problems(reply: str) -> list | None:
     return [p for p in probs if not (isinstance(p, dict) and str(p.get("verdict", "")).lower() in ("fine", "ok"))]
 
 
+APPROX = re.compile(r"\b(?:nearly|almost|about|roughly|around|just over|just under)\s+(\d+(?:\.\d+)?)\b", re.I)
+CLOCK = re.compile(r"\b(\d+):(\d\d)\b")
+
+
+def _rounded(t: str, facts: str) -> set[str]:
+    """Numbers t rounds with a word ("nearly 37 minutes" for 36:53, "about 500 yards" for 498): within a unit, or
+    3%, of a number in the facts (a clock counts as its minutes)."""
+    vals = [float(n) for n in NUM.findall(facts)] + [int(m) + int(s) / 60 for m, s in CLOCK.findall(facts)]
+    return {m[1] for m in APPROX.finditer(t)
+            if any(abs(v - float(m[1])) <= max(1.0, 0.03 * float(m[1])) for v in vals)}
+
+
 def _texts_ok(texts: list[str], facts: str, articles: list[dict] = ()) -> None:
     for t in texts:
         if not isinstance(t, str) or not t.strip():
             raise CheckFailed("empty text")
-        bad = [n for n in NUM.findall(t) if n not in set(NUM.findall(facts))]
+        bad = [n for n in NUM.findall(t) if n not in set(NUM.findall(facts)) | _rounded(t, facts)]
         if bad:
             raise CheckFailed(f"numbers not in the facts: {bad}")
         if BAD_PERIOD.search(t):
@@ -291,8 +337,8 @@ def _stat_key(clause: str) -> str:
 
 
 def _quarter_no(text: str) -> int | None:
-    m = re.search(r"\b(first|second|third|fourth|1st|2nd|3rd|4th|q[1-4])\b", text, re.I)
-    return QUARTER_NO[m[1].lower()] if m else None
+    qs = _quarters(text)
+    return qs[0] if qs else None
 
 
 def _tie_at_break(sent: str, brks: list) -> bool:
@@ -314,10 +360,10 @@ def _timing_problems(sent: str, game: dict, sheet: dict, pats: dict, ppats: list
     sides = [s for _, s in _sides_in(sent, pats)]
     one = sides[0] if len(set(sides)) == 1 else None
     short = {s: sheet["teams"][s]["short"] or sheet["teams"][s]["name"] for s in ("home", "away")}
-    if brks and QUARTER.search(sent):
+    if brks and _has_quarter(sent):
         # Order is unknowable only in a quarter where both teams scored; "before Tennessee's touchdown in the fourth"
         # after three Giants quarters is plain from the breaks.
-        named = {QUARTER_NO[m[1].lower()] for m in QUARTER.finditer(sent) if m[1].lower() in QUARTER_NO}
+        named = set(_quarters(sent))
         both = any(q < len(al) and al[q] and hl[q] for q in named)
         if BEFORE.search(sent) and both:
             out.append((sent, "'before' inside a quarter: the score is known only at quarter breaks, so say what "
@@ -390,7 +436,7 @@ def _timing_problems(sent: str, game: dict, sheet: dict, pats: dict, ppats: list
                         out.append((m[0], f"{n} is {owner['name']}'s own line, not the team's"))
         pts = game[one].get("score")
         for m in ONLY_POINTS.finditer(sent):
-            ok = {pts} | (set(hl if one == "home" else al) if QUARTER.search(sent) else set())
+            ok = {pts} | (set(hl if one == "home" else al) if _has_quarter(sent) else set())
             if int(m[1]) not in ok:
                 out.append((m[0], f"{short[one]} scored {pts} in all ('only' is a claim: use FACTS' exact numbers)"))
         for m in AT_HALF.finditer(sent):
@@ -703,14 +749,23 @@ def write_recap(game: dict) -> dict:
             elif words < 60 or total > cap:
                 raise CheckFailed(f"recap is {words} words and {total} in all; keep the recap at about {recap_w} "
                                   f"words, each team at about {team_w}, {cap} in all at most")
-            bet = next((BET_TALK.search(t) for t in texts if BET_TALK.search(t)), None)
+            joined = " ".join(t or "" for t in texts)
+            copy = RECAP_VOICE and copied(joined, [{"text": ex} for _, ex in prompts.RECAP_EXAMPLES], EXAMPLE_COPY_WORDS)
+            joke = RECAP_VOICE and re.search(prompts.EXAMPLE_JOKES, joined, re.I)
+            if copy or joke:
+                raise CheckFailed(f"reused the examples: {(copy or joke[0])!r}; write your own lines and comparisons")
+            bet = bet_talk(texts)
             if bet:
-                raise CheckFailed(f"bet talk in the prose: {bet[0]!r}")
+                raise CheckFailed(f"bet talk in the prose: {bet!r}")
             _fact_check(texts, fj, stats)
 
         out = _step(prompts.WRITE_RECAP.format(facts=fj, voice=prompts.VOICE, guardrails=prompts.GUARDRAILS,
                                                home=game["home"]["name"], away=game["away"]["name"],
                                                recap_words=recap_w,
+                                               style=(prompts.RECAP_STYLE + "\n\nExamples, from other games (their "
+                                                      "facts are not yours):\n\n"
+                                                      + prompts.recap_examples(game["home"]["name"], game["away"]["name"])
+                                                      if RECAP_VOICE else ""),
                                                team_len=f"2-3 sentences, about {team_w} words" if team_w
                                                else "2-3 sentences",
                                                length_note=prompts.ONE_MINUTE_NOTE if team_w else ""),

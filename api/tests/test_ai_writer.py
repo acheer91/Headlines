@@ -477,3 +477,88 @@ def test_live_one_liner_may_say_tied_inside_a_quarter(model):
 
 def test_the_same_line_is_refused_in_a_recap():
     assert "'responded' inside a quarter" in _claims("final_car_cle", "The Browns responded in the second quarter.")
+
+
+# ---------- Adam's voice (2026-10-01): few-shot examples, rounding with a word, "push" in football ----------
+
+EXAMPLE_GAMES = {"eagles": "final_phi_chi", "patriots": "final_ne_jax", "seahawks": "final_sea_wsh"}
+
+
+@pytest.mark.parametrize("teams,text", [(t, x) for t, x in __import__("app.ai.prompts", fromlist=["x"]).RECAP_EXAMPLES])
+def test_the_example_recaps_pass_our_own_checks(teams, text):
+    # An example the checks would refuse teaches the model to write something refused.
+    import json as _json
+    from app.ai import facts
+    from tests.test_ai_facts import load
+    g = load(EXAMPLE_GAMES[teams[0]])
+    sheet = facts.recap_facts(g)
+    writer._texts_ok([text], _json.dumps(sheet["facts"], ensure_ascii=False))
+    writer.claims_ok([text], g, sheet)
+    assert writer.bet_talk([text]) is None
+    assert 100 <= len(text.split()) <= 130           # about 120 words, as Adam wrote them
+
+
+def test_a_recap_prompt_never_shows_its_own_games_example(model):
+    calls = model([{"recap": f"Bears won. {WORDS}", "home": "x", "away": "y"}])
+    writer.write_recap(GAME)                                        # Bears vs Eagles: that example is left out
+    assert "Example 1:" in calls[0] and "Example 2:" in calls[0] and "Example 3:" not in calls[0]
+    assert "Chicago jumped ahead early" not in calls[0] and "New England outgained Jacksonville" in calls[0]
+    assert "tension in FACTS" in calls[0]
+
+
+def test_a_recap_that_reuses_an_example_joke_or_line_is_rewritten(model):
+    calls = model([{"recap": f"The Bears played like a surprisingly competent substitute teacher. {WORDS}",
+                    "home": "x", "away": "y"},
+                   {"recap": f"Bears won. {WORDS}", "home": "x", "away": "y"}])
+    assert writer.write_recap(GAME)["status"] == "ready" and "reused the examples" in calls[1]
+
+
+@pytest.mark.parametrize("text,ok", [
+    ("The Bears controlled the ball for nearly 37 minutes.", True),            # 36:53
+    ("The Bears held the ball for about 37 minutes.", True),
+    ("The Bears held the ball for nearly 45 minutes.", False),
+    ("The Bears controlled the ball for 37 minutes.", False),                  # no word, no rounding
+    ("The Bears piled up nearly 375 yards.", True),
+    ("The Bears piled up nearly 500 yards.", False),
+])
+def test_rounding_with_a_word_is_allowed_within_a_unit(text, ok):
+    facts = "time of possession: Eagles 23:07, Bears 36:53. total yards: Eagles 248, Bears 375."
+    if ok:
+        writer._texts_ok([text], facts)
+    else:
+        with pytest.raises(writer.CheckFailed, match="numbers not in the facts"):
+            writer._texts_ok([text], facts)
+
+
+def test_push_is_football_unless_it_comes_with_betting_words():
+    assert writer.bet_talk(["Washington survived Seattle's fourth-quarter push."]) is None
+    assert writer.bet_talk(["The spread ended in a push."]) == "spread"
+    assert writer.bet_talk(["It was a push on the total."]) == "push"
+
+
+def test_the_difference_is_fine_for_a_stat_and_a_cause_otherwise():
+    assert _claims("final_sea_wsh", "The difference was the turnover column: three Seattle giveaways, zero for "
+                                    "Washington.") == ""
+    assert "The difference'" in _claims("final_sea_wsh", "The difference was Washington's grit.")
+
+
+@pytest.mark.parametrize("fixture,text", [
+    ("final_car_cle", "The Browns held a 14-second time-of-possession edge."),            # seconds, not the second quarter
+    ("final_ten_nyg", "Tennessee's second touchdown never came."),                         # an ordinal, not a quarter
+    ("final_ne_jax", "The Jags held the ball for just under 32 minutes, three minutes longer than the Patriots."),
+    ("final_car_cle", "Cleveland's ground game outgained Carolina's, 132 to 98."),
+])
+def test_oct1_voice_run_false_alarms_stay_fixed(fixture, text):
+    # Found by the first live run with the new voice: each of these was refused although it is true.
+    assert _claims(fixture, text) == ""
+
+
+def test_a_quarter_means_a_quarter():
+    assert writer._quarters("Seattle scored in the second, a 14-second drive, then a second touchdown in Q4.") == [1, 3]
+
+
+def test_recap_voice_can_be_switched_off(model, monkeypatch):
+    monkeypatch.setattr(writer, "RECAP_VOICE", False)
+    calls = model([{"recap": f"Bears won. {WORDS}", "home": "x", "away": "y"}])
+    assert writer.write_recap(GAME)["status"] == "ready"
+    assert "Example 1:" not in calls[0] and "tension in FACTS" not in calls[0]

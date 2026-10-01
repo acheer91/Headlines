@@ -76,6 +76,52 @@ FACTS:
 {facts}
 """
 
+# ---------------------------------------------------------------- recap voice: Adam's own samples (2026-10-01)
+# Few-shot examples for WRITE_RECAP, the shape and tone to hit. Adam's three, trimmed only where our own checks would
+# refuse the line (an invented "$79" and "three-hour", "late push"). A recap for one of these games is shown the other
+# two, so the model never sees its own game's example. (teams as the writer names them, text)
+RECAP_STYLE = """Voice for the recap (Adam's house style; the two team paragraphs use it too, shorter):
+- Open with one line that frames the game, then a paragraph on the winner and one on the loser, and end on a short
+  kicker. A recap is about 120 words.
+- Find the tension in FACTS (won the yards, lost the game; three giveaways against none) and build around it.
+- One joke or comparison per paragraph at most, and every one is tied to a real stat from FACTS: the joke makes the
+  number memorable, it never replaces it. Never invent a figure for a joke (no made-up hours, dollars or counts).
+- Aim the jokes at how a team played, never at a player's body, family or character.
+- Mix short sentences with a longer one that carries the stat; a rhetorical fragment now and then ("The Eagles?").
+- You may round with a word: "nearly 37 minutes" for 36:53.
+- A box score shows what happened, never why or how it felt, so the code refuses these words and you must not use
+  them: dominated, momentum, relinquished, erased, capitalized, controlled the game, took advantage, checked out,
+  woke up, bolstered, buoyed, fueled, sparked, led to, resulted in, due to, thanks to, because, as a result, all game,
+  start to finish, to the final whistle, the rest of the way, winless, streak, "two more scores", a late or early
+  field goal or score, "scored first". Make the point with the stat itself and put the voice in how you frame it.
+- The examples show the shape and tone only. Never reuse their lines, jokes or comparisons."""
+
+RECAP_EXAMPLES = [
+    (("eagles", "bears"), """This was a “check the score, check it again, wonder whether Philadelphia knew kickoff was today” game. Chicago jumped ahead early and never trailed, turning Soldier Field into the site of an Eagles troubleshooting session. Case Keenum delivered the football equivalent of a surprisingly competent substitute teacher: 24-of-34, 247 yards, two touchdowns. D’Andre Swift added 84 yards on 20 carries, and the Bears controlled the ball for nearly 37 minutes.
+
+The Eagles? Three turnovers, 10 penalties, and 248 total yards. Jalen Hurts finished with 153 passing yards and an interception. Chicago won the turnover battle 3–0 and the yardage battle 375–248. You don’t need an advanced metric for this one. Philadelphia brought a shovel and spent the afternoon digging."""),
+    (("patriots", "jaguars"), """New England outgained Jacksonville 317–315 and lost by 29. That’s not a silver lining. That’s the box score trying to establish an alibi.
+
+The Jaguars scored 14 in the second quarter, 14 more in the third, and another touchdown in the fourth. The Patriots answered with two field goals—the offensive equivalent of replying “sounds good” to a breakup text. Trevor Lawrence threw for 182 yards and three touchdowns, with one interception. Drake Maye threw for 199 yards and two picks, and Jacksonville won the takeaway battle 3–1.
+
+Some blowouts require a complicated explanation. This one doesn’t: Jacksonville turned its opportunities into touchdowns. New England turned its yardage advantage into a deeply unconvincing talking point."""),
+    (("seahawks", "commanders"), """Seattle outgained Washington 437–258, scored 14 in the fourth quarter, and still lost. Somewhere, a Seahawks fan is staring at those numbers like they’re a restaurant bill with an unexplained charge.
+
+Washington led 17–10 at halftime and 24–17 after three quarters, then scored nine in the fourth to survive Seattle’s fourth-quarter push. The difference was the turnover column: three Seattle giveaways, zero for Washington. The Commanders also held the ball for nearly three minutes longer, which helped offset an offense that produced 179 fewer yards.
+
+Both teams contributed plenty of laundry—eight Seattle penalties, nine for Washington—but only one kept handing over the football. Seattle won the yardage argument. Washington won the game. Unfortunately for the Seahawks, the standings recognize only one of those things."""),
+]
+# Jokes from the examples: a recap that reuses one is rewritten (the copy check only sees 6-word runs).
+EXAMPLE_JOKES = r"substitute teacher|alibi|breakup text|restaurant bill|brought a shovel|troubleshooting"
+
+
+def recap_examples(home: str, away: str) -> str:
+    """The examples for a game, leaving out the one about this game's own teams."""
+    names = f"{home} {away}".lower()
+    shown = [t for teams, t in RECAP_EXAMPLES if not any(n in names for n in teams)]
+    return "\n\n".join(f"Example {i + 1}:\n{t}" for i, t in enumerate(shown))
+
+
 # ---------------------------------------------------------------- recap (D): recap and team summaries
 # The fact sheet is built by code (facts.recap_facts): no model extract step, so nothing can be misread.
 
@@ -86,6 +132,8 @@ WRITE_RECAP = """You write the post-game recap for a personal scores app. Return
   "away": "{team_len}, on {away}'s day"
 }}
 {length_note}
+{style}
+
 FACTS is a list of plain, exact statements about the final. Each one is true exactly as written; restate them,
 don't reinterpret them. Scoring and who led are given per quarter: say which quarter something happened in, or
 who led when, only as FACTS states it. The score is known only at quarter breaks, so never say a team took or

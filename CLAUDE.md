@@ -49,6 +49,11 @@ Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `ph
   to, to control the game, ...). `python -m app.ai.replay` replays them on the saved eval outputs (3dacc26, bffeb78)
   against `tests/fixtures/ai/known_errors.json` (39 hand-found errors, each tagged by cause): 24/24 and 13/15, 0 of the 6
   passed-clean texts flagged. Not caught: a "touchdown" for 7 points (borderline). The model fact-checker still runs after.
+- **Recap voice** (Adam's three samples, Oct 1; `prompts.RECAP_STYLE`, `RECAP_EXAMPLES`): the recap prompt carries a
+  style guide and the two examples that are not about this game; a recap that copies 6 words or a joke from them is
+  rewritten. Rounding with a word ("nearly 37 minutes" for 36:53), "push" outside betting talk and "the difference was
+  the turnover column" are allowed. First live run (gpt-oss-120b, 5 games): 2 ready, 3 failed on banned cause words,
+  and the ready ones were not in the samples' voice. `writer.RECAP_VOICE = False` turns it off.
 - **Review sheet:** `python -m app.ai.review_sheet` writes `docs/phase4-review-sheet.csv` from an eval output (one row
   per claim, with its facts or article; reviewers fill verdict and cause); `--tally <filled.csv>` counts errors by cause.
   The eval (`checks/phase4_eval.py`) runs a preflight (branch/commit pushed, Docker answers, the stale
