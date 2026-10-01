@@ -44,6 +44,7 @@ Rules:
 - storylines: up to 6, the most important things the articles report (injuries, form, matchups, the gist of quotes).
 - edges: up to 3 per team, each tied to the article that says it. Fewer is fine; none is fine.
 - picks: only when an article names a writer or analyst who explicitly picks a winner. Otherwise [].
+- Skip point spreads, odds and over/unders: GAME already has the current line, and an article's is often older.
 - Keep every number exactly as written in the article.
 
 GAME:
@@ -63,6 +64,7 @@ FACTS has "game" (our own data, each line plain and exact), "storylines" and "ed
 - preview: from FACTS only. Lead with the storylines, not the stat sheet: at most 4 numbers and no list of
   season stats (the app shows those). Don't mention writers' picks (the app shows those separately).
   Don't forecast the game or its score ("expect", "should", "likely"): say what's at stake, not what will happen.
+  The point spread and total only as "game" states them.
 - edges: rewrite each edge in FACTS as one sentence, same article id. Same number of edges per team as FACTS.
   Don't add edges.
 
@@ -87,7 +89,17 @@ WRITE_RECAP = """You write the post-game recap for a personal scores app. Return
 FACTS is a list of plain, exact statements about the final. Each one is true exactly as written; restate them,
 don't reinterpret them. Scoring and who led are given per quarter: say which quarter something happened in, or
 who led when, only as FACTS states it. The score is known only at quarter breaks, so never say a team took or
-held the lead inside a quarter.
+held the lead inside a quarter, or what happened first or "before" something else within a quarter.
+
+Also (each of these was a real error):
+- A player's numbers come only from that player's own leader line. Team totals (total yards, passing, rushing)
+  belong to the team: never "128 rushing yards from Swift" when 128 is the team's rushing total.
+- Home team, who had the ball longer, who gained more yards, and when the lead changed are each stated in FACTS:
+  repeat those lines, don't work them out.
+- No causes: say what happened, never why ("kept them off balance", "limited any momentum", "buoyed by").
+- Don't name the kind or count of scoring plays ("a late field goal", "two more scores", "the game's only
+  touchdown"); a player's touchdowns as FACTS lists them are fine.
+- Never "dominated" or "never relinquished". "Only", "just" and "over" are claims too: use FACTS' exact numbers.
 
 {voice}
 
@@ -100,12 +112,18 @@ FACTS:
 # ---------------------------------------------------------------- fact check (every text; a different model)
 
 FACT_CHECK = """You are a strict fact-checker. Compare TEXT with FACTS. Return JSON only:
-{{"problems": [{{"quote": "the exact words from TEXT", "why": "what FACTS says instead, or that FACTS doesn't say it"}}]}}
+{{"problems": [{{"quote": "the exact words from TEXT", "verdict": "wrong" or "unsupported",
+               "why": "under 25 words: the FACTS line it contradicts, or that FACTS doesn't say it"}}]}}
+
+Decide each claim before you write anything. List only claims that are wrong or unsupported; never list a claim
+and then explain that it is fine. No reasoning in the reply.
 
 A problem is any factual claim in TEXT that FACTS does not directly support:
 - a wrong number, team, player, quarter, or who led / who won / who scored when;
 - a claim FACTS never makes (a streak, a comparison, a cause, a record, "never trailed", "dominated");
-- a mix-up of sides (turnovers committed vs forced, home vs away, offense vs defense).
+- a mix-up of sides (turnovers committed vs forced, home vs away, offense vs defense);
+- a team total given to a player (FACTS lists each player's own line), or the kind or count of scoring plays
+  ("a late field goal", "two more scores") when FACTS doesn't show it;
 - any claim about who led, took the lead or pulled ahead DURING a quarter: FACTS only knows the score at quarter
   breaks, so "surged ahead in the fourth" is unsupported unless a quarter-break score shows that team ahead.
 Not a problem: wording, tone, or color that makes no factual claim ("a long afternoon", "never in doubt"

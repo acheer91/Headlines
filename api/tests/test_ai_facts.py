@@ -66,3 +66,20 @@ def test_tied_quarter_break():
     lines = facts.recap_facts(g)["facts"]
     assert "End of Q1 score: tied 7-7." in lines
     assert "Times the lead changed hands between quarter breaks: 0." in lines
+
+
+def test_recap_states_home_edges_and_the_lead_change():
+    # Each of these was a recap error on 2026-09-30.
+    lines = facts.recap_facts(load("final_lac_buf"))["facts"]
+    assert "Home team: Buffalo Bills. Visiting team: Los Angeles Chargers." in lines
+    assert "Lead change: Bills took the lead between the end of Q3 and end of Q4 scores." in lines
+    lines = facts.recap_facts(load("final_lv_no"))["facts"]
+    assert "Time of possession edge: Saints, by 4:56." in lines
+    assert "Total yards edge: Saints, by 41." in lines
+    assert sum(l.startswith("Lead change:") for l in lines) == 3
+
+
+def test_recap_players_and_stats_for_the_code_check():
+    f = facts.recap_facts(load("final_phi_chi"))
+    assert {"name": "D'Andre Swift", "last_name": "Swift", "side": "home", "value": "20 CAR, 84 YDS"} in f["players"]
+    assert f["stats"]["possessionTime"] == {"home": "36:53", "away": "23:07"}

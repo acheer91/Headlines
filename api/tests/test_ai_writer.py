@@ -248,3 +248,69 @@ def test_extract_is_stored_by_url(model):
                                                         "away": []}}])
     res = writer.write_preview(PRE, [ARTICLE])
     assert res["extract"]["edges"]["home"][0] == {"fact": "Bears forced 9 turnovers", "url": ARTICLE["url"]}
+
+
+# ---------- box-score claims checked in code (2026-09-30 eval: real sentences from it) ----------
+
+def _claims(fixture, text):
+    from app.ai import facts
+    from tests.test_ai_facts import load
+    g = load(fixture)
+    try:
+        writer.claims_ok([text], g, facts.recap_facts(g))
+        return ""
+    except writer.CheckFailed as exc:
+        return str(exc)
+
+
+@pytest.mark.parametrize("fixture,text,why", [
+    ("final_phi_chi", "Chicago amassed 375 total yards, with 247 passing yards from Case Keenum and 128 rushing yards "
+                      "from D'Andre Swift.", "128 isn't on the player's line"),
+    ("final_phi_chi", "Philadelphia's offense produced 141 passing yards from Jalen Hurts.", "141 isn't"),
+    ("final_atl_gb", "Time of possession favored Green Bay 22:55 to 37:05 for Atlanta.", "Falcons had more"),
+    ("final_min_tb", "The Buccaneers fell to 0-3, scoring 16 points on the road.", "were the home team"),
+    ("final_ari_sf", "The 49ers held the ball for 21:16; the Cardinals dominated possession at 38:44.", "'dominated'"),
+    ("final_ten_nyg", "The Titans scored the game's only touchdown.", "the game's only"),
+    ("final_phi_chi", "Three giveaways kept them off balance.", "off balance"),
+    ("final_bal_dal", "The Ravens out‑gained the Cowboys in total yardage, 378 to 415.", "Cowboys had more yards"),
+    ("final_min_tb", "The Vikings held the ball slightly longer, 30:57 to 29:03.", "Buccaneers had the ball longer"),
+])
+def test_box_score_claims_rejected(fixture, text, why):
+    assert why in _claims(fixture, text)
+
+
+@pytest.mark.parametrize("fixture,text", [
+    ("final_cin_pit", "Burrow was 28 of 37 for 282 yards and three touchdowns. Chase Brown ran 13 carries for 61 yards "
+                      "and Ja’Marr Chase hauled in 9 catches for 98 yards and a touchdown. The Bengals fell to 2‑1."),
+    ("final_lac_buf", "Time of possession tilted slightly to the Chargers at 31:22 versus 28:38, while rushing "
+                      "favored Buffalo 176 to 131."),
+    ("final_hou_ind", "Turnovers favored Houston, which forced 3 giveaways and committed none."),
+    ("final_lar_den", "Rams amassed 482 total yards to Denver’s 257, outgaining the Broncos on the ground 116‑78."),
+    ("final_cin_pit", "The Steelers outgained their opponent 411 to 352 and improved to 2‑1."),
+    ("final_lac_buf", "James Cook carried 24 times for 154 yards and a touchdown."),          # ESPN: James Cook III
+    ("final_atl_gb", "Michael Penix Jr. went 18 of 25 for 256 yards, a touchdown and an interception."),
+    ("final_min_tb", "The Vikings won on the road, 23-16."),
+])
+def test_true_box_score_claims_pass(fixture, text):
+    assert _claims(fixture, text) == ""
+
+
+def test_preview_line_must_match_ours():
+    g = {"line": {"home_spread": -14.5}}
+    with pytest.raises(writer.CheckFailed, match="14.5"):
+        writer.line_ok("Ohio State heads to Kinnick as a 14‑point favorite.", g)
+    writer.line_ok("Ohio State is a 14.5-point favorite.", g)
+    writer.line_ok("Both defenses allow under 13 points a game.", g)
+
+
+def test_checker_problem_called_fine_is_ignored(model, checker):
+    checker.append([{"quote": "Bears won", "verdict": "fine", "why": "I see no problems."}])
+    model([{"recap": f"Bears won. {WORDS}", "home": "x", "away": "y"}])
+    assert writer.write_recap(GAME)["status"] == "ready"
+
+
+def test_checker_reason_is_cut_short(model, checker):
+    checker.extend([[{"quote": "a", "verdict": "wrong", "why": "x" * 900}]] * 2)
+    model([{"recap": f"A. {WORDS}", "home": "x", "away": "y"}] * 2)
+    res = writer.write_recap(GAME)
+    assert res["status"] == "failed" and len(res["reason"]) < 300

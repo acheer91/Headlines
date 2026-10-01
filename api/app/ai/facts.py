@@ -37,6 +37,11 @@ def _period(i: int) -> str:
     return f"Q{i + 1}" if i < 4 else ("OT" if i == 4 else f"OT{i - 3}")
 
 
+def _break(i: int) -> str:
+    """The quarter break after period i: 'end of Q1', 'halftime', 'end of Q3'..."""
+    return "halftime" if i == 1 else f"end of {_period(i)}"
+
+
 def _int(v) -> int | None:
     try:
         return int(str(v).strip())
@@ -95,6 +100,7 @@ def _scoring(game: dict, short: dict) -> list[str]:
     ht = hs = 0
     leader_before = None
     changes = 0
+    moves = []
     for i, (a, h) in enumerate(zip(al, hl)):
         ht, hs = ht + a, hs + h
         where = "Halftime" if i == 1 else f"End of {_period(i)}"
@@ -107,9 +113,12 @@ def _scoring(game: dict, short: dict) -> list[str]:
                        f"({short[lead]} led by {abs(ht - hs)}).")
         if lead and leader_before and lead != leader_before:
             changes += 1
+            # Spelled out: the writer called the wrong break "the only lead change" (2026-09-30).
+            moves.append(f"Lead change: {short[lead]} took the lead between the {_break(i - 1)} and "
+                         f"{_break(i)} scores.")
         leader_before = lead or leader_before
     out.append(f"Times the lead changed hands between quarter breaks: {changes}.")
-    return out
+    return out + moves
 
 
 def recap_facts(game: dict) -> dict:
@@ -128,10 +137,55 @@ def recap_facts(game: dict) -> dict:
         rec = (hdr.get(side) or {}).get("record")
         if rec:
             facts.append(f"{n[side]['name']} record, as ESPN lists it after this game: {rec}.")
+    if not game.get("neutral_site"):
+        # Stated outright: a recap had the home team "scoring 16 points on the road" (2026-09-30).
+        facts.append(f"Home team: {n['home']['name']}. Visiting team: {n['away']['name']}.")
     facts += _scoring(game, short)
     facts += _stat_lines(game, short)
+    facts += _edge_lines(game, short)
     facts += _leader_lines(game, short)
-    return {"teams": n, "facts": facts}
+    return {"teams": n, "facts": facts, "players": players(game), "stats": stats(game)}
+
+
+def stats(game: dict) -> dict[str, dict]:
+    """Team stat rows by ESPN key: {"possessionTime": {"home": "36:53", "away": "23:07"}, ...}."""
+    return {r["key"]: {"home": r.get("home"), "away": r.get("away")}
+            for r in (game.get("team_stats") or {}).get("rows") or [] if r.get("key")}
+
+
+def players(game: dict) -> list[dict]:
+    """Each stat leader with the numbers on their line, for the writer's code check."""
+    out = []
+    for r in (game.get("leaders") or {}).get("rows") or []:
+        for side in ("away", "home"):
+            p = r.get(side)
+            if p and p.get("name"):
+                out.append({"name": p["name"], "last_name": p.get("last_name"), "side": side,
+                            "value": str(p.get("value") or "")})
+    return out
+
+
+def clock_seconds(v) -> int | None:
+    """'36:53' -> 2213; anything else -> None."""
+    m, _, s = str(v or "").partition(":")
+    return int(m) * 60 + int(s) if m.isdigit() and s.isdigit() else None
+
+
+def _edge_lines(game: dict, short: dict) -> list[str]:
+    """Who had more of the ball and the yards, worked out in code: a recap said possession "favored Green Bay
+    22:55 to 37:05" and another that the Saints "held the ball for over five minutes longer" (4:56; 2026-09-30)."""
+    st = stats(game)
+    out = []
+    top = st.get("possessionTime") or {}
+    h, a = clock_seconds(top.get("home")), clock_seconds(top.get("away"))
+    if h is not None and a is not None and h != a:
+        d = abs(h - a)
+        out.append(f"Time of possession edge: {short['home' if h > a else 'away']}, by {d // 60}:{d % 60:02d}.")
+    yd = st.get("totalYards") or {}
+    h, a = _int(yd.get("home")), _int(yd.get("away"))
+    if h is not None and a is not None and h != a:
+        out.append(f"Total yards edge: {short['home' if h > a else 'away']}, by {abs(h - a)}.")
+    return out
 
 
 def live_facts(game: dict) -> dict:
@@ -158,7 +212,7 @@ def live_facts(game: dict) -> dict:
         facts.append(f"{who} has the ball{', ' + sit['down_distance'] if sit.get('down_distance') else ''}.")
     facts += [f"So far, {line[0].lower()}{line[1:]}" for line in _stat_lines(game, short)]
     facts += [line.replace("(this game)", "(so far)") for line in _leader_lines(game, short)]
-    return {"teams": n, "facts": facts}
+    return {"teams": n, "facts": facts, "players": players(game), "stats": stats(game)}
 
 
 def _kickoff(game: dict) -> str | None:

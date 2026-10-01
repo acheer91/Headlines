@@ -25,11 +25,13 @@ GROQ_SEARCH_MODEL = "openai/gpt-oss-20b"     # the free models with browser sear
 GROQ_TPM = int(os.environ.get("GROQ_TPM", "8000"))
 GEMINI_RPM = int(os.environ.get("GEMINI_RPM", "5"))    # gemini-3.6-flash free tier; 20 requests a day
 
-# Best first. The writer leads with gpt-oss-120b; Qwen checks. Both lists fall back to the other models.
+# Best first. The writer leads with gpt-oss-120b; gpt-oss-20b checks. Both lists fall back to the other models.
+# Checker order (check_eval, 2026-09-30): 20b and Qwen each caught 11 of 15 errors; 20b raised no false alarms in 8
+# correct sentences, including one Qwen rejected that night, and Qwen wrote its reasoning into its replies.
 WRITERS = [m.strip() for m in os.environ.get(
     "AI_WRITERS", "openai/gpt-oss-120b,qwen/qwen3.8-27b,openai/gpt-oss-20b").split(",") if m.strip()]
 CHECKERS = [m.strip() for m in os.environ.get(
-    "AI_CHECKERS", "qwen/qwen3.8-27b,openai/gpt-oss-20b,openai/gpt-oss-120b").split(",") if m.strip()]
+    "AI_CHECKERS", "openai/gpt-oss-20b,qwen/qwen3.8-27b,openai/gpt-oss-120b").split(",") if m.strip()]
 
 
 class AIError(Exception):

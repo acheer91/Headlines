@@ -2,6 +2,7 @@
 
 python -m app.ai.check_eval   (laptop only; uses the check model's quota, not the writer's)
 Each case is a sentence the writer really produced, the game it was about, and whether it's wrong.
+AI_CHECKERS=<model> picks the checker to test.
 """
 from __future__ import annotations
 
@@ -9,7 +10,7 @@ import json
 import time
 from pathlib import Path
 
-from . import client, facts, prompts, samples
+from . import client, facts, prompts, samples, writer
 
 FIX = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "ai"
 
@@ -38,6 +39,28 @@ CASES = [
     ("final_sea_wsh", "Washington never trailed at a quarter break and held on 33-31.", False, ""),
     ("final_ne_jax", "After a scoreless first quarter, the Jaguars pulled away with 14 points in each of the next "
                      "two quarters.", False, ""),
+    # 2026-09-30 eval: errors the checker passed and code can't catch.
+    ("final_lac_buf", "Los Angeles added three points in the third to lead 13-10, the only lead change between "
+                      "quarter breaks.", True, "the lead change was Buffalo's, in Q4"),
+    ("final_lac_buf", "Chargers opened with a 10-0 lead in the first quarter, the only time they scored first.", True,
+     "unsupported"),
+    ("final_ne_jax", "New England's offense sputtered: 199 passing yards, 83 on the ground, 3 turnovers and only 3 "
+                     "points.", True, "234 passing; 6 points"),
+    ("final_atl_gb", "Atlanta finished with an 11-point fourth quarter while the Packers managed a late field goal to "
+                     "end at 35-14.", True, "Packers scored 7 in Q4"),
+    ("final_lv_no", "The Saints racked up 381 yards, outgaining the Raiders, and held the ball for over five minutes "
+                    "longer.", True, "4:56"),
+    ("final_ari_sf", "Turnovers were split, each side accounting for one.", True, "ARI 0 giveaways, SF 1"),
+    ("final_ten_nyg", "The Giants built a steady lead, scoring three points in the first, six at halftime and three "
+                      "more in the third to finish 12-7.", True, "9 at halftime"),
+    # ...and correct sentences from the same run (the first was a false alarm).
+    ("final_ari_sf", "San Francisco recorded 437 yards and forced no turnovers while committing one.", False, ""),
+    ("final_hou_ind", "Houston answered with 10 in the fourth while Indianapolis managed 6, preserving a 2-point "
+                      "margin.", False, ""),
+    ("final_lar_den", "Denver answered with 16 unanswered points in the third and added 14 in the fourth to finish "
+                      "30-26.", False, ""),
+    ("final_cin_pit", "Total yards favored the Steelers 411 to 352, and the turnover battle was two for Cincinnati, "
+                      "one for Pittsburgh, with Pittsburgh forcing two.", False, ""),
 ]
 
 
@@ -49,8 +72,9 @@ def main() -> None:
         sheet = json.dumps(facts.recap_facts(game)["facts"], ensure_ascii=False)
         t = time.monotonic()
         try:
-            out = json.loads(client.check(prompts.FACT_CHECK.format(facts=sheet, text=text)))
-            probs = out.get("problems") or []
+            probs = writer.checker_problems(client.check(prompts.FACT_CHECK.format(facts=sheet, text=text)))
+            if probs is None:
+                raise ValueError("unreadable reply")
         except (client.AIError, ValueError) as exc:
             print(f"ERROR {type(exc).__name__}: {exc}")
             continue
@@ -67,7 +91,8 @@ def main() -> None:
         print(f"{mark}{'wrong' if wrong else 'right'} -> {'flagged' if flagged else 'clean'} "
               f"({time.monotonic() - t:.1f}s) {text[:70]}")
         for p in probs:
-            print(f"       - {p.get('quote', '')[:60]!r}: {p.get('why', '')[:90]}")
+            q, why = (p.get("quote", ""), p.get("why", "")) if isinstance(p, dict) else ("", p)
+            print(f"       - {str(q)[:60]!r}: {str(why)[:90]}")
     print(f"\ncaught {hits}/{hits + misses} errors; false alarms {false_alarms}/{false_alarms + clean} correct texts; "
           f"model {client.check_model()}")
 

@@ -31,8 +31,8 @@ bowl games are confirmed with the handoff's December checklist by Dec 12.
 Scope: previews (preview, edges, writers' picks), recaps and team summaries, the live one-liner, Home headlines.
 Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `phase4-results.md`; Stage 2 design:
 `docs/phase4-stage2-temporal-spec.md`. Deploy only after Adam approves samples and Phase 5b is signed off, Tue/Wed.
-- **Models (Groq, free):** writer `openai/gpt-oss-120b`, fact-checker `qwen/qwen3.8-27b`, search `openai/gpt-oss-20b`
-  browser search; each fails over to the others (`AI_WRITERS`, `AI_CHECKERS`); a model never checks its own text.
+- **Models (Groq, free):** writer `openai/gpt-oss-120b`, fact-checker `openai/gpt-oss-20b` (Sep 30),
+  search `openai/gpt-oss-20b` browser search; recap box-score claims are checked in code first (`writer.claims_ok`); each fails over to the others (`AI_WRITERS`, `AI_CHECKERS`); a model never checks its own text.
   Gemini side pool (headlines, weekday pre-writing, last fallback; Adam) is planned, not built. **Never set
   `AI_WRITER=gemini` as a fallback:** it moves all writing to Gemini's 20 requests/day and runs out at once. Free tier per model: 8K tokens/min, 200K tokens/day on
   a rolling 24 h window. Bake-off (Sep 29): Qwen as a writer invents claims (streaks, leads) — writer of last resort.

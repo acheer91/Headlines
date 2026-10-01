@@ -6,7 +6,10 @@ game facts too, with the model extracting only from the articles. Checks, enforc
     (the PRD's "facts only from inputs");
   * no betting advice words;
   * no run of COPY_WORDS words copied from an article;
-  * edges and picks point at an article we actually passed in, and a pick's writer is named in that article.
+  * edges and picks point at an article we actually passed in, and a pick's writer is named in that article;
+  * recaps and one-liners: a player's numbers come from that player's line, "X favored / outgained" and home or
+    road match the box score, and claims a box score can't support are refused (claims_ok);
+  * a preview's point spread is our own line (line_ok).
 A failed check reruns that step once; a second failure returns status "failed" and the app shows fallback text.
 
 Stage 1 works on plain dicts (the /api/games/{id} payload); Stage 2 adds the ai_texts claim and storage.
@@ -23,6 +26,7 @@ from .sources import mentions, team_terms
 
 COPY_WORDS = 8
 TRANSIENT_RETRY = 300.0     # seconds before the worker retries a text that failed on a 5xx or a timeout
+WHY_CHARS = 200             # a fact-check reason longer than this is the checker's reasoning, not a reason
 NUM = re.compile(r"\d+(?:\.\d+)?")
 ADVICE = re.compile(r"\b(you should|should bet|take the (over|under|points)|hammer|lock of|best bet|smash|fade|"
                     r"we like|bet on|expect)\b", re.I)     # "Expect a low total" is a prediction
@@ -30,6 +34,32 @@ ADVICE = re.compile(r"\b(you should|should bet|take the (over|under|points)|hamm
 BAD_PERIOD = re.compile(r"\b(fifth|sixth|seventh|eighth|ninth|tenth)[\s\-‐-—]quarter", re.I)  # any hyphen: the model writes U+2011
 # Recaps leave bet results to code (bets_line), so betting words in the prose mean the model restated them.
 BET_TALK = re.compile(r"\b(spread|moneyline|covered|covering|cover|over/under|the (over|under)|push|bets?)\b", re.I)
+# Claims a box score can't support, so code rejects them instead of hoping the checker does (2026-09-30 eval:
+# "dominated possession", "never relinquishing the lead", "the game's only touchdown", "kept them off balance").
+# Text is normalized to straight apostrophes first (_norm).
+UNSUPPORTED = re.compile(
+    r"\b(dominat\w*|relinquish\w*|wire[\s\-‐-—]to[\s\-‐-—]wire|the game's (only|lone)|"
+    r"(two|three|four|five) (more )?scores|because|buoyed|fueled|powered by|off balance|momentum|"
+    r"erased|proved (costly|decisive)|the difference)\b", re.I)
+HYPHEN = "[\\s\\-‐-—]"      # the model writes U+2011 non-breaking hyphens
+TEAM_WORDS = r"[A-Z][\w.'’]*(?:\s[A-Z0-9][\w.'’]*)*"
+CLAUSE = re.compile(r"[,;–—]|:(?!\d)|\b(?:and|while|as|but|with|whereas|despite|after|before)\b")
+FAVORED = re.compile(rf"\b(?:favou?red|tilted(?: \w+)? (?:toward|to)|in favor of)\s+(?:the\s+)?({TEAM_WORDS})")
+OUTGAINED = re.compile(rf"\bout{HYPHEN}?gain(?:ed|ing|s)?\s+(?:the\s+)?({TEAM_WORDS})?")
+LONGER = re.compile(r"\b(?:held|kept|had) (?:the ball|possession)\b[\w\s:]{0,30}?\blonger\b", re.I)
+ROAD = re.compile(r"\b(on the road|road (win|loss|victory|team)|away from home)\b", re.I)
+AT_HOME = re.compile(r"\b(at home|home (win|loss|victory|crowd|fans))\b", re.I)
+# Which team stat a "favored X" clause is about; the first match wins, so rushing/passing come before yards.
+STAT_WORDS = [(re.compile(r"possession|the ball|clock", re.I), "possessionTime"),
+              (re.compile(r"rush|on the ground", re.I), "rushingYards"),
+              (re.compile(r"pass|through the air", re.I), "netPassingYards"),
+              (re.compile(r"turnover|giveaway|takeaway", re.I), "takeaways"),
+              (re.compile(r"yard", re.I), "totalYards")]
+NAME_SUFFIX = re.compile(r"\s+(jr\.?|sr\.?|ii|iii|iv)$", re.I)
+# A preview quoted an article's older line ("a 14-point favorite") when FACTS had 14.5 (2026-09-30).
+FAVORITE = re.compile(rf"(\d+(?:\.\d+)?){HYPHEN}?point (?:favou?rite|underdog)|favou?red by (\d+(?:\.\d+)?)", re.I)
+
+
 class CheckFailed(Exception):
     pass
 
@@ -86,20 +116,36 @@ def _step(prompt: str, check: Callable[[dict], None], stats: dict) -> dict:
 
 def _fact_check(texts: list[str], facts_json: str, stats: dict) -> None:
     """A second model (client.check_model) lists every claim the facts don't support. Any -> CheckFailed, so the
-    writer rewrites once with the problems quoted. On 12 known cases from 2026-09-29 it caught 8/8 errors with no
-    false alarms (python -m app.ai.check_eval). If the checker can't be reached the text fails: never unchecked."""
+    writer rewrites once with the problems quoted. On 23 known cases (python -m app.ai.check_eval, 2026-09-30) it
+    caught 11 of 15 errors with no false alarms; claims_ok catches the commonest kinds first. If the checker can't
+    be reached the text fails: never unchecked."""
     stats["checks"] = stats.get("checks", 0) + 1
     try:
-        out = json.loads(client.check(prompts.FACT_CHECK.format(facts=facts_json, text="\n\n".join(texts))))
-        probs = (out.get("problems") or []) if isinstance(out, dict) else None
-    except (ValueError, client.BadReply):
+        probs = checker_problems(client.check(prompts.FACT_CHECK.format(facts=facts_json, text="\n\n".join(texts))))
+    except client.BadReply:
         probs = None
-    if probs is None or not isinstance(probs, list):
+    if probs is None:
         raise client.AIError("fact check: unreadable reply")
     if probs:
-        said = "; ".join(f"{p.get('quote', '')!r} ({p.get('why', '')})" if isinstance(p, dict) else str(p)
-                         for p in probs)
+        said = "; ".join(f"{p.get('quote', '')!r} ({str(p.get('why', ''))[:WHY_CHARS]})" if isinstance(p, dict)
+                         else str(p)[:WHY_CHARS] for p in probs)
         raise CheckFailed(f"fact check: {said}")
+
+
+def checker_problems(reply: str) -> list | None:
+    """The problems in a fact-check reply, or None if it can't be read. Only the verdict counts: Qwen wrote its
+    reasoning into "why" and once rejected a draft whose reasoning ended "I see no problems" (2026-09-30), so a
+    problem it calls fine is dropped (and _fact_check cuts the reason short)."""
+    try:
+        out = json.loads(reply)
+    except ValueError:
+        return None
+    probs = out.get("problems") if isinstance(out, dict) else None
+    if probs is None:
+        return [] if isinstance(out, dict) and "problems" in out else None
+    if not isinstance(probs, list):
+        return None
+    return [p for p in probs if not (isinstance(p, dict) and str(p.get("verdict", "")).lower() in ("fine", "ok"))]
 
 
 def _texts_ok(texts: list[str], facts: str, articles: list[dict] = ()) -> None:
@@ -116,6 +162,128 @@ def _texts_ok(texts: list[str], facts: str, articles: list[dict] = ()) -> None:
         c = copied(t, list(articles))
         if c:
             raise CheckFailed(f"copied from an article: {c!r}")
+
+
+# ---------------------------------------------------------------- box-score claims, checked in code
+
+SENTENCE = re.compile(r"(?<!\bJr\.)(?<!\bSr\.)(?<!\b[A-Z]\.)(?<=[.!?])\s+")
+
+
+def _norm(s: str) -> str:
+    return s.replace("’", "'")
+
+
+def _team_patterns(teams: dict) -> dict[str, re.Pattern]:
+    """One pattern per side matching any name the writer may use for that team."""
+    out = {}
+    for side, t in teams.items():
+        names = {t[k] for k in ("name", "short", "nickname", "place") if t.get(k)}
+        alts = "|".join(re.escape(x) for x in sorted(names, key=len, reverse=True))
+        abbr = rf"|\b{re.escape(t['abbr'])}\b" if t.get("abbr") else ""
+        out[side] = re.compile(rf"\b(?:{alts})\b{abbr}" if alts else abbr.lstrip("|") or r"(?!)")
+    return out
+
+
+def _sides_in(text: str, pats: dict) -> list[tuple[int, str]]:
+    """(position, side) of every team mention, in order."""
+    return sorted((m.start(), side) for side, p in pats.items() for m in p.finditer(text))
+
+
+def _side_of(phrase: str, pats: dict) -> str | None:
+    hits = {s for _, s in _sides_in(phrase, pats)}
+    return hits.pop() if len(hits) == 1 else None
+
+
+def _player_patterns(players: list[dict], pats: dict) -> list[tuple[re.Pattern, dict]]:
+    """Full name, name without Jr./III, and the last name alone when no other leader or team shares it."""
+    lasts = [NAME_SUFFIX.sub("", _norm(p.get("last_name") or p["name"].split()[-1])) for p in players]
+    out = []
+    for p, last in zip(players, lasts):
+        full = _norm(p["name"])
+        names = {full, NAME_SUFFIX.sub("", full)}
+        if lasts.count(last) == 1 and not any(pt.search(last) for pt in pats.values()):
+            names.add(last)
+        alts = "|".join(re.escape(x) for x in sorted(names, key=len, reverse=True))
+        out.append((re.compile(rf"\b(?:{alts})\b"), p))
+    return out
+
+
+def _stat_winner(key: str, st: dict) -> str | None:
+    """The side with more of a team stat (takeaways: the side the other one gave the ball to), None if even."""
+    if key == "takeaways":
+        row = st.get("turnovers") or {}
+        h, a = facts._int(row.get("away")), facts._int(row.get("home"))
+    else:
+        row = st.get(key) or {}
+        conv = facts.clock_seconds if key == "possessionTime" else facts._int
+        h, a = conv(row.get("home")), conv(row.get("away"))
+    if h is None or a is None or h == a:
+        return None
+    return "home" if h > a else "away"
+
+
+def _stat_key(clause: str) -> str:
+    return next((k for p, k in STAT_WORDS if p.search(clause)), "totalYards")
+
+
+def claims_ok(texts: list[str], game: dict, sheet: dict) -> None:
+    """Box-score claims checked in code, before the model checker (2026-09-30 eval, 24 errors in 14 texts):
+    a player's numbers come from that player's line (three recaps gave team totals to the leading rusher and
+    passer); "X favored / outgained / held the ball longer" names the team that really had more; home and road
+    are right; and phrases a box score can't support are refused."""
+    pats = _team_patterns(sheet["teams"])
+    ppats = _player_patterns(sheet.get("players") or [], pats)
+    st = sheet.get("stats") or {}
+    hdr = game.get("header") or {}
+    shared = set(NUM.findall(" ".join(str(x) for x in (
+        game["home"].get("score"), game["away"].get("score"),
+        (hdr.get("home") or {}).get("record"), (hdr.get("away") or {}).get("record")) if x is not None)))
+    short = {s: sheet["teams"][s]["short"] or sheet["teams"][s]["name"] for s in ("home", "away")}
+    probs = []
+    for text in texts:
+        text = _norm(text)
+        probs += [f"{m[0]!r}: a box score can't show that; leave it out" for m in UNSUPPORTED.finditer(text)]
+        for sent in SENTENCE.split(text):
+            for clause in CLAUSE.split(sent):
+                who = [p for pt, p in ppats if pt.search(clause)]
+                if who:
+                    allowed = shared.union(*(NUM.findall(p["value"]) for p in who))
+                    extra = [n for n in NUM.findall(clause) if n not in allowed]
+                    if extra:
+                        lines = "; ".join(f"{p['name']}: {p['value']}" for p in who)
+                        probs.append(f"{clause.strip()!r}: {', '.join(extra)} isn't on the player's line "
+                                     f"({lines}). Team totals belong to the team, not a player")
+                m = FAVORED.search(clause)
+                if m and _side_of(m[1], pats):
+                    key, side = _stat_key(clause[:m.start()] + clause[m.end():]), _side_of(m[1], pats)
+                    win = _stat_winner(key, st)
+                    if win != side:
+                        probs.append(f"{clause.strip()!r}: FACTS show "
+                                     f"{'no edge' if win is None else short[win] + ' had more'} there")
+                m = OUTGAINED.search(clause)
+                if m:
+                    obj = _side_of(m[1], pats) if m[1] else None
+                    before = _sides_in(clause[:m.start()], pats)
+                    side = ({"home": "away", "away": "home"}[obj] if obj else before[-1][1] if before else None)
+                    win = _stat_winner(_stat_key(clause), st)
+                    if side and win != side:
+                        probs.append(f"{clause.strip()!r}: FACTS show "
+                                     f"{'no edge' if win is None else short[win] + ' had more yards'}")
+                m = LONGER.search(clause)
+                if m:
+                    before = _sides_in(clause[:m.start()], pats)
+                    win = _stat_winner("possessionTime", st)
+                    if before and win != before[-1][1]:
+                        probs.append(f"{clause.strip()!r}: FACTS show "
+                                     f"{'even' if win is None else short[win] + ' had the ball longer'}")
+            sides = {s for _, s in _sides_in(sent, pats)}
+            if len(sides) == 1 and not game.get("neutral_site"):
+                side = sides.pop()
+                if ROAD.search(sent) and side == "home" or AT_HOME.search(sent) and side == "away":
+                    probs.append(f"{sent.strip()!r}: {sheet['teams'][side]['name']} were the "
+                                 f"{'home' if side == 'home' else 'visiting'} team")
+    if probs:
+        raise CheckFailed("; ".join(probs))
 
 
 def _run(fn: Callable[[dict], dict]) -> dict:
@@ -187,6 +355,7 @@ def write_preview(game: dict, articles: list[dict], extract: dict | None = None)
             edges = x.get("edges") or {}
             texts = [x.get("preview")] + [e.get("text") for s in ("home", "away") for e in edges.get(s) or []]
             _texts_ok(texts, fj, articles)
+            line_ok(x.get("preview"), game)
             words = len((x.get("preview") or "").split())
             if not 60 <= words <= 200:
                 raise CheckFailed(f"preview is {words} words")
@@ -215,7 +384,17 @@ def write_preview(game: dict, articles: list[dict], extract: dict | None = None)
     return _run(go)
 
 
-PICK_WINDOW = 40          # words: a pick's writer and a team must be named this close together in its article
+def line_ok(text: str, game: dict) -> None:
+    """The preview states the point spread only as our own line has it, never an article's older number."""
+    sp = (game.get("line") or {}).get("home_spread")
+    want = f"{abs(float(sp)):g}" if sp is not None else None
+    bad = [m[0] for m in FAVORITE.finditer(text) if (m[1] or m[2]) != want]
+    if bad:
+        raise CheckFailed(f"{bad[0]!r}: the line in FACTS is {want + ' points' if want else 'not set'}; "
+                          "use that number or leave the line out")
+
+
+PICK_WINDOW = 40         # words: a pick's writer and a team must be named this close together in its article
 PICK_MAX_WORDS = 15
 
 
@@ -277,11 +456,13 @@ def _by_id(saved: dict, id_of: dict[str, int]) -> dict:
 def write_recap(game: dict) -> dict:
     """One call: the fact sheet comes from code (facts.recap_facts), so there is no extract step to misread."""
     def go(stats):
-        fj = json.dumps(facts.recap_facts(game)["facts"], ensure_ascii=False)
+        sheet = facts.recap_facts(game)
+        fj = json.dumps(sheet["facts"], ensure_ascii=False)
 
         def check_write(x):
             texts = [x.get("recap"), x.get("home"), x.get("away")]
             _texts_ok(texts, fj)
+            claims_ok(texts, game, sheet)
             words = len((x.get("recap") or "").split())
             if not 60 <= words <= 200:
                 raise CheckFailed(f"recap is {words} words")
@@ -316,11 +497,13 @@ def recap_fallback(game: dict) -> str:
 
 def write_one_liner(game: dict) -> dict:
     def go(stats):
-        fj = json.dumps(facts.live_facts(game)["facts"], ensure_ascii=False)
+        sheet = facts.live_facts(game)
+        fj = json.dumps(sheet["facts"], ensure_ascii=False)
 
         def check(x):
             line = x.get("line")
             _texts_ok([line], fj)
+            claims_ok([line], game, sheet)
             if isinstance(line, str) and len(line.split()) > 40:
                 raise CheckFailed(f"one-liner is {len(line.split())} words")
             _fact_check([line], fj, stats)
