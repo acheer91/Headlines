@@ -89,35 +89,49 @@ def _leader_lines(game: dict, short: dict) -> list[str]:
     return out
 
 
-def _scoring(game: dict, short: dict) -> list[str]:
+def _linescores(game: dict) -> tuple[list, list]:
     hdr = game.get("header") or {}
     hl = (hdr.get("home") or {}).get("linescores") or []
     al = (hdr.get("away") or {}).get("linescores") or []
-    if not hl or len(hl) != len(al):
+    return (al, hl) if hl and len(hl) == len(al) else ([], [])
+
+
+def _breaks(al: list, hl: list) -> list[tuple[int, int, int, str | None, bool]]:
+    """Per quarter break: (period, away total, home total, side leading or None, whether the lead changed hands)."""
+    out = []
+    at = ht = 0
+    before = None
+    for i, (a, h) in enumerate(zip(al, hl)):
+        at, ht = at + a, ht + h
+        lead = None if at == ht else ("away" if at > ht else "home")
+        out.append((i, at, ht, lead, bool(lead and before and lead != before)))
+        before = lead or before
+    return out
+
+
+def lead_changes(game: dict) -> int:
+    return sum(changed for *_, changed in _breaks(*_linescores(game)))
+
+
+def _scoring(game: dict, short: dict) -> list[str]:
+    al, hl = _linescores(game)
+    if not hl:
         return []
     out = [f"Points scored in {_period(i)}: {short['away']} {a}, {short['home']} {h}."
            for i, (a, h) in enumerate(zip(al, hl))]
-    ht = hs = 0
-    leader_before = None
-    changes = 0
     moves = []
-    for i, (a, h) in enumerate(zip(al, hl)):
-        ht, hs = ht + a, hs + h
+    for i, at, ht, lead, changed in _breaks(al, hl):
         where = "Halftime" if i == 1 else f"End of {_period(i)}"
-        if ht == hs:
-            out.append(f"{where} score: tied {ht}-{hs}.")
-            lead = None
+        if lead is None:
+            out.append(f"{where} score: tied {at}-{ht}.")
         else:
-            lead = "away" if ht > hs else "home"
-            out.append(f"{where} score: {short['away']} {ht}, {short['home']} {hs} "
-                       f"({short[lead]} led by {abs(ht - hs)}).")
-        if lead and leader_before and lead != leader_before:
-            changes += 1
+            out.append(f"{where} score: {short['away']} {at}, {short['home']} {ht} "
+                       f"({short[lead]} led by {abs(at - ht)}).")
+        if changed:
             # Spelled out: the writer called the wrong break "the only lead change" (2026-09-30).
             moves.append(f"Lead change: {short[lead]} took the lead between the {_break(i - 1)} and "
                          f"{_break(i)} scores.")
-        leader_before = lead or leader_before
-    out.append(f"Times the lead changed hands between quarter breaks: {changes}.")
+    out.append(f"Times the lead changed hands between quarter breaks: {len(moves)}.")
     return out + moves
 
 

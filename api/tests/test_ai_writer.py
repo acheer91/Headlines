@@ -314,3 +314,38 @@ def test_checker_reason_is_cut_short(model, checker):
     model([{"recap": f"A. {WORDS}", "home": "x", "away": "y"}] * 2)
     res = writer.write_recap(GAME)
     assert res["status"] == "failed" and len(res["reason"]) < 300
+
+
+# ---------- recap length: a one-minute read, longer for bigger games (2026-10-01) ----------
+
+@pytest.mark.parametrize("fixture,edit,want", [
+    ("final_phi_chi", {}, ("standard", "standard")),
+    ("final_ne_jax", {}, ("featured", "a favorite team")),
+    ("final_cin_pit", {}, ("featured", "decided by 3 or less")),
+    ("final_lv_no", {}, ("featured", "lead changed 2+ times")),
+    # 3-0 and 2-1 after a game the first team won: 2-0 and 2-0 going in.
+    ("final_phi_chi", {"records": ("2-1", "3-0")}, ("featured", "two winning teams")),
+    ("final_phi_chi", {"ranks": (5, 14), "league": "ncaaf"}, ("featured", "ranked vs ranked")),
+    ("final_phi_chi", {"ot": True}, ("featured", "overtime")),
+])
+def test_recap_length_tier(fixture, edit, want):
+    from tests.test_ai_facts import load
+    g = load(fixture)
+    if "records" in edit:
+        g["header"]["away"]["record"], g["header"]["home"]["record"] = edit["records"]
+    if "ranks" in edit:
+        g["away"]["rank"], g["home"]["rank"] = edit["ranks"]
+        g["league"] = edit["league"]
+    if edit.get("ot"):
+        g["header"]["away"]["linescores"] += [0]
+        g["header"]["home"]["linescores"] += [0]
+    assert writer.recap_length(g) == want
+
+
+def test_recap_over_its_length_is_rewritten_shorter(model):
+    long = {"recap": f"Bears won. {WORDS}", "home": " ".join(["x"] * 80), "away": " ".join(["y"] * 80)}
+    calls = model([long, {"recap": f"Bears won. {WORDS}", "home": "x", "away": "y"}])
+    res = writer.write_recap(GAME)
+    assert res["status"] == "ready" and "220 in all at most" in calls[1]
+    assert res["length"] == {"tier": "standard", "why": "standard", "words": 74}
+    assert "about 110 words" in calls[0] and "about 45 words" in calls[0]

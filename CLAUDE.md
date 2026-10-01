@@ -36,6 +36,9 @@ Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `ph
   Gemini side pool (headlines, weekday pre-writing, last fallback; Adam) is planned, not built. **Never set
   `AI_WRITER=gemini` as a fallback:** it moves all writing to Gemini's 20 requests/day and runs out at once. Free tier per model: 8K tokens/min, 200K tokens/day on
   a rolling 24 h window. Bake-off (Sep 29): Qwen as a writer invents claims (streaks, leads) — writer of last resort.
+- **Recap length: a one-minute read** (2026-10-01; `writer.recap_length`): standard ~200 words (recap ~110, each
+  team ~45), featured ~230 (120/55) for a favorite, ranked vs ranked, two NFL teams with winning records going in,
+  overtime, a 3-point-or-less margin, or 2+ lead changes. Code rejects a recap more than 10% over; bets line on top.
 - **Facts only from inputs, enforced in code** (`app/ai/`): recap and preview game facts are built by code
   (`facts.py`), never read raw by a model; numbers must appear in the facts; bet results are written by code
   (`bets_line`); no advice or bet words; no 8-word copy from an article; edges/picks must come from the linked

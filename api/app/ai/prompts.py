@@ -81,10 +81,13 @@ FACTS:
 
 WRITE_RECAP = """You write the post-game recap for a personal scores app. Return JSON only:
 {{
-  "recap": "about 120 words on how the game went. Don't mention bets, lines or the spread: the app adds them",
-  "home": "2-3 sentences on {home}'s day",
-  "away": "2-3 sentences on {away}'s day"
+  "recap": "about {recap_words} words on how the game went. Don't mention bets, lines or the spread: the app adds them",
+  "home": "2-3 sentences, about {team_words} words, on {home}'s day",
+  "away": "2-3 sentences, about {team_words} words, on {away}'s day"
 }}
+
+The whole recap is a one-minute read. Those lengths are the most this game deserves: when FACTS has less worth
+saying, write less. Never pad, and don't repeat in a team's paragraph a stat the recap already gave.
 
 FACTS is a list of plain, exact statements about the final. Each one is true exactly as written; restate them,
 don't reinterpret them. Scoring and who led are given per quarter: say which quarter something happened in, or

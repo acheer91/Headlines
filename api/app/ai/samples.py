@@ -181,7 +181,8 @@ def _recap_md(game, res, t) -> list[str]:
     out = [f"### Final: {a['name']} {a.get('score')}, {h['name']} {h.get('score')}\n", _status(res, f"{t}s")]
     if res["status"] != "ready":
         return out + [f"> {writer.recap_fallback(game)} ({res.get('reason')})\n"]
-    b = res["body"]
+    b, ln = res["body"], res["length"]
+    out.append(f"*Length: {ln['tier']} ({ln['why']}), {ln['words']} words plus the bets line*\n")
     return out + [b["recap"] + "\n", f"*{b['bets']}* (added by code from the graded results)\n",
                   f"**{a['short']}:** {b['away']}\n", f"**{h['short']}:** {b['home']}\n"] + _sheet(facts.recap_facts(game))
 

@@ -453,8 +453,50 @@ def _by_id(saved: dict, id_of: dict[str, int]) -> dict:
 
 # ---------------------------------------------------------------- recap
 
+# A one-minute read (decided 2026-10-01): recap paragraph and each team paragraph, in words. The bets line (~16
+# words, code) comes on top.
+RECAP_WORDS = {"standard": (110, 45), "featured": (120, 55)}
+LENGTH_SLACK = 1.1          # code rejects a recap screen more than 10% over its length
+
+
+def _record(rec: str | None) -> tuple[int, int] | None:
+    parts = [int(x) for x in re.findall(r"\d+", rec or "")]
+    return (parts[0], parts[1]) if len(parts) >= 2 else None
+
+
+def recap_length(game: dict) -> tuple[str, str]:
+    """('featured' or 'standard', why). Featured, a little longer: a favorite team, ranked vs ranked, two NFL teams
+    with winning records going in, or a great game (overtime, decided by 3 or less, or 2+ lead changes)."""
+    h, a = game["home"], game["away"]
+    if game.get("favorite"):
+        return "featured", "a favorite team"
+    if game.get("league") == "ncaaf" and h.get("rank") and a.get("rank"):
+        return "featured", "ranked vs ranked"
+    hs, as_ = h.get("score"), a.get("score")
+    if game.get("league") == "nfl" and hs is not None and as_ is not None and hs != as_:
+        hdr = game.get("header") or {}
+        before = []
+        for side, won in (("home", hs > as_), ("away", as_ > hs)):
+            r = _record((hdr.get(side) or {}).get("record"))     # ESPN's record after this game
+            before.append(r and (r[0] - won, r[1] - (not won)))
+        if all(b and b[0] > b[1] for b in before):
+            return "featured", "two winning teams"
+    al, _ = facts._linescores(game)
+    if len(al) > 4:
+        return "featured", "overtime"
+    if hs is not None and as_ is not None and abs(hs - as_) <= 3:
+        return "featured", "decided by 3 or less"
+    if facts.lead_changes(game) >= 2:
+        return "featured", "lead changed 2+ times"
+    return "standard", "standard"
+
+
 def write_recap(game: dict) -> dict:
     """One call: the fact sheet comes from code (facts.recap_facts), so there is no extract step to misread."""
+    tier, why = recap_length(game)
+    recap_w, team_w = RECAP_WORDS[tier]
+    cap = round((recap_w + 2 * team_w) * LENGTH_SLACK)
+
     def go(stats):
         sheet = facts.recap_facts(game)
         fj = json.dumps(sheet["facts"], ensure_ascii=False)
@@ -464,19 +506,24 @@ def write_recap(game: dict) -> dict:
             _texts_ok(texts, fj)
             claims_ok(texts, game, sheet)
             words = len((x.get("recap") or "").split())
-            if not 60 <= words <= 200:
-                raise CheckFailed(f"recap is {words} words")
+            total = sum(len(t.split()) for t in texts)
+            if words < 60 or total > cap:
+                raise CheckFailed(f"recap is {words} words and {total} in all; keep the recap at about {recap_w} "
+                                  f"words, each team at about {team_w}, {cap} in all at most")
             bet = next((BET_TALK.search(t) for t in texts if BET_TALK.search(t)), None)
             if bet:
                 raise CheckFailed(f"bet talk in the prose: {bet[0]!r}")
             _fact_check(texts, fj, stats)
 
         out = _step(prompts.WRITE_RECAP.format(facts=fj, voice=prompts.VOICE, guardrails=prompts.GUARDRAILS,
-                                               home=game["home"]["name"], away=game["away"]["name"]),
+                                               home=game["home"]["name"], away=game["away"]["name"],
+                                               recap_words=recap_w, team_words=team_w),
                     check_write, stats)
         # Bet results are the graded text itself, added by code: the model once called a push a win (2026-09-29).
         return {"status": "ready", "body": {"recap": out["recap"], "bets": bets_line(game),
-                                            "home": out["home"], "away": out["away"]}}
+                                            "home": out["home"], "away": out["away"]},
+                "length": {"tier": tier, "why": why,
+                           "words": sum(len(out[k].split()) for k in ("recap", "home", "away"))}}
 
     return _run(go)
 
