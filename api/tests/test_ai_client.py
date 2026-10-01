@@ -157,3 +157,112 @@ FAVS = {"nfl": ["NE"], "ncaaf": ["TEX"]}
 ])
 def test_prewrite_list(row, want):
     assert scope.is_prewritten(row, FAVS) is want
+
+
+# ---------- OpenRouter free models ("or:<id>"), Oct 1 ----------
+
+def _or_reply(content):
+    return {"choices": [{"message": {"content": content}}]}
+
+
+def test_openrouter_backs_up_the_checkers(fresh, monkeypatch):
+    calls, plan = fresh
+    monkeypatch.setattr(client, "CHECKERS", ["qwen", "or:vendor/m:free", "big"])
+    plan["qwen"] = "429"
+    seen = []
+    monkeypatch.setattr(client, "_openrouter_post",
+                        lambda body: seen.append(body) or _or_reply(json.dumps({"problems": []})))
+    client.write("x")                                   # written by "big"
+    assert json.loads(client.check("c")) == {"problems": []}
+    assert client.last_checker() == "or:vendor/m:free"
+    assert seen[0]["model"] == "vendor/m:free" and seen[0]["temperature"] == 0     # the or: prefix is ours
+    assert calls == ["big", "qwen"]                     # Groq tried "qwen" (429), never touched by OpenRouter
+
+
+def test_openrouter_rate_limit_cools_it_down(fresh, monkeypatch):
+    calls, _ = fresh
+    monkeypatch.setattr(client, "CHECKERS", ["or:vendor/m:free", "small"])
+
+    def post(body):
+        calls.append(body["model"])
+        raise client.RateLimited("openrouter 429", 90)
+    monkeypatch.setattr(client, "_openrouter_post", post)
+    client.write("x")
+    assert json.loads(client.check("c"))["by"] == "small"
+    client.check("c2")                                  # cooling: not asked again
+    assert calls.count("vendor/m:free") == 1
+    assert client.quota.is_cooling("or:vendor/m:free")
+
+
+def test_missing_openrouter_key_just_leaves_that_pool_out(fresh, monkeypatch):
+    monkeypatch.setattr(client, "CHECKERS", ["or:vendor/m:free", "small"])
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    client.write("x")
+    assert json.loads(client.check("c"))["by"] == "small"      # Groq's NoKey is what stops everything; this isn't
+
+
+def test_openrouter_alone_without_key_raises_no_key(fresh, monkeypatch):
+    monkeypatch.setattr(client, "CHECKERS", ["or:vendor/m:free"])
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    client.write("x")
+    with pytest.raises(client.NoKey):
+        client.check("c")
+
+
+def test_openrouter_unreadable_json_goes_to_the_next_checker(fresh, monkeypatch):
+    monkeypatch.setattr(client, "CHECKERS", ["or:vendor/m:free", "small"])
+    monkeypatch.setattr(client, "_openrouter_post", lambda body: _or_reply("Sure! here you go"))
+    client.write("x")
+    assert json.loads(client.check("c"))["by"] == "small"
+
+
+def test_openrouter_is_counted_in_requests_not_tokens(fresh, monkeypatch):
+    monkeypatch.setattr(client, "CHECKERS", ["or:vendor/m:free"])
+    monkeypatch.setattr(client, "OPENROUTER_RPM", 2)
+    monkeypatch.setattr(client, "_openrouter_post", lambda body: _or_reply("{}"))
+    client.write("x")
+    client.check("x" * 20000)                           # a big prompt costs one request, not 5,000 tokens
+    client.check("y")
+    with client.no_wait(), pytest.raises(client.RateLimited):
+        client.check("z")                               # the third request inside the minute
+
+
+class _Resp:
+    def __init__(self, status, body):
+        self.status_code, self._body, self.text = status, body, json.dumps(body)
+
+    def json(self):
+        return self._body
+
+
+def test_openrouter_post_429_and_errors(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    send = lambda r: monkeypatch.setattr(client.httpx, "post", lambda *a, **kw: r)
+    send(_Resp(429, {"error": {"code": 429, "metadata": {"raw": "temporarily rate-limited upstream"}}}))
+    with pytest.raises(client.RateLimited) as err:
+        client._openrouter_post({"model": "m"})
+    assert err.value.retry_after == 60
+    reset_ms = (client.time.time() + 3600) * 1000       # OpenRouter's own limit says when it resets
+    send(_Resp(429, {"error": {"code": 429, "metadata": {"headers": {"X-RateLimit-Reset": str(reset_ms)}}}}))
+    with pytest.raises(client.RateLimited) as err:
+        client._openrouter_post({"model": "m"})
+    assert err.value.retry_after == pytest.approx(3600, abs=5)
+    send(_Resp(200, {"error": {"code": 429, "message": "x"}}))     # an upstream 429 inside a 200
+    with pytest.raises(client.RateLimited):
+        client._openrouter_post({"model": "m"})
+    send(_Resp(200, {"error": {"code": 502, "message": "x"}}))
+    with pytest.raises(client.AIError):
+        client._openrouter_post({"model": "m"})
+    send(_Resp(503, {}))
+    with pytest.raises(client.AIError):
+        client._openrouter_post({"model": "m"})
+    send(_Resp(200, _or_reply("hi")))
+    assert client._openrouter_post({"model": "m"})["choices"][0]["message"]["content"] == "hi"
+
+
+def test_qwen_on_openrouter_does_not_check_qwen_from_groq(fresh, monkeypatch):
+    monkeypatch.setattr(client, "WRITERS", ["qwen/q"])
+    monkeypatch.setattr(client, "CHECKERS", ["or:qwen/q:free", "small"])
+    client.write("x")                                   # written by Groq's qwen/q
+    assert json.loads(client.check("c"))["by"] == "small"
+    assert client.check_model() == "small"

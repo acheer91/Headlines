@@ -110,7 +110,7 @@ def last_checker() -> str | None:
 
 
 def check_model() -> str:
-    return next((m for m in CHECKERS if m != last_writer()), CHECKERS[0])
+    return next((m for m in CHECKERS if _same_model(m) != _same_model(last_writer())), CHECKERS[0])
 
 
 # ---------------------------------------------------------------- failover and pacing
@@ -213,7 +213,7 @@ def _retry_after(text: str) -> float:
 
 def _failover(models: list[str], prompt: str, json_out: bool, max_out: int, avoid: str | None,
               checker: bool = False) -> tuple[str, str]:
-    order = [m for m in models if m != avoid] or list(models)
+    order = [m for m in models if avoid is None or _same_model(m) != _same_model(avoid)] or list(models)
     # Groq counts the prompt plus the whole reply allowance against the minute (429s when we counted real usage,
     # 2026-09-29), so that is what we reserve: ~4 characters a token plus max_out. One request can never be more
     # than the minute, so the reply allowance shrinks to fit; a prompt that leaves too little room is refused.
@@ -272,6 +272,11 @@ def _failover(models: list[str], prompt: str, json_out: bool, max_out: int, avoi
 
 def _is_openrouter(name: str) -> bool:
     return name.startswith(OPENROUTER_PREFIX)
+
+
+def _same_model(name: str) -> str:
+    """The model behind a pool's name: Qwen on Groq and Qwen on OpenRouter are one model, and it never checks its own text."""
+    return name.removeprefix(OPENROUTER_PREFIX).removesuffix(":free")
 
 
 def _openrouter_post(body: dict) -> dict:
