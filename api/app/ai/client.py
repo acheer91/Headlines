@@ -2,12 +2,15 @@
 
 Writing and checking fail over across free Groq models (Adam, 2026-09-29, option C): each model has its own quota,
 so when one is rate-limited the call moves to the next instead of failing. A model never fact-checks its own text.
-Gemini stays selectable with AI_WRITER=gemini (its free tier is 20 requests a day). Keys come from the environment
-only (GROQ_API_KEY, GEMINI_API_KEY) and are never logged, nor are full prompts. When every model is limited,
+A model named "or:<id>" is an OpenRouter free model (Adam, 2026-10-01): its own pool, so it backs up the checkers
+(not the writers: Qwen as a writer invents claims). Gemini stays selectable with AI_WRITER=gemini (its free tier is
+20 requests a day). Keys come from the environment only (GROQ_API_KEY, GEMINI_API_KEY, OPENROUTER_API_KEY) and are
+never logged, nor are full prompts. When every model is limited,
 RateLimited reaches the caller, which shows fallback text; any other failure raises AIError. 30 s timeout per call.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import threading
@@ -24,6 +27,9 @@ GROQ_SEARCH_MODEL = "openai/gpt-oss-20b"     # the free models with browser sear
 # 8,000 tokens a minute.
 GROQ_TPM = int(os.environ.get("GROQ_TPM", "8000"))
 GEMINI_RPM = int(os.environ.get("GEMINI_RPM", "5"))    # gemini-3.6-flash free tier; 20 requests a day
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_PREFIX = "or:"
+OPENROUTER_RPM = int(os.environ.get("OPENROUTER_RPM", "20"))    # free models: 20 requests a minute, no token limit
 
 # Best first. The writer leads with gpt-oss-120b; gpt-oss-20b checks. Both lists fall back to the other models.
 # Checker order (check_eval, 2026-09-30): 20b and Qwen each caught 11 of 15 errors; 20b raised no false alarms in 8
@@ -31,7 +37,7 @@ GEMINI_RPM = int(os.environ.get("GEMINI_RPM", "5"))    # gemini-3.6-flash free t
 WRITERS = [m.strip() for m in os.environ.get(
     "AI_WRITERS", "openai/gpt-oss-120b,qwen/qwen3.8-27b,openai/gpt-oss-20b").split(",") if m.strip()]
 CHECKERS = [m.strip() for m in os.environ.get(
-    "AI_CHECKERS", "openai/gpt-oss-20b,qwen/qwen3.8-27b,openai/gpt-oss-120b").split(",") if m.strip()]
+    "AI_CHECKERS", "openai/gpt-oss-20b,qwen/qwen3.8-27b,or:qwen/qwen3.8-27b:free,openai/gpt-oss-120b").split(",") if m.strip()]
 
 
 class AIError(Exception):
@@ -231,7 +237,8 @@ def _failover(models: list[str], prompt: str, json_out: bool, max_out: int, avoi
             if wait is not None:
                 raise RateLimited(f"every model cooling down for {wait:.0f}s", max(wait, 1.0))
             raise last
-        got = quota.reserve([name], cost, GROQ_TPM, _waiting())
+        # Groq limits tokens a minute; an OpenRouter free model limits requests a minute.
+        got = quota.reserve([name], *((1, OPENROUTER_RPM) if _is_openrouter(name) else (cost, GROQ_TPM)), _waiting())
         if got is None:
             if quota.is_cooling(name):         # started cooling meanwhile (another process got a 429)
                 tried.add(name)
@@ -240,8 +247,11 @@ def _failover(models: list[str], prompt: str, json_out: bool, max_out: int, avoi
         name, handle = got
         tried.add(name)
         try:
-            text, used = _groq_write(prompt, json_out, name, max_out, checker)
-            quota.used(handle, used)
+            if _is_openrouter(name):
+                text, used = _openrouter_write(prompt, json_out, name, max_out, checker)
+            else:
+                text, used = _groq_write(prompt, json_out, name, max_out, checker)
+            quota.used(handle, 1 if _is_openrouter(name) else used)
             return text, name
         except RateLimited as exc:
             quota.cool(name, exc.retry_after)
@@ -250,10 +260,77 @@ def _failover(models: list[str], prompt: str, json_out: bool, max_out: int, avoi
             if not checker:
                 raise                 # a writer's bad JSON is the text's fault: the writer rewrites it
             last = exc                # a checker's bad JSON: ask the next checker (gpt-oss-20b ran out of room, Sep 29)
-        except NoKey:
-            raise                     # every model uses the same key: no point trying the others
+        except NoKey as exc:
+            if not _is_openrouter(name):
+                raise                 # every Groq model uses the same key: no point trying the others
+            last = exc                # no OpenRouter key: that pool is just left out
         except AIError as exc:        # a 5xx, a timeout, a retired model: try the next one
             last = exc
+
+
+# ---------------------------------------------------------------- OpenRouter (free models, "or:<id>")
+
+def _is_openrouter(name: str) -> bool:
+    return name.startswith(OPENROUTER_PREFIX)
+
+
+def _openrouter_post(body: dict) -> dict:
+    key = os.environ.get("OPENROUTER_API_KEY")
+    if not key:
+        raise NoKey("OPENROUTER_API_KEY not set")
+    try:
+        r = httpx.post(OPENROUTER_URL, json=body, headers={"Authorization": f"Bearer {key}"}, timeout=TIMEOUT)
+    except httpx.HTTPError as exc:
+        raise AIError(f"openrouter: {type(exc).__name__}") from None
+    if r.status_code == 429:
+        # Usually the shared upstream pool ("temporarily rate-limited"): a minute is enough. OpenRouter's own
+        # account limit says when it resets, in epoch milliseconds.
+        wait = 60.0
+        try:
+            reset = (r.json()["error"]["metadata"]["headers"] or {}).get("X-RateLimit-Reset")
+            wait = max(wait, float(reset) / 1000 - time.time())
+        except (ValueError, KeyError, TypeError):
+            pass
+        raise RateLimited(f"openrouter 429 ({body.get('model')})", wait)
+    if r.status_code != 200:
+        raise AIError(f"openrouter {r.status_code}")
+    try:
+        d = r.json()
+    except ValueError:
+        raise AIError("openrouter: bad reply") from None
+    if d.get("error"):      # an upstream failure can arrive inside a 200
+        if (d["error"].get("code") if isinstance(d["error"], dict) else None) == 429:
+            raise RateLimited(f"openrouter 429 ({body.get('model')})", 60.0)
+        raise AIError("openrouter: upstream error")
+    return d
+
+
+def _openrouter_write(prompt: str, json_out: bool, name: str, max_out: int, checker: bool) -> tuple[str, int]:
+    """One reply from an OpenRouter free model. The thinking comes back in its own field, not in the text."""
+    body = {"model": name[len(OPENROUTER_PREFIX):], "max_tokens": max_out,
+            "messages": [{"role": "user", "content": prompt}]}
+    if checker:
+        body["temperature"] = 0
+    if json_out:
+        body["response_format"] = {"type": "json_object"}
+    d = _openrouter_post(body)
+    try:
+        text = d["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        raise AIError("openrouter: bad reply") from None
+    if not text:
+        raise AIError("openrouter: empty reply")
+    if json_out and not _is_json(text):
+        raise BadReply("openrouter: reply was not valid JSON")
+    return text, 1
+
+
+def _is_json(text: str) -> bool:
+    try:
+        json.loads(text)
+        return True
+    except ValueError:
+        return False
 
 
 # ---------------------------------------------------------------- Groq

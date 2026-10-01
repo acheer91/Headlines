@@ -28,6 +28,7 @@ services:
       # text (the off switch: remove the keys, then `docker compose up -d api worker`).
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       AI_QUOTA: db                # the api and the worker share the free-tier quota through Postgres
     volumes:
       - ./config:/srv/config:ro   # edit favorites without rebuilding
@@ -103,6 +104,7 @@ services:
       # Phase 4 AI text: same keys and shared quota as the api (see there).
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       AI_QUOTA: db
     volumes:
       - ./config:/srv/config:ro   # favorites: sync_schedule reads them on every run (no rebuild after an edit)

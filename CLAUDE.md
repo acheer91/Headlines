@@ -83,7 +83,7 @@ Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `ph
   the score changes or 15 minutes pass (Adam).
 - **Quota is shared through Postgres** (`AI_QUOTA=db`: `ai_calls`, `ai_cooling`), so the api and worker can't
   collide; Groq counts prompt + max reply against the minute, so that is what's reserved.
-- **Keys** (`GROQ_API_KEY`, `GEMINI_API_KEY`) live only in `.env`; no key, or removing it, is the off switch (every AI
+- **Keys** (`GROQ_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`) live only in `.env`; no key, or removing it, is the off switch (every AI
   section shows fallback text). Prompts carry only public sports data (free tiers may use prompts for training).
 - **Tests:** `tests/test_ai_*.py` (no live model calls), `test_workflows.py` (every simulated game runs a fake `ai`
   worker: a waiting AI task stops time-skipping), `test_replay.py` (old histories replay with the patches), `test_ai_replay.py` / `test_ai_review_sheet.py` (need git history; skipped without it).

@@ -2,7 +2,7 @@
 
 Laptop only. Reads games through the local API (which refreshes and grades the summary, as opening the game
 would) and news from the local database, then writes docs/phase4-samples.md with every text, its sources and
-their dates, and how long it took. Keys come from the environment, or from GEMINI_*/GROQ_* lines in ../.env.
+their dates, and how long it took. Keys come from the environment, or from GEMINI_*/GROQ_*/OPENROUTER_* lines in ../.env.
 """
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ def _load_keys() -> None:
         return
     for line in env.read_text().splitlines():
         k, _, v = line.partition("=")
-        if k.strip() in ("GEMINI_API_KEY", "GEMINI_MODEL", "GROQ_API_KEY", "POSTGRES_PASSWORD")                 and not os.environ.get(k.strip()):
+        if k.strip() in ("GEMINI_API_KEY", "GEMINI_MODEL", "GROQ_API_KEY", "OPENROUTER_API_KEY", "POSTGRES_PASSWORD")                 and not os.environ.get(k.strip()):
             os.environ[k.strip()] = v.strip()
 
 
