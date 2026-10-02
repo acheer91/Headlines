@@ -1,7 +1,10 @@
 """Create or update the Temporal Schedules. Safe to rerun: an existing schedule is updated in place.
 
-    python -m app.temporal.schedules          # create/update, then print them
+    python -m app.temporal.schedules          # create/update, delete stale AI schedules, then print them
     python -m app.temporal.schedules --show   # print only (step 3.2 diffs this before and after a rerun)
+
+A stale schedule is an `ai-*` one on the server that this file no longer lists: a league left AI_LEAGUES, or AI text
+was turned off. Only the `ai-` prefix is ever deleted; every other schedule is left alone.
 """
 from __future__ import annotations
 
@@ -11,6 +14,7 @@ import json
 import os
 from datetime import timedelta
 
+from temporalio.service import RPCError, RPCStatusCode
 from temporalio.client import (Client, Schedule, ScheduleActionStartWorkflow, ScheduleAlreadyRunningError,
                                ScheduleCalendarSpec, ScheduleOverlapPolicy, SchedulePolicy, ScheduleRange,
                                ScheduleSpec, ScheduleUpdate)
@@ -61,6 +65,15 @@ def build(schedule_id: str) -> Schedule:
     )
 
 
+AI_PREFIX = "ai-"       # the only schedules a rerun may delete: the ones this file creates for AI text
+
+
+async def stale(client: Client) -> list[str]:
+    """`ai-*` schedules on the server that SCHEDULES no longer lists."""
+    return sorted([d.id async for d in await client.list_schedules()
+                   if d.id.startswith(AI_PREFIX) and d.id not in SCHEDULES])
+
+
 async def ensure(client: Client) -> None:
     for sid in SCHEDULES:
         schedule = build(sid)
@@ -70,6 +83,13 @@ async def ensure(client: Client) -> None:
         except ScheduleAlreadyRunningError:
             await client.get_schedule_handle(sid).update(lambda _inp, s=schedule: ScheduleUpdate(schedule=s))
             print(f"updated {sid}")
+    for sid in await stale(client):
+        try:
+            await client.get_schedule_handle(sid).delete()
+            print(f"deleted {sid} (no longer listed)")
+        except RPCError as exc:
+            if exc.status != RPCStatusCode.NOT_FOUND:      # already gone (the listing lags): nothing to do
+                raise
 
 
 async def show(client: Client) -> list[dict]:
@@ -100,6 +120,8 @@ async def main() -> None:
     client = await connect()
     if not a.show:
         await ensure(client)
+    elif old := await stale(client):
+        print(f"stale, a rerun would delete: {', '.join(old)}")
     print(json.dumps(await show(client), indent=1, sort_keys=True))
 
 

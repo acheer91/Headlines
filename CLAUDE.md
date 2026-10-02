@@ -102,8 +102,8 @@ Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `ph
   carries its article URLs (`extract.urls`) and is kept on a rate-limit or 5xx failure, so the retry skips the extract
   call (a check failure keeps none). Headlines with the same news and finals as the last ready set return `current`
   (fingerprint in `ai_texts.fingerprint`; a manual run always writes).
-- **Rejection cap (Adam, 2026-10-01; migration 009 `ai_texts.rejections`, `store.REJECTION_CAP = 2` failed writes in
-  total, the first and one retry):** a text that fails twice for a reason retrying the same inputs won't fix (the fact check rejected it twice, a crash, too large) is not
+- **Rejection cap (Adam, 2026-10-01; migration 009 `ai_texts.rejections`, `store.REJECTION_CAP = 3` failed writes in
+  total, the first and two retries):** a text that fails 3 times for a reason retrying the same inputs won't fix (the fact check rejected it twice, a crash, too large) is not
   written again until its inputs change: `jobs.write_for_game` returns `capped` (any caller: worker, refresh, nightly,
   open) and the activity ends without a Temporal retry. Inputs = the claim's game day or score (api, which doesn't
   compute fingerprints) plus, for the worker, the fact-sheet/article fingerprint. Rate limits, 5xx and a missing key or

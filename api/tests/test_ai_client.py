@@ -511,10 +511,11 @@ def test_reusable_extract():
 
 def test_rejected_out():
     from app.ai import store
-    row = {"rejections": 2, "claim_basis": "b", "claim_fingerprint": "f"}
+    row = {"rejections": store.REJECTION_CAP, "claim_basis": "b", "claim_fingerprint": "f"}
     assert store.rejected_out(row, "b", "f") and store.rejected_out(row, "b")        # api: fingerprint unknown
     assert not store.rejected_out(row, "b", "other") and not store.rejected_out(row, "other")
-    assert not store.rejected_out(dict(row, rejections=1), "b", "f") and not store.rejected_out(None, "b")
+    assert not store.rejected_out(dict(row, rejections=store.REJECTION_CAP - 1), "b", "f")
+    assert not store.rejected_out(None, "b")
     assert store.rejected_out(dict(row, claim_fingerprint=None), "b", None)          # a recap has no fingerprint
     assert store.counts_as_rejection({"status": "failed", "reason": "x"})
     assert not store.counts_as_rejection({"status": "failed", "retry_after": 5.0})

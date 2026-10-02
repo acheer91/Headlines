@@ -140,7 +140,7 @@ poorly, midweek volume drops to option C's list plus opened games, as in the ori
 |---|---|
 | One model rate-limited | client fails over to the next (built; Oct 1: no backup writer, so the activity retries) |
 | Every model limited | activity retries at the time Groq gives; batch pauses its starts |
-| Fact check fails twice | row `failed`, template text; tried once more, then held until its inputs change (Oct 1: `ai_texts.rejections`, migration 009, `store.REJECTION_CAP = 2` failed writes in total; a "manual" job lifts it) |
+| Fact check fails twice | row `failed`, template text; tried twice more, then held until its inputs change (Oct 1: `ai_texts.rejections`, migration 009, `store.REJECTION_CAP = 3` failed writes in total; a "manual" job lifts it) |
 | Worker down | nothing written ahead; pages write on open; schedules catch up within 12 h (existing policy) |
 | A model retired by Groq | client skips a model that returns 404 (add to `_failover`); remove it from `AI_WRITERS` |
 | Groq down entirely | template text everywhere; screens unchanged otherwise |

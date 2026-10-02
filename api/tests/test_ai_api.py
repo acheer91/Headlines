@@ -522,7 +522,7 @@ def test_recap_due_follows_the_prewrite_list(client, fake, monkeypatch, tmp_path
     assert env.run(activities.recap_due, "nfl", dal) is False
 
 
-# ---------- the rejection cap (Adam, 2026-10-01): two failed writes for the same inputs, then wait for new ones ----------
+# ---------- the rejection cap (Adam, 2026-10-01): REJECTION_CAP failed writes for the same inputs, then wait ----------
 
 REJECTED = {"status": "failed", "reason": "check failed twice: x", "model": "fake"}
 
@@ -531,18 +531,23 @@ def rejections(gid, kind):
     return _sql("SELECT rejections FROM ai_texts WHERE game_id = %s AND kind = %s", gid, kind)[0][0]
 
 
-def test_a_text_rejected_twice_is_not_written_a_third_time(client, fake):  # noqa: F811
+def cap():
+    from app.ai import store
+    return store.REJECTION_CAP
+
+
+def test_a_text_rejected_cap_times_is_not_written_again(client, fake):  # noqa: F811
     from app.ai import jobs
     gid = fake["ids"]["DAL"]
     fake["result"] = REJECTED
-    assert jobs.write_for_game("recap", gid, "nightly")["status"] == "failed"
-    assert jobs.write_for_game("recap", gid, "nightly")["status"] == "failed"
-    assert rejections(gid, "recap") == 2
+    for _ in range(cap()):
+        assert jobs.write_for_game("recap", gid, "nightly")["status"] == "failed"
+    assert rejections(gid, "recap") == cap()
     out = jobs.write_for_game("recap", gid, "nightly")
-    assert out["status"] == "capped" and fake["calls"]["recap"] == 2                 # nothing was written
+    assert out["status"] == "capped" and fake["calls"]["recap"] == cap()             # nothing was written
     assert jobs.write_for_game("recap", gid, "refresh")["status"] == "capped"        # no caller gets past it
     assert jobs.write_for_game("recap", gid, "manual")["status"] == "failed"         # the runbook forces it
-    assert fake["calls"]["recap"] == 3
+    assert fake["calls"]["recap"] == cap() + 1
 
 
 def test_rate_limits_and_a_missing_setup_never_count_as_rejections(client, fake):  # noqa: F811
@@ -572,28 +577,28 @@ def test_new_inputs_lift_the_cap(client, fake):  # noqa: F811
     from app.ai import jobs
     gid = fake["ids"]["BUF"]
     fake["result"] = REJECTED
-    jobs.write_for_game("preview", gid, "midweek")
-    jobs.write_for_game("preview", gid, "midweek")
+    for _ in range(cap()):
+        jobs.write_for_game("preview", gid, "midweek")
     assert jobs.write_for_game("preview", gid, "midweek")["status"] == "capped"
     # other articles: a different fingerprint, so it is written (and counted afresh)
     fake["articles"] = [dict(ARTICLE, url="https://www.espn.com/nfl/story/_/id/9/z")]
     assert jobs.write_for_game("preview", gid, "midweek")["status"] == "failed"
-    assert rejections(gid, "preview") == 1 and len(fake["calls"]["preview"]) == 3
+    assert rejections(gid, "preview") == 1 and len(fake["calls"]["preview"]) == cap() + 1
     # a moved kickoff: a different game day
     fake["result"] = None
     _sql("UPDATE games SET start_time = start_time + interval '1 day' WHERE id = %s", gid)
     assert jobs.write_for_game("preview", gid, "midweek")["status"] == "ready"
 
 
-def test_the_api_does_not_rewrite_a_text_rejected_twice_for_this_score(client, fake):  # noqa: F811
+def test_the_api_does_not_rewrite_a_text_rejected_cap_times_for_this_score(client, fake):  # noqa: F811
     gid = fake["ids"]["DAL"]
     fake["result"] = REJECTED
-    for expected in (1, 2):
+    for expected in range(1, cap() + 1):
         assert client.get(f"/api/games/{gid}/ai").json()["status"] == "failed"
         assert fake["calls"]["recap"] == expected
         _sql("UPDATE ai_texts SET updated_at = now() - interval '40 minutes' WHERE game_id = %s", gid)
     assert client.get(f"/api/games/{gid}/ai").json()["status"] == "failed"          # past the 30 quiet minutes ...
-    assert fake["calls"]["recap"] == 2                                                # ... and still no third write
+    assert fake["calls"]["recap"] == cap()                                            # ... and still no more writes
 
 
 def test_the_cap_reaches_the_worker_as_a_result_not_an_error(client, fake, monkeypatch, tmp_path):  # noqa: F811
@@ -604,14 +609,14 @@ def test_the_cap_reaches_the_worker_as_a_result_not_an_error(client, fake, monke
     espn_id = _sql("SELECT espn_id FROM games WHERE id = %s", fake["ids"]["DAL"])[0][0]
     fake["result"] = REJECTED
     env = ActivityEnvironment()
-    assert [env.run(activities.write_text, TextJob("recap", "nfl", espn_id, "nightly")) for _ in range(3)] == \
-        ["failed", "failed", "capped"]                       # "capped" ends the workflow: no Temporal retry
+    assert [env.run(activities.write_text, TextJob("recap", "nfl", espn_id, "nightly")) for _ in range(cap() + 1)] == \
+        ["failed"] * cap() + ["capped"]                      # "capped" ends the workflow: no Temporal retry
 
 
-def test_headlines_rejected_twice_wait_for_new_news(client, fake, monkeypatch):  # noqa: F811
+def test_headlines_rejected_cap_times_wait_for_new_news(client, fake, monkeypatch):  # noqa: F811
     from app.ai import jobs, writer
-    results = iter([dict(REJECTED), dict(REJECTED),
-                    {"status": "ready", "body": {"items": []}, "model": "fake"}, dict(REJECTED)])
+    results = iter([dict(REJECTED) for _ in range(cap())]
+                   + [{"status": "ready", "body": {"items": []}, "model": "fake"}, dict(REJECTED)])
     calls = []
 
     def write(news, finals):
@@ -620,21 +625,21 @@ def test_headlines_rejected_twice_wait_for_new_news(client, fake, monkeypatch): 
     monkeypatch.setattr(writer, "write_headlines", write)
     news = "INSERT INTO news_items (league, espn_id, headline, published_at) VALUES ('nfl', '%s', '%s', now())"
     _sql(news % ("1", "Big news"))
-    assert [jobs.write_headlines(["nfl"], "schedule")["status"] for _ in range(2)] == ["failed", "failed"]
+    assert [jobs.write_headlines(["nfl"], "schedule")["status"] for _ in range(cap())] == ["failed"] * cap()
     assert jobs.write_headlines(["nfl"], "schedule") == {"status": "capped", "id": None}
-    assert len(calls) == 2
+    assert len(calls) == cap()
     _sql(news % ("2", "More news"))                          # new inputs: written (a ready set), which clears it
     assert jobs.write_headlines(["nfl"], "schedule")["status"] == "ready"
     _sql(news % ("3", "Even more"))
     assert jobs.write_headlines(["nfl"], "schedule")["status"] == "failed"          # counted afresh, not capped
-    assert len(calls) == 4
+    assert len(calls) == cap() + 2
 
 
 def test_a_manual_headlines_run_ignores_the_cap(client, fake, monkeypatch):  # noqa: F811
     from app.ai import jobs, writer
     monkeypatch.setattr(writer, "write_headlines", lambda news, finals: dict(REJECTED))
     _sql("INSERT INTO news_items (league, espn_id, headline, published_at) VALUES ('nfl', '1', 'Big news', now())")
-    for _ in range(2):
+    for _ in range(cap()):
         jobs.write_headlines(["nfl"], "schedule")
     assert jobs.write_headlines(["nfl"], "schedule")["status"] == "capped"
     assert jobs.write_headlines(["nfl"], "manual")["status"] == "failed"
@@ -652,7 +657,7 @@ def test_claim_resets_the_count_when_the_inputs_change(client, fake):  # noqa: F
             c = store.claim(conn, gid, "recap", basis, fingerprint)
             assert store.save(conn, c, {"status": "failed", "reason": "check failed twice"})
         return rejections(gid, "recap")
-    assert [fail("1-0"), fail("1-0")] == [1, 2]
+    assert [fail("1-0") for _ in range(cap())] == list(range(1, cap() + 1))
     assert fail("2-0") == 1                                # a corrected score: new inputs, counted afresh
     assert fail("2-0") == 2
     assert fail("2-0", "other-fingerprint") == 1           # a changed fact sheet: new inputs too
@@ -664,8 +669,9 @@ def test_headlines_rejections_are_counted_since_the_last_ready_set(client, fake)
     failed = {"status": "failed", "reason": "check failed twice"}
     ready_set = {"status": "ready", "body": {"items": []}, "model": "fake"}
     with db.connect() as conn:
-        store.save_headlines(conn, failed, "schedule", "fp-x")
-        store.save_headlines(conn, failed, "schedule", "fp-x")
+        for n in range(store.REJECTION_CAP):
+            assert store.headlines_rejected_out(conn, "fp-x") is False       # not yet
+            store.save_headlines(conn, failed, "schedule", "fp-x")
         assert store.headlines_rejected_out(conn, "fp-x") is True
         assert store.headlines_rejected_out(conn, "fp-y") is False          # other inputs
         store.save_headlines(conn, ready_set, "schedule", "fp-z")
@@ -698,7 +704,7 @@ def test_a_manual_job_writes_any_game_and_lifts_the_cap(client, fake, monkeypatc
     env = ActivityEnvironment()
     assert env.run(activities.write_text, TextJob("recap", "nfl", espn_id, "nightly")) == "skipped"
     fake["result"] = REJECTED
-    assert [jobs.write_for_game("recap", gid, "open")["status"] for _ in range(3)] == ["failed", "failed", "capped"]
+    assert [jobs.write_for_game("recap", gid, "open")["status"] for _ in range(cap() + 1)] ==         ["failed"] * cap() + ["capped"]
     fake["result"] = None
     assert env.run(activities.write_text, TextJob("recap", "nfl", espn_id, "manual")) == "ready"      # the runbook
     assert rejections(gid, "recap") == 0

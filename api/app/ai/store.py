@@ -20,7 +20,7 @@ FAILED_QUIET = timedelta(minutes=30)    # a page open doesn't retry a text that 
 QUEUED = "queued"                       # reason on a failed row a page open handed to the worker (main._hand_to_worker)
 # A text that failed this many times for reasons retrying won't fix (check failed twice, a non-retryable error) is
 # not written again for the same inputs (Adam, 2026-10-01): it waits for new ones. Rate limits and 5xx never count.
-REJECTION_CAP = 2
+REJECTION_CAP = 3                       # the first write and two retries (Adam, 2026-10-01)
 UNKNOWN = object()                      # "the inputs' fingerprint isn't known here" (the api doesn't compute one)
 
 
@@ -52,7 +52,7 @@ def counts_as_rejection(result: dict) -> bool:
 
 def rejected_out(row: dict | None, basis: str, fingerprint: object = UNKNOWN) -> bool:
     """The last claim, for these same inputs, has failed REJECTION_CAP times. The api passes no fingerprint (it
-    doesn't fetch articles): a text rejected twice for a game day or score stays on its fallback until that changes,
+    doesn't fetch articles): a text rejected REJECTION_CAP times for a game day or score stays on its fallback until that changes,
     and the worker, which does compute the fingerprint, writes again once the fact sheet or articles have."""
     return (bool(row) and row["rejections"] >= REJECTION_CAP and row["claim_basis"] == basis
             and (fingerprint is UNKNOWN or row["claim_fingerprint"] == fingerprint))

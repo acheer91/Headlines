@@ -264,8 +264,8 @@ def game_ai(game_id: int):
     status: ready | no_sources ("No fresh previews") | writing or queued (being written: the next pull may have it)
     | failed (the app shows fallback text) | missing.
     Current text comes back at once, and so does a text that failed for the same inputs in the last 30 minutes
-    (a pull shouldn't pay for the same failure again) or that was rejected twice for this game day or score
-    (ai_store.REJECTION_CAP). Otherwise this request writes it (or waits for whoever is
+    (a pull shouldn't pay for the same failure again) or that was rejected ai_store.REJECTION_CAP times
+    for this game day or score. Otherwise this request writes it (or waits for whoever is
     writing it) for up to AI_WAIT seconds; a write that runs longer finishes in the background."""
     with db.connect() as conn:
         game_row = db.game_by_id(conn, game_id)
@@ -278,7 +278,7 @@ def game_ai(game_id: int):
     basis = ai_jobs.row_basis(kind, game_row)
     # The api doesn't recompute a preview's fingerprint (that fetches articles): the 8 AM refresh does.
     if (ai_store.current(stored, basis) or ai_store.failed_recently(stored, basis)
-            or ai_store.rejected_out(stored, basis)):       # rejected twice for this game day or score: fallback
+            or ai_store.rejected_out(stored, basis)):       # rejected REJECTION_CAP times for this game day or score
         return _ai_out(kind, stored)
     if ai_store.being_written(stored) and ai_store.showable(stored):
         return _ai_out(kind, stored)            # a preview mid-refresh: its last good text, at once
