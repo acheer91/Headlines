@@ -2,7 +2,7 @@
 sheet, and angle_eval --fixtures scores them. Offline: ESPN is faked with saved payloads (summary_post.json is ESPN's
 summary of LAC @ BUF, the game in tests/fixtures/ai/final_lac_buf.json)."""
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -47,11 +47,19 @@ def down_switch(monkeypatch):
     monkeypatch.setattr(espn, "DOWN_SECONDS", espn.DOWN_SECONDS)
 
 
+UPCOMING = "401872999"
+
+
+def week_over(board):
+    """The board without its upcoming game: every game final or not played (canceled)."""
+    board["events"] = [e for e in board["events"] if e["id"] != UPCOMING]
+
+
 @pytest.fixture
 def espn_week(monkeypatch):
     """Week 3 with the LAC @ BUF final, an upcoming game and a canceled one. Returns the board and the calls made."""
     board = _board(_event("401872953", LAC_BUF["away"], LAC_BUF["home"]),
-                   _event("401872999", NYJ, MIA, state="pre", detail="10/4 - 1:00 PM EDT", completed=False),
+                   _event(UPCOMING, NYJ, MIA, state="pre", detail="10/4 - 1:00 PM EDT", completed=False),
                    _event("401872998", MIA, NYJ, detail="Canceled", name="STATUS_CANCELED", completed=False))
     calls = []
 
@@ -74,7 +82,7 @@ def test_a_final_is_the_api_payload(tmp_path, espn_week):
     # is the same payload, bets included, but for the database id and when the summary was fetched.
     _, calls = espn_week
     out = tmp_path / "wk3"
-    m = angle_fixtures.build(2026, 3, out, now=NOW)
+    m = angle_fixtures.build(2026, 3, out, now=NOW, partial=True)
     got = json.loads((out / "final_lac_buf.json").read_text(encoding="utf-8"))
     assert {k for k in set(got) | set(LAC_BUF) if got.get(k) != LAC_BUF.get(k)} == {"id", "summary_updated_at"}
     assert got["id"] is None and got["summary_updated_at"] == NOW.isoformat()
@@ -87,14 +95,33 @@ def test_a_final_is_the_api_payload(tmp_path, espn_week):
     assert m["finals"][0]["sha256"] == angle_fixtures.sha256(out / "final_lac_buf.json")
     assert m["skipped"] == [{"game": "MIA @ NYJ", "espn_id": "401872998", "why": "not played (Canceled)"},
                             {"game": "NYJ @ MIA", "espn_id": "401872999", "why": "not final (10/4 - 1:00 PM EDT)"}]
-    assert m["facts_py_sha256"] == angle_fixtures.sha256(Path(facts.__file__))
+    assert m["partial"] == ["NYJ @ MIA"]                                  # the canceled game doesn't count
+    assert m["facts_py_sha256"] == angle_fixtures.sha256(Path(facts.__file__)) == angle_eval.facts_sha256()
     assert json.loads((out / "manifest.json").read_text(encoding="utf-8")) == m
     assert sorted(p.name for p in out.iterdir()) == ["final_lac_buf.json", "labels_sheet.md", "manifest.json"]
 
 
+def test_a_week_not_over_writes_nothing_unless_partial(tmp_path, espn_week, capsys):
+    # Review (Oct 2): run before Monday night's summary settled, it wrote a short sheet and exited 0, and the bar
+    # quietly dropped (13 of 15 instead of 14 of 16).
+    out = tmp_path / "wk3"
+    with pytest.raises(ValueError, match=r"1 game\(s\) not final yet \(NYJ @ MIA: not final \(10/4 - 1:00 PM EDT\)\)"
+                                         r": run again once they are, or pass --partial"):
+        angle_fixtures.build(2026, 3, out, now=NOW)
+    assert not out.exists()
+    assert angle_fixtures.main(["--season", "2026", "--week", "3", "--out", str(out)]) == 2
+    assert "pass --partial" in capsys.readouterr().err and not out.exists()
+    week_over(espn_week[0])                                              # a canceled game never holds the week up
+    m = angle_fixtures.build(2026, 3, out, now=NOW)
+    assert m["partial"] == [] and [s["game"] for s in m["skipped"]] == ["MIA @ NYJ"]
+    assert (out / "labels_sheet.md").exists()
+
+
 def test_the_label_sheet_is_blind_and_its_reply_scores(tmp_path, espn_week, capsys):
-    out, sheet_path = tmp_path / "wk3", tmp_path / "sheets" / "z5_sheet.md"
-    sheet_path.parent.mkdir()
+    # The sheet goes to a folder that doesn't exist yet (review, Oct 2: that wrote the finals, then raised).
+    out, sheet_path = tmp_path / "wk4", tmp_path / "sheets" / "z5_sheet.md"
+    week_over(espn_week[0])
+    espn_week[0]["events"][0]["date"] = "2026-10-04T17:00Z"     # a week on: not the LAC @ BUF the rules were tuned on
     angle_fixtures.build(2026, 3, out, sheet_path, now=NOW)
     assert not (out / "labels_sheet.md").exists()                  # --labels-sheet put it elsewhere
     sheet = sheet_path.read_text(encoding="utf-8")
@@ -114,7 +141,10 @@ def test_the_label_sheet_is_blind_and_its_reply_scores(tmp_path, espn_week, caps
     labels = tmp_path / "labels.json"
     labels.write_text(json.dumps(reply | {"lac_buf": plan["angle"]}), encoding="utf-8")
     assert angle_eval.main(["--fixtures", str(out), "--labels", str(labels)]) == 0
-    assert "code matched 1/1 labelled finals (Z5 bar: 1 of 1): PASS" in capsys.readouterr().out
+    printed = capsys.readouterr().out
+    assert "code matched 1/1 labelled finals (Z5 bar: 1 of 1): PASS" in printed
+    assert f"NFL 2026 week 3, 1 finals; facts.py sha256 {angle_eval.facts_sha256()}" in printed
+    assert "PARTIAL" not in printed
 
 
 def test_nothing_is_written_under_tests(monkeypatch, capsys):
@@ -129,6 +159,7 @@ def test_nothing_is_written_under_tests(monkeypatch, capsys):
 
 
 def test_a_folder_with_other_games_is_refused(tmp_path, espn_week):
+    week_over(espn_week[0])
     out = tmp_path / "wk3"
     out.mkdir()
     (out / "final_phi_chi.json").write_text("{}", encoding="utf-8")
@@ -164,8 +195,12 @@ def test_a_summary_still_live_is_skipped(tmp_path, espn_week, monkeypatch, capsy
     live = json.loads(json.dumps(SUMMARY))
     live["header"]["competitions"][0]["status"]["type"].update(state="in", completed=False)
     monkeypatch.setattr(espn, "fetch_summary", lambda league, event_id, **kw: live)
-    m = angle_fixtures.build(2026, 3, tmp_path / "wk3", now=NOW)
-    assert m["finals"] == [] and m["sheet"] is None
+    week_over(espn_week[0])
+    with pytest.raises(ValueError, match="LAC @ BUF: ESPN's summary isn't final yet: run again"):
+        angle_fixtures.build(2026, 3, tmp_path / "wk3", now=NOW)
+    assert not (tmp_path / "wk3").exists()
+    m = angle_fixtures.build(2026, 3, tmp_path / "wk3", now=NOW, partial=True)
+    assert m["finals"] == [] and m["sheet"] is None and m["partial"] == ["LAC @ BUF"]
     assert m["skipped"][0] == {"game": "LAC @ BUF", "espn_id": "401872953",
                                "why": "ESPN's summary isn't final yet: run again"}
     assert not list((tmp_path / "wk3").glob("final_*.json")) and not (tmp_path / "wk3" / "labels_sheet.md").exists()
@@ -173,22 +208,37 @@ def test_a_summary_still_live_is_skipped(tmp_path, espn_week, monkeypatch, capsy
 
 def test_main_lists_the_finals_and_the_skipped(tmp_path, espn_week, capsys):
     out = tmp_path / "wk3"
-    assert angle_fixtures.main(["--season", "2026", "--week", "3", "--out", str(out)]) == 0
+    assert angle_fixtures.main(["--season", "2026", "--week", "3", "--out", str(out), "--partial"]) == 0
     printed = capsys.readouterr().out
     assert "NFL 2026 week 3: 1 finals written" in printed and "final_lac_buf.json  LAC @ BUF" in printed
     assert "skipped NYJ @ MIA (ESPN 401872999): not final" in printed and "labels_sheet.md" in printed
-    espn_week[0]["events"] = espn_week[0]["events"][1:]                 # only the upcoming and canceled games
-    assert angle_fixtures.main(["--season", "2026", "--week", "3", "--out", str(tmp_path / "early")]) == 1
+    assert "PARTIAL: 1 game(s) left out as not final; the bar counts only the 1 finals written" in printed
+    week_over(espn_week[0])
+    assert angle_fixtures.main(["--season", "2026", "--week", "3", "--out", str(tmp_path / "whole")]) == 0
+    assert "PARTIAL" not in capsys.readouterr().out
+    espn_week[0]["events"] = [_event(UPCOMING, NYJ, MIA, state="pre", detail="10/4 - 1:00 PM EDT", completed=False)]
+    assert angle_fixtures.main(["--season", "2026", "--week", "3", "--out", str(tmp_path / "early")]) == 2
+    assert angle_fixtures.main(["--season", "2026", "--week", "3", "--out", str(tmp_path / "early"), "--partial"]) == 1
     assert "no finals yet" in capsys.readouterr().out
 
 
 # ---------- angle_eval --fixtures ----------
 
+def _fresh(folder, names, days=7, manifest=None):
+    """Copies of test finals moved `days` later (a week the rules haven't seen), with angle_fixtures' manifest."""
+    folder.mkdir(exist_ok=True)
+    for n in names:
+        g = json.loads((FIX / "ai" / f"{n}.json").read_text(encoding="utf-8"))
+        g["start_time"] = (datetime.fromisoformat(g["start_time"]) + timedelta(days=days)).isoformat()
+        (folder / f"{n}.json").write_text(json.dumps(g), encoding="utf-8")
+    m = {"season": 2026, "week": 4, "facts_py_sha256": angle_eval.facts_sha256(), "partial": []}
+    (folder / "manifest.json").write_text(manifest if manifest is not None else json.dumps(m), encoding="utf-8")
+    return folder
+
+
 def test_angle_eval_scores_another_folder(tmp_path, capsys):
     names = ["final_ne_jax", "final_sea_wsh", "final_lac_buf"]
-    for n in names:
-        (tmp_path / f"{n}.json").write_bytes((FIX / "ai" / f"{n}.json").read_bytes())
-    (tmp_path / "manifest.json").write_text("{}", encoding="utf-8")           # only final_*.json are finals
+    _fresh(tmp_path, names)                                                   # only final_*.json are finals
     assert list(angle_eval.finals(tmp_path)) == ["lac_buf", "ne_jax", "sea_wsh"]
     assert angle_eval.angles_file(tmp_path)["fixtures"] == ["lac_buf", "ne_jax", "sea_wsh"]
     assert len(angle_eval.finals()) == 16                                     # the default is unchanged
@@ -209,6 +259,32 @@ def test_angle_eval_scores_another_folder(tmp_path, capsys):
     empty.mkdir()
     assert angle_eval.main(["--fixtures", str(empty)]) == 2
     assert "no final_*.json" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("folder,why", [
+    (lambda tmp: _fresh(tmp / "old", ["final_ne_jax"], manifest=json.dumps({"facts_py_sha256": "0" * 64})),
+     "facts.py has changed since the set was built"),
+    (lambda tmp: _fresh(tmp / "bare", ["final_ne_jax"], manifest="{}"), "manifest.json can't be read (KeyError)"),
+    (lambda tmp: _fresh(tmp / "week3", ["final_ne_jax", "final_lac_buf"], days=0),
+     "lac_buf, ne_jax: finals the angle rules were tuned on"),
+    (lambda tmp: FIX / "ai", "under tests/"),
+    (lambda tmp: (_fresh(tmp / "torn", ["final_ne_jax"]), (tmp / "torn" / "final_x.json").write_text("{"))[0],
+     "can't be read (JSONDecodeError)"),
+])
+def test_angle_eval_scores_only_a_fresh_set(tmp_path, capsys, folder, why):
+    # Review (Oct 2): --fixtures never checked the manifest's facts.py sha256 against facts.py's.
+    labels = tmp_path / "labels.json"
+    labels.write_text(json.dumps({"angles": list(facts.ANGLES), "ne_jax": "blowout"}), encoding="utf-8")
+    assert angle_eval.main(["--fixtures", str(folder(tmp_path)), "--labels", str(labels)]) == 2
+    printed = capsys.readouterr()
+    assert why in printed.err and "code matched" not in printed.out
+
+
+def test_angle_eval_flags_a_partial_set(tmp_path, capsys):
+    m = {"season": 2026, "week": 4, "facts_py_sha256": angle_eval.facts_sha256(), "partial": ["ATL @ NO"]}
+    _fresh(tmp_path, ["final_ne_jax"], manifest=json.dumps(m))
+    assert angle_eval.main(["--fixtures", str(tmp_path)]) == 0
+    assert "PARTIAL: built with --partial, without 1 game(s) that weren't final (ATL @ NO)" in capsys.readouterr().out
 
 
 def test_the_bar_is_85_percent_rounded_up():

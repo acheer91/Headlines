@@ -2,7 +2,7 @@
 First drafts of the 16 fixture finals in three arms, scored claim by claim by people on review_sheet.py's sheet.
 
     python -m app.ai.outline_eval                           # dry run (the default): 120b tokens per arm, nothing sent
-    python -m app.ai.outline_eval --run --arm outline+low --labels z5_labels.json   # one arm's first drafts (120b)
+    python -m app.ai.outline_eval --run --arm outline+low --labels <labels.json> --z5-fixtures <dir>   # one arm (120b)
     python -m app.ai.outline_eval --sheet                   # rebuild the blind review file and sheet from the drafts
     python -m app.ai.outline_eval --tally filled.csv        # errors per claim by arm, once the sheet is filled in
 
@@ -15,10 +15,14 @@ only in docs/phase4-t3-key.json), and its sheet docs/phase4-t3-review-sheet.csv.
 The sheet's causes (T3_CAUSES) add "wrong quarter" and "order in a quarter" in place of "temporal claim"; the tally
 counts the cause column exactly, and a "temporal claim" there as a possible wrong quarter.
 
-PARKED while Z5 fails (Oct 2: 11/16; prep plan §3: M3 is gated on Z5 and T3, so a T3 run before Z5 passes spends
-~200K of 120b on an outline that can't ship). A real run needs --run and refuses unless (prep plan §6: evals that
-spend 120b run on weekdays, at most 100K a day):
-  * --labels names a Z5 labels file that passes angle_eval (14 of 16; its sha256 goes into the ledger and the key);
+PARKED until Z5 passes on a fresh set (prep plan §3: M3 is gated on Z5 and T3, so a T3 run before Z5 passes spends
+~200K of 120b on an outline that can't ship). Z5 failed 11/16 on Oct 2; the angle rules were then changed on those
+labels, which now score 15/16 in-sample and can't open this gate. A real run needs --run and refuses unless (prep
+plan §6: evals that spend 120b run on weekdays, at most 100K a day):
+  * --labels names Z5 labels that pass angle_eval on --z5-fixtures <dir>, a fresh set angle_fixtures built
+    (angle_eval.fresh_set_problem: not under tests/, its manifest's facts.py sha256 still facts.py's, none of the 16
+    finals the rules were tuned on); the bar is 85% of its finals, rounded up; the labels' sha256 goes into the
+    ledger and the key;
   * the eval ledger (checks/phase4_tokens.json, phase4_eval.py's format) shows under 100K tokens in the last 24 h, and
     that plus this run's high estimate fits in 100K, so one arm a day (an arm is 48-82K on the dry run);
   * it is a weekday in Pacific time;
@@ -95,26 +99,34 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def z5_problem(labels: Path | None) -> str | None:
-    """Why Z5 doesn't clear T3 to run (prep plan §3: M3 is gated on both), or None when `labels` passes."""
+def z5_problem(labels: Path | None, fixtures: Path | None) -> str | None:
+    """Why Z5 doesn't clear T3 to run (prep plan §3: M3 is gated on both), or None when `labels` pass on `fixtures`,
+    a fresh set (angle_eval.fresh_set_problem): never the 16 finals the angle rules were tuned on."""
     if labels is None:
-        return (f"Z5 hasn't passed: name a labels file that does with --labels (python -m app.ai.angle_eval; "
-                f"{angle_eval.PASS_BAR} of 16)")
+        return ("Z5 hasn't passed: name a fresh set's labels that do with --labels and its folder with --z5-fixtures "
+                "(python -m app.ai.angle_fixtures, then angle_eval --fixtures; 85% of its finals)")
+    if fixtures is None:
+        return ("Z5 needs the fresh set the labels were made from: --z5-fixtures <dir> (python -m "
+                "app.ai.angle_fixtures); the 16 test fixtures are the finals the angle rules were tuned on")
+    fresh = angle_eval.fresh_set_problem(fixtures)
+    if fresh:
+        return f"Z5 fixtures: {fresh}"
     try:
-        rows = angle_eval.evaluate(angle_eval.read_labels(labels))
+        rows = angle_eval.evaluate(angle_eval.read_labels(labels, fixtures), fixtures)
     except (OSError, ValueError) as exc:
         return f"Z5 labels {labels}: {exc}"
     if not angle_eval.passed(rows):
         hits, labelled = sum(r["match"] for r in rows), sum(r["label"] is not None for r in rows)
         return (f"Z5 fails on {labels.name}: code matched {hits}/{labelled} labelled finals (needs "
-                f"{angle_eval.PASS_BAR} of {len(rows)}); after a change to the angle rules, label a fresh set")
+                f"{angle_eval.bar(len(rows))} of {len(rows)}); after a change to the angle rules, label a fresh set")
     return None
 
 
-def refusals(arms: list[str], est: dict, ledger: Path, now: datetime, labels: Path | None = None) -> list[str]:
+def refusals(arms: list[str], est: dict, ledger: Path, now: datetime, labels: Path | None = None,
+             fixtures: Path | None = None) -> list[str]:
     """Every reason a real run may not start now; empty = it may."""
     why = []
-    z5 = z5_problem(labels)
+    z5 = z5_problem(labels, fixtures)
     if z5:
         why.append(z5)
     try:
@@ -328,7 +340,10 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--tally", type=Path, help="a filled review sheet: errors per claim by arm")
     ap.add_argument("--out", type=Path, default=DOCS, help="where the drafts, review file, key and sheet go")
     ap.add_argument("--ledger", type=Path, default=LEDGER, help="the eval ledger (phase4_eval.py's format)")
-    ap.add_argument("--labels", type=Path, help="Z5 labels (angle_eval's format): a real run needs them to pass")
+    ap.add_argument("--labels", type=Path, help="Z5 labels (angle_eval's format): a real run needs them to pass "
+                    "on --z5-fixtures")
+    ap.add_argument("--z5-fixtures", type=Path, help="the fresh set the labels were made from (python -m "
+                    "app.ai.angle_fixtures): a real run needs it")
     ap.add_argument("--redo", action="store_true", help="write again finals an arm has already drafted")
     args = ap.parse_args(argv)
     games = finals()
@@ -356,12 +371,13 @@ def main(argv: list[str]) -> int:
         print(f"eval ledger: can't read {args.ledger} ({type(exc).__name__})")
     done = Counter(d["arm"] for d in load_drafts(args.out / "phase4-t3-drafts.json").values())
     print("drafts saved: " + ", ".join(f"{a} {done[a]}/{len(games)}" for a in ARMS))
-    print(f"Z5: {z5_problem(args.labels) or 'passes (' + args.labels.name + ')'}")
+    z5 = z5_problem(args.labels, args.z5_fixtures)
+    print(z5 or f"Z5 passes ({args.labels.name} on {args.z5_fixtures})")       # every z5_problem starts "Z5"
     if not args.run:
         print("dry run: nothing was sent (a real run needs --run)")
         return 0
     samples._load_keys()
-    why = refusals(arms, est, args.ledger, now, args.labels)
+    why = refusals(arms, est, args.ledger, now, args.labels, args.z5_fixtures)
     if why:
         print("refused: " + "; ".join(why))
         return 1

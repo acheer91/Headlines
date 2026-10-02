@@ -1,7 +1,7 @@
 """Z5's fresh set (Oct 2): one NFL week's regular-season finals as recap fixtures, plus a blind label sheet. Zero
 tokens and no database: ESPN's public scoreboard and game summaries, read and parsed by the app's own code.
 
-    python -m app.ai.angle_fixtures --season 2026 --week 4 --out <dir> [--labels-sheet <file>]
+    python -m app.ai.angle_fixtures --season 2026 --week 4 --out <dir> [--labels-sheet <file>] [--partial]
     python -m app.ai.angle_eval --fixtures <dir> --labels <labels.json>        # once the blind labeller replies
 
 --week is ESPN's regular-season week (season type 2). The 16 finals in tests/fixtures/ai (Sep 24-28) are ESPN's
@@ -12,14 +12,16 @@ Writes into --out, which may not be under tests/ (the angle rules were tuned on 
                             /api/games/{id} payload: games.card and games.detail on the game's ESPN summary, the game
                             moved forward by that summary and graded on ESPN's closing line, as a page pull does.
                             "id" is None: no database row is read.
-  manifest.json             season, week, when, facts.py's sha256, each final's ESPN event id and file sha256, and
-                            the games skipped.
+  manifest.json             season, week, when, facts.py's sha256, each final's ESPN event id and file sha256, the
+                            games skipped, and "partial": the games left out as not final (empty: the whole week).
   labels_sheet.md           (or --labels-sheet <file>) the blind sheet: the allowed angle ids with their meanings
                             (angle_eval.angles_file) and each final's recap fact sheet (facts.recap_facts). Never
                             code's angle, its outline or the rule order.
-Games that aren't final (upcoming, live, canceled, postponed, or a summary that hasn't caught up) are skipped and
-listed: run it after Monday night's game. A scoreboard event that doesn't parse, a summary ESPN won't send, or an
---out already holding final_*.json for other games stops the run before anything is written.
+A canceled or postponed game ("not played") is skipped and listed. Any other game that isn't final (upcoming, live,
+or a summary that hasn't caught up) stops the run before anything is written: run it after Monday night's game.
+--partial writes the week without those (listed in the manifest's "partial"; the bar then counts only the finals
+written, so it is not the whole week Z5 pre-registered). A scoreboard event that doesn't parse, a summary ESPN won't
+send, or an --out already holding final_*.json for other games also stops the run before anything is written.
 """
 from __future__ import annotations
 
@@ -38,7 +40,8 @@ LEAGUE = "nfl"
 REGULAR_SEASON = 2
 TESTS = Path(__file__).resolve().parents[2] / "tests"
 SHEET = "labels_sheet.md"
-MANIFEST = "manifest.json"
+MANIFEST = angle_eval.MANIFEST
+NOT_PLAYED = "not played"           # canceled or postponed: never a final, so it doesn't hold the week up
 
 
 class _BetResults:
@@ -150,7 +153,7 @@ def week_finals(season: int, week: int, now: datetime,
     for g in sorted(parsed, key=lambda g: (g.start_time, g.espn_id)):
         game = f"{g.away.abbr} @ {g.home.abbr}"
         if g.state != "post" or not g.completed:
-            why = "not played" if g.state == "post" else "not final"         # post but not completed: canceled
+            why = NOT_PLAYED if g.state == "post" else "not final"           # post but not completed: canceled
             skipped.append({"game": game, "espn_id": g.espn_id, "why": f"{why} ({g.status_detail or g.state})"})
             continue
         p = payload(g, espn.fetch_summary(LEAGUE, g.espn_id, base_url=base_url), favs, now)
@@ -188,29 +191,37 @@ def sha256(path: Path) -> str:
 
 
 def build(season: int, week: int, out: Path, sheet: Path | None = None, now: datetime | None = None,
-          base_url: str = espn.BASE) -> dict:
+          base_url: str = espn.BASE, partial: bool = False) -> dict:
     """Fetch the week, write the fixtures, manifest and sheet; returns the manifest. Raises ValueError (nothing
-    written) for an --out under tests/ or holding other games' fixtures, or a week that can't be read whole."""
+    written) for an --out under tests/ or holding other games' fixtures, a week that can't be read whole, or (unless
+    partial) a game that isn't final yet and wasn't canceled or postponed."""
     now = now or datetime.now(timezone.utc)
     if out.resolve().is_relative_to(TESTS.resolve()):
         raise ValueError(f"{out} is under tests/: fresh fixtures stay out of the set the rules were tuned on")
     made, skipped = week_finals(season, week, now, base_url)
+    unfinished = [s for s in skipped if not s["why"].startswith(NOT_PLAYED)]
+    if unfinished and not partial:
+        raise ValueError(f"{len(unfinished)} game(s) not final yet ("
+                         + "; ".join(f"{s['game']}: {s['why']}" for s in unfinished)
+                         + "): run again once they are, or pass --partial to label the week without them")
     strays = sorted(p.name for p in out.glob("final_*.json") if p.stem not in made) if out.exists() else []
     if strays:
         raise ValueError(f"{out} already holds other games' fixtures ({', '.join(strays)}): use an empty folder")
+    sheet = sheet or out / SHEET
     out.mkdir(parents=True, exist_ok=True)
+    if made:
+        sheet.parent.mkdir(parents=True, exist_ok=True)     # before any final is written: no fixtures without a sheet
     finals = []
     for name, (espn_id, p) in made.items():
         path = out / f"{name}.json"
         path.write_text(json.dumps(p, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
         finals.append({"fixture": name, "espn_id": espn_id, "game": f"{p['away']['abbr']} @ {p['home']['abbr']}",
                        "sha256": sha256(path)})
-    sheet = sheet or out / SHEET
     if made:
         sheet.write_text(sheet_text(season, week, out), encoding="utf-8")
     manifest = {"season": season, "week": week, "season_type": REGULAR_SEASON, "built_at": now.isoformat(),
                 "facts_py_sha256": sha256(Path(facts.__file__)), "sheet": str(sheet) if made else None,
-                "finals": finals, "skipped": skipped}
+                "finals": finals, "skipped": skipped, "partial": [s["game"] for s in unfinished]}
     (out / MANIFEST).write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
     return manifest
 
@@ -221,10 +232,12 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--week", type=int, required=True, help="ESPN's regular-season week")
     ap.add_argument("--out", type=Path, required=True, help="folder for the fixtures (not under tests/)")
     ap.add_argument("--labels-sheet", type=Path, help=f"where the blind sheet goes (default <out>/{SHEET})")
+    ap.add_argument("--partial", action="store_true", help="write the week without the games that aren't final "
+                    "yet (default: refuse until they are)")
     args = ap.parse_args(argv)
     espn.disable_down_switch()              # a batch: an ESPN hiccup retries instead of skipping the host
     try:
-        m = build(args.season, args.week, args.out, args.labels_sheet)
+        m = build(args.season, args.week, args.out, args.labels_sheet, partial=args.partial)
     except (OSError, ValueError, espn.ESPNError) as exc:
         print(f"angle_fixtures: {exc}", file=sys.stderr)
         return 2
@@ -233,6 +246,9 @@ def main(argv: list[str]) -> int:
         print(f"  {f['fixture']}.json  {f['game']}  (ESPN {f['espn_id']})")
     for s in m["skipped"]:
         print(f"  skipped {s['game']} (ESPN {s['espn_id']}): {s['why']}")
+    if m["partial"]:
+        print(f"PARTIAL: {len(m['partial'])} game(s) left out as not final; the bar counts only the "
+              f"{len(m['finals'])} finals written, so this isn't the whole week")
     if not m["finals"]:
         print("no finals yet: nothing to label")
         return 1

@@ -1,7 +1,7 @@
 """The Z5 and T3 harnesses (M3, 2026-10-02) with a fake model: no tokens, no network, no database."""
 import csv
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -91,9 +91,24 @@ def test_the_estimate_counts_the_outline_and_low_reasoning():
     assert all(hi < outline_eval.DAY_CAP for _, _, hi in est.values())          # one arm fits a day
 
 
-def z5_labels(tmp_path, misses=0):
-    """A Z5 labels file: code's own angle for every final, with `misses` of them labelled otherwise."""
-    labels = {g: facts.recap_outline(f)["angle"] for g, f in angle_eval.finals().items()}
+def fresh_set(tmp_path, name="fresh", n=16, days=7, sha=None):
+    """A fresh Z5 set as angle_fixtures writes it: `n` of the test finals moved `days` later (so none is a final the
+    rules were tuned on) and a manifest with facts.py's sha256 (or `sha`)."""
+    out = tmp_path / name
+    out.mkdir(exist_ok=True)
+    for g, f in list(angle_eval.finals().items())[:n]:
+        start = datetime.fromisoformat(f["start_time"]) + timedelta(days=days)
+        (out / f"final_{g}.json").write_text(json.dumps(f | {"start_time": start.isoformat()}), encoding="utf-8")
+    (out / "manifest.json").write_text(json.dumps({"season": 2026, "week": 4, "partial": [],
+                                                   "facts_py_sha256": sha or angle_eval.facts_sha256()}),
+                                       encoding="utf-8")
+    return out
+
+
+def z5_labels(tmp_path, misses=0, fixtures=None):
+    """A Z5 labels file for a set (default: fresh_set's): code's own angle for every final, with `misses` of them
+    labelled otherwise."""
+    labels = {g: facts.recap_outline(f)["angle"] for g, f in angle_eval.finals(fixtures or fresh_set(tmp_path)).items()}
     for g in list(labels)[:misses]:
         labels[g] = "routine_win" if labels[g] != "routine_win" else "blowout"
     path = tmp_path / f"z5_{misses}.json"
@@ -106,7 +121,7 @@ def test_a_real_run_is_refused_over_the_ledger_on_weekends_or_without_120b(tmp_p
     monkeypatch.setattr(client, "WRITERS", [])
     est = outline_eval.estimate(angle_eval.finals())
     z5 = z5_labels(tmp_path)
-    no = lambda arms, path, now=THURSDAY: outline_eval.refusals(arms, est, path, now, z5)
+    no = lambda arms, path, now=THURSDAY: outline_eval.refusals(arms, est, path, now, z5, fresh_set(tmp_path))
     assert no(["outline+low"], ledger(tmp_path, 30_000)) == []
     assert "under 100,000" in no(["medium"], ledger(tmp_path, 100_000))[0]
     assert "one arm a day" in no(["medium"], ledger(tmp_path, 40_000))[0]
@@ -127,24 +142,58 @@ def test_a_real_run_waits_for_z5(tmp_path, monkeypatch):
     monkeypatch.setenv("GROQ_API_KEY", "test-not-a-key")
     monkeypatch.setattr(client, "WRITERS", [])
     est, book = outline_eval.estimate(angle_eval.finals()), ledger(tmp_path, 0)
+    fresh = fresh_set(tmp_path)
+    no = lambda labels, fixtures=fresh: outline_eval.refusals(["outline+low"], est, book, THURSDAY, labels, fixtures)
     assert "Z5 hasn't passed" in outline_eval.refusals(["outline+low"], est, book, THURSDAY)[0]
-    assert outline_eval.refusals(["outline+low"], est, book, THURSDAY, z5_labels(tmp_path, misses=2)) == []   # 14/16
-    why = outline_eval.refusals(["outline+low"], est, book, THURSDAY, z5_labels(tmp_path, misses=5))
+    assert no(z5_labels(tmp_path, misses=2)) == []                                                    # 14/16
+    why = no(z5_labels(tmp_path, misses=5))
     assert why == ["Z5 fails on z5_5.json: code matched 11/16 labelled finals (needs 14 of 16); after a change to "
                    "the angle rules, label a fresh set"]
+    # The bar is 85% of the fresh set's finals: 13 of 15 passes, 12 of 15 doesn't.
+    fifteen = fresh_set(tmp_path, "fifteen", n=15)
+    assert no(z5_labels(tmp_path, misses=2, fixtures=fifteen), fifteen) == []
+    assert "matched 12/15 labelled finals (needs 13 of 15)" in no(z5_labels(tmp_path, 3, fifteen), fifteen)[0]
     partial = tmp_path / "partial.json"
     partial.write_text(json.dumps({"angles": ["blowout"], "phi_chi": "blowout"}), encoding="utf-8")
-    assert "Z5 fails" in outline_eval.refusals(["outline+low"], est, book, THURSDAY, partial)[0]
-    assert "Z5 labels" in outline_eval.refusals(["outline+low"], est, book, THURSDAY, tmp_path / "none.json")[0]
+    assert "Z5 fails" in no(partial)[0]
+    assert "Z5 labels" in no(tmp_path / "none.json")[0]
+    assert "--z5-fixtures" in no(z5_labels(tmp_path), None)[0]
+
+
+def test_z5_never_opens_on_the_finals_the_rules_were_tuned_on(tmp_path, monkeypatch):
+    # Review (Oct 2): the rules were changed on the Oct 2 labels, which then passed 15/16 on the 16 fixtures and
+    # opened the gate; and real labels of a fresh week were refused as "no such fixture final".
+    monkeypatch.setenv("GROQ_API_KEY", "test-not-a-key")
+    monkeypatch.setattr(client, "WRITERS", [])
+    est, book = outline_eval.estimate(angle_eval.finals()), ledger(tmp_path, 0)
+    no = lambda labels, fixtures: outline_eval.refusals(["outline+low"], est, book, THURSDAY, labels, fixtures)
+    in_sample = z5_labels(tmp_path, misses=1, fixtures=angle_eval.FIX)                           # 15/16, like Oct 2
+    assert "under tests/" in no(in_sample, angle_eval.FIX)[0]
+    copy = fresh_set(tmp_path, "week3_again", days=0)               # ESPN's week 3 rebuilt elsewhere, manifest and all
+    assert "finals the angle rules were tuned on" in no(in_sample, copy)[0]
+    stale = fresh_set(tmp_path, "old_rules", sha="0" * 64)
+    assert "facts.py has changed since the set was built" in no(z5_labels(tmp_path, fixtures=stale), stale)[0]
+    bare = fresh_set(tmp_path, "no_manifest")
+    (bare / "manifest.json").unlink()
+    assert "manifest.json can't be read" in no(z5_labels(tmp_path, fixtures=bare), bare)[0]
+    assert no(z5_labels(tmp_path), fresh_set(tmp_path)) == []
+
+
+def test_a_real_run_needs_labels_and_their_fresh_set(tmp_path, monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "test-not-a-key")
+    monkeypatch.setattr(client, "WRITERS", [])
     calls = []
     monkeypatch.setattr(outline_eval, "run", lambda *a, **kw: calls.append(a) or 0)
     monkeypatch.setattr(outline_eval.samples, "_load_keys", lambda: None)
-    argv = ["--run", "--arm", "outline+low", "--out", str(tmp_path), "--ledger", str(book)]
+    argv = ["--run", "--arm", "outline+low", "--out", str(tmp_path), "--ledger", str(ledger(tmp_path, 0))]
     monkeypatch.setattr(outline_eval, "datetime", type("D", (datetime,), {"now": staticmethod(lambda tz=None: THURSDAY)}))
+    fresh, labels = fresh_set(tmp_path), z5_labels(tmp_path)
     assert outline_eval.main(argv) == 1 and calls == []                                   # no labels: refused
-    assert outline_eval.main(argv + ["--labels", str(z5_labels(tmp_path, misses=5))]) == 1 and calls == []
+    assert outline_eval.main(argv + ["--labels", str(labels)]) == 1 and calls == []        # no fresh set: refused
+    failing = z5_labels(tmp_path, misses=5)
+    assert outline_eval.main(argv + ["--labels", str(failing), "--z5-fixtures", str(fresh)]) == 1 and calls == []
     labels = z5_labels(tmp_path)
-    assert outline_eval.main(argv + ["--labels", str(labels)]) == 0
+    assert outline_eval.main(argv + ["--labels", str(labels), "--z5-fixtures", str(fresh)]) == 0
     assert calls[0][4] == outline_eval.sha256(labels)                                     # the run records the labels
 
 

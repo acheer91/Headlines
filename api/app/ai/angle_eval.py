@@ -8,26 +8,32 @@ no network, no database.
     python -m app.ai.angle_eval --fixtures <dir> --labels <labels.json>   # a fresh set (app.ai.angle_fixtures)
 
 Fixtures: the 16 finals in tests/fixtures/ai (ESPN's 2026 week 3, Sep 24-28, which the Oct 2 notes call "week 4"),
-or --fixtures <dir>: every final_*.json there, in the same shape (angle_fixtures writes them).
+or --fixtures <dir>: every final_*.json there, in the same shape (angle_fixtures writes them). --fixtures takes only
+a fresh set (fresh_set_problem): not under tests/, its manifest.json's facts.py sha256 still facts.py's (the report
+prints it: check it against docs/z5-preregistration.txt), and none of the 16 finals the rules were tuned on.
 Labels: {"angles": [the allowed ids], "<fixture name>": "<angle id>", ...}, a fixture named as in its folder
 ("final_phi_chi" or "phi_chi"). The labeller picks each final's lead story blind, from its fact sheet and the
 meanings in facts.ANGLES (never the rules, which --angles-out leaves out and lists alphabetically, not by
 priority). Pass bar (prep plan, Z5): code matches at least PASS_SHARE (85%) of the finals, rounded up: 14 of 16, 13
 of 15, 12 of 14. The first labels (Oct 2) matched 11/16 on the 16 fixtures: FAIL. The rules were then changed (margin
 first, Adam's NE @ JAX call), so those 16 are in-sample: their 15/16 since proves nothing, and the change is
-pre-registered for a fresh, blind set (CLAUDE.md, "Z5 week-5 test"). Retuning the angle rules on finals already
-labelled fits them in-sample: after any change, label a fresh set.
+pre-registered for a fresh, blind set (docs/z5-preregistration.txt; CLAUDE.md, "Z5 week-5 test"). Retuning the
+angle rules on finals already labelled fits them in-sample: after any change, label a fresh set.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from . import facts
 
-FIX = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "ai"
+TESTS = Path(__file__).resolve().parents[2] / "tests"
+FIX = TESTS / "fixtures" / "ai"
+MANIFEST = "manifest.json"      # angle_fixtures writes it next to a fresh set's finals
 PASS_SHARE = 85                 # percent of the finals code must match
 
 
@@ -36,13 +42,59 @@ def bar(n: int) -> int:
     return -(-PASS_SHARE * n // 100)
 
 
-PASS_BAR = bar(16)              # 14: the bar on the 16 test fixtures (outline_eval's messages name it)
+PASS_BAR = bar(16)              # 14: the bar on the 16 test fixtures
 
 
 def finals(fixtures: Path | None = None) -> dict[str, dict]:
     """The fixture finals by name without the prefix ('phi_chi'), in name order: tests/fixtures/ai, or `fixtures`."""
     return {p.stem.removeprefix("final_"): json.loads(p.read_text(encoding="utf-8"))
             for p in sorted((fixtures or FIX).glob("final_*.json"))}
+
+
+def facts_sha256() -> str:
+    """facts.py's sha256 now: the rules being scored (pre-registered in docs/z5-preregistration.txt)."""
+    return hashlib.sha256(Path(facts.__file__).read_bytes()).hexdigest()
+
+
+def _game(g: dict) -> tuple:
+    """A final's kickoff and teams: the same game whatever folder or file name it was copied to."""
+    start = g.get("start_time")
+    try:
+        start = datetime.fromisoformat(start)       # "...Z" and "...+00:00" are the same kickoff
+    except (TypeError, ValueError):
+        pass
+    return start, (g.get("away") or {}).get("abbr"), (g.get("home") or {}).get("abbr")
+
+
+def fresh_set_problem(fixtures: Path) -> str | None:
+    """Why `fixtures` isn't a fresh set Z5 can be scored on, or None: it is under tests/ (the rules were tuned on the
+    finals there), holds no final_*.json, has no readable manifest.json with facts.py's sha256 (angle_fixtures writes
+    it), was built under another facts.py (the rules or the fact sheets changed since), or holds a final the rules
+    were tuned on (the same kickoff and teams as one in tests/fixtures/ai, e.g. ESPN's week 3 rebuilt)."""
+    if fixtures.resolve().is_relative_to(TESTS.resolve()):
+        return (f"{fixtures} is under tests/: the angle rules were tuned on those finals; build a fresh set with "
+                "python -m app.ai.angle_fixtures")
+    try:
+        got = finals(fixtures)
+    except (OSError, ValueError) as exc:
+        return f"a final_*.json in {fixtures} can't be read ({type(exc).__name__}): rebuild the set"
+    if not got:
+        return f"no final_*.json in {fixtures}"
+    try:
+        built = json.loads((fixtures / MANIFEST).read_text(encoding="utf-8"))["facts_py_sha256"]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return (f"{fixtures / MANIFEST} can't be read ({type(exc).__name__}): build the set with python -m "
+                "app.ai.angle_fixtures")
+    now = facts_sha256()
+    if built != now:
+        return (f"facts.py has changed since the set was built (manifest {str(built)[:12]}..., now {now[:12]}...): "
+                "its sheet and the rules scored differ; build and label a fresh set")
+    tuned = {_game(g) for g in finals().values()}
+    seen = [name for name, g in got.items() if _game(g) in tuned]
+    if seen:
+        return (f"{', '.join(seen)}: finals the angle rules were tuned on (tests/fixtures/ai); label a week they "
+                "haven't seen")
+    return None
 
 
 def angles_file(fixtures: Path | None = None) -> dict:
@@ -120,9 +172,18 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--fixtures", type=Path, help="score the final_*.json in this folder (python -m "
                     "app.ai.angle_fixtures) instead of the 16 in tests/fixtures/ai")
     args = ap.parse_args(argv)
-    if args.fixtures and not finals(args.fixtures):
-        print(f"fixtures: no final_*.json in {args.fixtures}", file=sys.stderr)
-        return 2
+    if args.fixtures:
+        problem = fresh_set_problem(args.fixtures)
+        if problem:
+            print(f"fixtures: {problem}", file=sys.stderr)
+            return 2
+        m = json.loads((args.fixtures / MANIFEST).read_text(encoding="utf-8"))
+        print(f"fresh set {args.fixtures}: NFL {m.get('season')} week {m.get('week')}, {len(finals(args.fixtures))} "
+              f"finals; facts.py sha256 {facts_sha256()} (as when it was built; check it against "
+              "docs/z5-preregistration.txt)")
+        if m.get("partial"):
+            print(f"PARTIAL: built with --partial, without {len(m['partial'])} game(s) that weren't final "
+                  f"({', '.join(map(str, m['partial']))}): not the whole week that was pre-registered")
     if args.angles_out:
         args.angles_out.write_text(json.dumps(angles_file(args.fixtures), indent=1, ensure_ascii=False) + "\n",
                                    encoding="utf-8")

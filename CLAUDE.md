@@ -148,20 +148,26 @@ Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `ph
   report compares recap rewrites per first draft with 0.586). M4 trims the one-liner's FACTS to its prompt's hooks
   (`facts.LIVE_STATS`/`LIVE_LEADERS`; claims_ok still knows every leader). M3 (code's recap outline,
   `facts.recap_outline`, and a low-reasoning recap writer) has no production switch: Z5 (`python -m app.ai.angle_eval
-  --labels ...`) matched 11/16 on Oct 2, FAIL, so T3 (`python -m app.ai.outline_eval`, built, never run) refuses to
-  run until a labels file passes 14/16. M9 (headline candidates by rule) is not built: Z3 failed. The compose worker
+  --labels ...`) matched 11/16 on Oct 2, FAIL. T3 (`python -m app.ai.outline_eval`, built, never run) refuses a real
+  run until `--labels` pass Z5 on `--z5-fixtures <dir>`, a fresh set (`angle_eval.fresh_set_problem`: not under
+  tests/, its manifest's facts.py sha256 still facts.py's, none of the 16 finals the rules were tuned on), so the Oct 2
+  labels can't open it. M9 (headline candidates by rule) is not built: Z3 failed. The compose worker
   waits for the api to be healthy (migrations applied).
-- **Z5 week-5 test** (pre-registered Oct 2 in commit 92491ad: facts.py sha256 `554727d6...8387a4`, rule order in its
-  body). Adam ruled NE @ JAX a blowout, so the recap angle now checks the margin first (blowout, close_finish, then
-  outgained_but_lost, turnovers): 15/16 on the Oct 2 labels, but in-sample, so it proves nothing. outline_eval's gate
-  still scores the 16 fixtures, where those labels now pass: never hand T3 the Oct 2 labels. "Week 5" is ESPN's
+- **Z5 week-5 test** (pre-registered Oct 2: `docs/z5-preregistration.txt`, facts.py sha256 `554727d6...8387a4`, rule
+  order also in commit 92491ad). Adam ruled NE @ JAX a blowout, so the recap angle now checks the margin first
+  (blowout, close_finish, then outgained_but_lost, turnovers): 15/16 on the Oct 2 labels, but in-sample, so it proves
+  nothing. "Week 5" is ESPN's
   regular-season **week 4** (Oct 1-5): the 16 fixtures (Sep 24-28) are ESPN's week 3, which the Oct 2 notes call week 4.
   1. After Monday night's game: `python -m app.ai.angle_fixtures --season 2026 --week 4 --out <dir>` (ESPN only: no
-     tokens, no database; never under tests/). It lists games skipped as not final; rerun once they are.
-  2. A blind labeller (Adam, or an agent that has never seen facts.py, angle_eval output or an outline) labels from
-     `<dir>/labels_sheet.md` alone, writes the labels JSON in the sheet's reply format and its sha256, before scoring.
-  3. Check facts.py's sha256 is still the pre-registered one, then `python -m app.ai.angle_eval --fixtures <dir>
-     --labels <labels.json>`. **Pass bar: code matches at least 85% of the finals, rounded up** (13 of 15, 14 of 16).
+     tokens, no database; never under tests/). A game not final yet (not canceled or postponed) stops it with nothing
+     written: rerun once it is. `--partial` writes the week without it (manifest `partial`): not the pre-registered week.
+  2. A blind labeller: Adam, or an agent that has never seen facts.py, angle_eval output or an outline, **started
+     outside `C:/Users/axos2/Desktop/Headliners` with no file tools and the text of `<dir>/labels_sheet.md` pasted into
+     its prompt** (this file and the project memory name the rule order; never the session that changed the rules).
+     Save its reply (the labels JSON, the sheet's reply format) and its sha256 before scoring.
+  3. `python -m app.ai.angle_eval --fixtures <dir> --labels <labels.json>`: it refuses a set that isn't fresh and prints
+     facts.py's sha256: check it is the pre-registered one. **Pass bar: code matches at least 85% of the finals, rounded
+     up** (13 of 15, 14 of 16). On a pass, T3: `outline_eval --run --labels <labels.json> --z5-fixtures <dir>`.
      Any rule change after a look needs another fresh week.
 - **Tests:** `tests/test_ai_*.py` (no live model calls), `test_workflows.py` (every simulated game runs a fake `ai`
   worker: a waiting AI task stops time-skipping), `test_replay.py` (old histories replay with the patches), `test_ai_replay.py` / `test_ai_review_sheet.py` (need git history; skipped without it).
