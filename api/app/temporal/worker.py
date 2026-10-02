@@ -1,5 +1,5 @@
 """The Temporal worker: every workflow and activity on task queue `scores`, and the AI text activity on `ai`
-(at most 3 at once, one per free Groq model, so AI work never delays ESPN work).
+(one at a time, for the single writer gpt-oss-120b; AI work never delays ESPN work).
 
     python -m app.temporal.worker
 """
@@ -22,7 +22,8 @@ from .workflows import AI_QUEUE, TASK_QUEUE, WORKFLOWS
 
 TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
 TEMPORAL_NAMESPACE = os.environ.get("TEMPORAL_NAMESPACE", "default")
-AI_AT_ONCE = int(os.environ.get("AI_AT_ONCE", "3"))
+# One writer (CTO, 2026-10-01) with 8K tokens a minute: a second text at once would only queue on its minute.
+AI_AT_ONCE = int(os.environ.get("AI_AT_ONCE", "1"))
 log = logging.getLogger("worker")
 
 
@@ -49,7 +50,8 @@ async def main() -> None:
     loop = asyncio.get_running_loop()
     # The 8 AM preview step runs in a thread; it starts the refresh workflow through this loop's client.
     activities.start_text = lambda job: asyncio.run_coroutine_threadsafe(start_text(client, job), loop).result(30)
-    # Threads for the synchronous activities; the database pool has 8 connections (ESPN work 5, AI text 3).
+    # Threads for the synchronous activities; the database pool has 8 connections (ESPN work 5, AI text 1, the rest
+    # spare for the quota queries each AI call makes).
     with (ThreadPoolExecutor(max_workers=5, thread_name_prefix="activity") as pool,
           ThreadPoolExecutor(max_workers=AI_AT_ONCE, thread_name_prefix="ai") as ai_pool):
         worker = Worker(client, task_queue=TASK_QUEUE, workflows=WORKFLOWS,

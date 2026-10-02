@@ -254,6 +254,43 @@ def test_extract_is_stored_by_url(model):
     assert res["extract"]["edges"]["home"][0] == {"fact": "Bears forced 9 turnovers", "url": ARTICLE["url"]}
 
 
+def test_extract_carries_its_articles_and_survives_a_rate_limit_on_the_write(model, monkeypatch):
+    """A rate limit after the extract call hands the extract back, so the retry doesn't pay for it again."""
+    replies = iter([PREVIEW_FACTS])
+
+    def write(prompt, json_out=False):
+        try:
+            return json.dumps(next(replies))
+        except StopIteration:
+            raise client.RateLimited("every model cooling down", 600) from None
+    monkeypatch.setattr(client, "write", write)
+    res = writer.write_preview(PRE, [ARTICLE])
+    assert res["status"] == "failed" and res["retry_after"] == 600
+    assert res["extract"]["urls"] == [ARTICLE["url"]]
+    assert res["extract"]["edges"]["home"][0]["url"] == ARTICLE["url"]
+
+
+def test_failures_say_whether_the_setup_or_the_text_was_at_fault(monkeypatch):
+    def failing(exc):
+        def write(prompt, json_out=False):
+            raise exc
+        monkeypatch.setattr(client, "write", write)
+        return writer.write_recap(GAME)
+    assert failing(client.NoKey("no key"))["unconfigured"] is True            # fix the setup, not the text
+    assert failing(client.NoChecker("none"))["unconfigured"] is True
+    assert "unconfigured" not in failing(client.TooLarge("too big"))           # the text's own inputs
+    limited = failing(client.RateLimited("429", 90))
+    assert limited["retry_after"] == 90 and "unconfigured" not in limited
+    assert failing(client.AIError("503"))["retry_after"] == writer.TRANSIENT_RETRY
+
+
+def test_a_check_failure_does_not_hand_back_the_extract(model):
+    model([PREVIEW_FACTS, {"preview": "too short", "edges": {"home": [], "away": []}},
+           {"preview": "too short", "edges": {"home": [], "away": []}}])
+    res = writer.write_preview(PRE, [ARTICLE])
+    assert res["status"] == "failed" and "extract" not in res
+
+
 # ---------- box-score claims checked in code (2026-09-30 eval: real sentences from it) ----------
 
 def _claims(fixture, text):

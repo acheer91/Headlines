@@ -23,7 +23,7 @@ __all__ = ["GameWorkflow", "GameInput", "ScheduleSyncWorkflow", "HeadlinesWorkfl
            "PreviewBatchWorkflow", "LeftoverWorkflow", "WORKFLOWS"]
 
 TASK_QUEUE = "scores"
-AI_QUEUE = "ai"        # Phase 4: AI text activities, at most 3 at once (one per Groq model), never delaying ESPN work
+AI_QUEUE = "ai"        # Phase 4: AI text activities, AI_AT_ONCE (1) at a time, never delaying ESPN work
 
 # ESPN policy: 30 s per attempt, retries from 10 s doubling to a 10-minute cap, giving up after 6 hours.
 ESPN_POLICY = dict(
@@ -46,6 +46,12 @@ TEXT_POLICY = dict(
     schedule_to_close_timeout=timedelta(hours=12),
     retry_policy=RetryPolicy(initial_interval=timedelta(minutes=5), backoff_coefficient=2.0,
                              maximum_interval=timedelta(hours=3), maximum_attempts=8),
+)
+# Is this final on the pre-write list? A database read; if it keeps failing the recap is skipped here and the nightly
+# job (or the page open) writes it.
+RECAP_DUE_POLICY = dict(
+    start_to_close_timeout=timedelta(seconds=30),
+    retry_policy=RetryPolicy(initial_interval=timedelta(seconds=10), maximum_attempts=3),
 )
 BATCH_AHEAD = timedelta(days=6)           # a midweek batch covers games through the following Monday night
 LEFTOVER_PREVIEWS = timedelta(days=3)     # the nightly job: previews for the next 3 days ...
@@ -208,15 +214,27 @@ class GameWorkflow:
     async def _final(self) -> str:
         graded = await self._grade()
         if workflow.patched("ai-recap"):
-            await start_text(TextJob("recap", self._league, self._espn_id, "final"))
+            await self._start_recap()
         await workflow.sleep(REGRADE_AFTER)
         regraded = await self._grade()
         if regraded != graded:
             if workflow.patched("ai-recap"):
                 # A stat correction changed the score: the recap's basis changed, so it is rewritten once.
-                await start_text(TextJob("recap", self._league, self._espn_id, "final"))
+                await self._start_recap()
             return f"graded {graded}, regraded {regraded} after a stat correction"
         return f"graded {graded}"
+
+    async def _start_recap(self) -> None:
+        """Start the recap's WriteTextWorkflow, only for a game written ahead (the pre-write list, an AI league):
+        every other recap is written when its page is opened, so no workflow is started for it."""
+        try:
+            due = await workflow.execute_activity(act.recap_due, args=[self._league, self._espn_id],
+                                                  result_type=bool, **RECAP_DUE_POLICY)
+        except ActivityError as exc:
+            workflow.logger.warning("recap_due gave up: %s", exc.cause or exc)
+            return
+        if due:
+            await start_text(TextJob("recap", self._league, self._espn_id, "final"))
 
     async def _grade(self) -> list[int]:
         try:
@@ -310,7 +328,7 @@ async def _start_all(leagues: list[str], what: str, ahead: timedelta, reason: st
 @workflow.defn
 class PreviewBatchWorkflow:
     """Midweek (Adam, 2026-09-29): write the coming weekend's previews ahead. It only starts one WriteTextWorkflow
-    per game; the `ai` queue's limit of 3 at once is what spreads them over the Groq models."""
+    per game; the `ai` queue (one text at a time, one writer) is what spaces them over the writer's minute."""
 
     @workflow.run
     async def run(self, leagues: list[str]) -> int:

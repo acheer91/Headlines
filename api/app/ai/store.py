@@ -17,6 +17,10 @@ from psycopg.types.json import Jsonb
 # a worker writer can wait minutes for quota while holding its claim.
 WRITING_TIMEOUT = timedelta(minutes=16)
 FAILED_QUIET = timedelta(minutes=30)    # a page open doesn't retry a text that failed this recently (same basis)
+# A text that failed this many times for reasons retrying won't fix (check failed twice, a non-retryable error) is
+# not written again for the same inputs (Adam, 2026-10-01): it waits for new ones. Rate limits and 5xx never count.
+REJECTION_CAP = 2
+UNKNOWN = object()                      # "the inputs' fingerprint isn't known here" (the api doesn't compute one)
 
 
 class Claim(NamedTuple):
@@ -37,6 +41,20 @@ def current(row: dict | None, basis: str, fingerprint: str | None = None) -> boo
     if not row or row["status"] not in ("ready", "no_sources") or row["basis"] != basis:
         return False
     return fingerprint is None or row["fingerprint"] == fingerprint
+
+
+def counts_as_rejection(result: dict) -> bool:
+    """A failure retrying the same inputs won't fix: any failure that doesn't name a time to try again, except a
+    missing key or checker (the setup's fault, not the text's)."""
+    return result["status"] == "failed" and not result.get("retry_after") and not result.get("unconfigured")
+
+
+def rejected_out(row: dict | None, basis: str, fingerprint: object = UNKNOWN) -> bool:
+    """The last claim, for these same inputs, has failed REJECTION_CAP times. The api passes no fingerprint (it
+    doesn't fetch articles): a text rejected twice for a game day or score stays on its fallback until that changes,
+    and the worker, which does compute the fingerprint, writes again once the fact sheet or articles have."""
+    return (bool(row) and row["rejections"] >= REJECTION_CAP and row["claim_basis"] == basis
+            and (fingerprint is UNKNOWN or row["claim_fingerprint"] == fingerprint))
 
 
 def being_written(row: dict | None) -> bool:
@@ -70,6 +88,9 @@ def claim(conn, game_id: int, kind: str, basis: str, fingerprint: str | None = N
         ON CONFLICT (game_id, kind) WHERE game_id IS NOT NULL DO UPDATE
             SET status = 'writing', claim_basis = EXCLUDED.claim_basis,
                 claim_fingerprint = EXCLUDED.claim_fingerprint, reason = EXCLUDED.reason,
+                rejections = CASE WHEN ai_texts.claim_basis IS NOT DISTINCT FROM EXCLUDED.claim_basis
+                                   AND ai_texts.claim_fingerprint IS NOT DISTINCT FROM EXCLUDED.claim_fingerprint
+                                  THEN ai_texts.rejections ELSE 0 END,
                 attempts = ai_texts.attempts + 1, updated_at = now()
             WHERE ai_texts.status = 'failed'
                OR (ai_texts.status IN ('ready', 'no_sources') AND (
@@ -91,30 +112,50 @@ def save(conn, c: Claim, result: dict) -> bool:
         row = conn.execute("""
             UPDATE ai_texts SET status = %s, body = %s, sources = %s, extract = %s, writer = %s, checker = %s,
                                 basis = claim_basis, fingerprint = claim_fingerprint, last_error = NULL,
-                                written_at = now(), updated_at = now()
+                                rejections = 0, written_at = now(), updated_at = now()
             WHERE id = %s AND status = 'writing' AND attempts = %s RETURNING id""",
                            (result["status"], Jsonb(result.get("body")), Jsonb(result.get("sources")),
                             Jsonb(result.get("extract")), result.get("model"), result.get("checker"),
                             c.id, c.token)).fetchone()
     else:
+        # A transient failure (rate limit, 5xx) after the extract call hands back that extract: keep it, so the
+        # retry doesn't pay for the extract again. A check failure hands back none: a row that had none extracts
+        # afresh next time (a row that already holds one, from a text it wrote, keeps it).
+        extract = result.get("extract")
         row = conn.execute("""
             UPDATE ai_texts SET status = CASE WHEN kind = 'preview' AND body IS NOT NULL THEN 'ready'
                                               ELSE 'failed' END,
-                                last_error = %s, updated_at = now()
+                                extract = COALESCE(%s, extract), last_error = %s,
+                                rejections = rejections + %s, updated_at = now()
             WHERE id = %s AND status = 'writing' AND attempts = %s RETURNING id""",
-                           (result.get("reason"), c.id, c.token)).fetchone()
+                           (Jsonb(extract) if extract else None, result.get("reason"),
+                            int(counts_as_rejection(result)), c.id, c.token)).fetchone()
     conn.commit()
     return row is not None
 
 
-def save_headlines(conn, result: dict, reason: str) -> int:
+def save_headlines(conn, result: dict, reason: str, fingerprint: str | None = None) -> int:
+    """fingerprint: what the set was written from (jobs.headlines_fingerprint), so an unchanged run can skip."""
     row = conn.execute("""
-        INSERT INTO ai_texts (kind, status, body, writer, checker, reason, last_error, attempts, written_at)
-        VALUES ('headlines', %s, %s, %s, %s, %s, %s, 1, CASE WHEN %s = 'ready' THEN now() END) RETURNING id""",
+        INSERT INTO ai_texts (kind, status, body, writer, checker, reason, last_error, attempts, fingerprint,
+                              rejections, written_at)
+        VALUES ('headlines', %s, %s, %s, %s, %s, %s, 1, %s, %s, CASE WHEN %s = 'ready' THEN now() END) RETURNING id""",
                        (result["status"], Jsonb(result.get("body")), result.get("model"), result.get("checker"),
-                        reason, result.get("reason"), result["status"])).fetchone()
+                        reason, result.get("reason"), fingerprint, int(counts_as_rejection(result)),
+                        result["status"])).fetchone()
     conn.commit()
     return row["id"]
+
+
+def headlines_rejected_out(conn, fingerprint: str) -> bool:
+    """This run's inputs have failed REJECTION_CAP times since the last ready set (one failed row per run)."""
+    n = conn.execute("""
+        SELECT count(*) AS n FROM ai_texts
+        WHERE kind = 'headlines' AND status = 'failed' AND rejections > 0 AND fingerprint = %s
+          AND created_at > coalesce((SELECT max(created_at) FROM ai_texts
+                                     WHERE kind = 'headlines' AND status = 'ready'), '-infinity')""",
+                     (fingerprint,)).fetchone()["n"]
+    return n >= REJECTION_CAP
 
 
 def latest_headlines(conn) -> dict | None:

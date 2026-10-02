@@ -227,7 +227,8 @@ def game_ai(game_id: int):
     one-liner is the box-score template) or in a league without AI text (AI_LEAGUES).
     status: ready | no_sources ("No fresh previews") | failed or writing (the app shows fallback text) | missing.
     Current text comes back at once, and so does a text that failed for the same inputs in the last 30 minutes
-    (a pull shouldn't pay for the same failure again). Otherwise this request writes it (or waits for whoever is
+    (a pull shouldn't pay for the same failure again) or that was rejected twice for this game day or score
+    (ai_store.REJECTION_CAP). Otherwise this request writes it (or waits for whoever is
     writing it) for up to AI_WAIT seconds; a write that runs longer finishes in the background."""
     with db.connect() as conn:
         game_row = db.game_by_id(conn, game_id)
@@ -239,7 +240,8 @@ def game_ai(game_id: int):
         stored = ai_store.get(conn, game_id, kind)
     basis = ai_jobs.row_basis(kind, game_row)
     # The api doesn't recompute a preview's fingerprint (that fetches articles): the 8 AM refresh does.
-    if ai_store.current(stored, basis) or ai_store.failed_recently(stored, basis):
+    if (ai_store.current(stored, basis) or ai_store.failed_recently(stored, basis)
+            or ai_store.rejected_out(stored, basis)):       # rejected twice for this game day or score: fallback
         return _ai_out(kind, stored)
     if ai_store.being_written(stored) and ai_store.showable(stored):
         return _ai_out(kind, stored)            # a preview mid-refresh: its last good text, at once

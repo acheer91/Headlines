@@ -43,6 +43,8 @@ class Fake:
         self.grade_failures = grade_failures
         self.sync = sync or []
         self.news = 0
+        self.recap_due = True                  # is the final on the pre-write list?
+        self.recap_due_failures = 0            # recap_due raises this many times first (it retries 3 times)
 
     def _log(self, name):
         self.calls.append((name, activity.info().current_attempt_scheduled_time))
@@ -76,6 +78,14 @@ class Fake:
                 raise ApplicationError("database hiccup")
             return self.grades.pop(0) if len(self.grades) > 1 else self.grades[0]
 
+        @activity.defn(name="recap_due")
+        async def recap_due(league: str, espn_id: str) -> bool:
+            self._log("recap_due")
+            if self.recap_due_failures:
+                self.recap_due_failures -= 1
+                raise ApplicationError("database hiccup")
+            return self.recap_due
+
         @activity.defn(name="sync_schedule")
         async def sync_schedule(league: str) -> list[GameRef]:
             self._log("sync_schedule")
@@ -87,7 +97,8 @@ class Fake:
             self.news += 3
             return 3
 
-        return [save_line, generate_preview, fetch_game_state, fetch_summary, grade_game, sync_schedule, fetch_news]
+        return [save_line, generate_preview, fetch_game_state, fetch_summary, grade_game, recap_due, sync_schedule,
+                fetch_news]
 
 
 def st(state, start, hs=None, as_=None, postponed=False, completed=None):
@@ -403,6 +414,24 @@ async def test_recap_written_at_the_final(env):
     assert result == "graded [21, 20]"
     assert [(j.kind, j.reason) for j, _ in ai.jobs] == [("recap", "final")]
     assert close(ai.jobs[0][1], fake.times("grade_game")[0])            # right after the first grade
+
+
+async def test_final_off_the_prewrite_list_starts_no_recap_workflow(env):
+    start = await now(env) + timedelta(hours=2)
+    fake, ai = Fake(states=[st("post", start, 21, 20)], grades=[[21, 20]]), FakeAI()
+    fake.recap_due = False
+    result, handle = await run_game(env, fake, start, ai=ai)
+    assert result == "graded [21, 20]"
+    assert ai.jobs == [] and len(fake.times("recap_due")) == 1          # asked once, nothing started
+
+
+async def test_recap_due_failing_does_not_fail_the_game(env):
+    start = await now(env) + timedelta(hours=2)
+    fake, ai = Fake(states=[st("post", start, 21, 20)], grades=[[21, 20]]), FakeAI()
+    fake.recap_due_failures = 99
+    result, handle = await run_game(env, fake, start, ai=ai)
+    assert result == "graded [21, 20]" and ai.jobs == []                # the nightly job covers the recap
+    assert len(fake.times("recap_due")) == 3                            # 3 tries, then given up
 
 
 async def test_stat_correction_rewrites_the_recap_once(env):

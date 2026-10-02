@@ -222,19 +222,31 @@ def generate_preview(league: str, espn_id: str) -> None:
 
 
 @activity.defn
+def recap_due(league: str, espn_id: str) -> bool:
+    """Does this final get a recap written ahead? Only a game on the pre-write list in an AI league (app.ai.scope);
+    every other recap is written when its page is opened. GameWorkflow asks before starting WriteTextWorkflow, so
+    a college Saturday doesn't start ~60 workflows that would each end as "skipped"."""
+    return ai_scope.is_prewritten(_stored(league, espn_id))
+
+
+@activity.defn
 def write_text(job: TextJob) -> str:
     """Write, fact-check and store one text (app.ai.jobs). Runs on the `ai` task queue. Returns the outcome
-    (ready / failed / no_sources / current / busy / skipped / missing). All models rate-limited: raises a
-    retryable error with Groq's own wait as the next retry delay, so WriteTextWorkflow comes back when the
-    quota is there instead of on a fixed backoff."""
+    (ready / failed / no_sources / current / busy / skipped / missing / capped). Models rate-limited: raises a
+    retryable error with Groq's own wait as the next retry delay, so WriteTextWorkflow comes back when the quota is
+    there instead of on a fixed backoff. A text that needs a model while the writer (or every allowed checker) is
+    cooling down or out of budget is turned away before it is claimed or drafted (preflight). `capped`: rejected
+    store.REJECTION_CAP times for these inputs, so it waits for new ones (no retry). A "manual" job (the runbook)
+    ignores both the pre-write list and that cap."""
     if job.kind == "headlines":
-        out = ai_jobs.write_headlines([x for x in job.league.split(",") if x], job.reason)
+        out = ai_jobs.write_headlines([x for x in job.league.split(",") if x], job.reason, preflight=True)
     else:
         row = _stored(job.league, job.espn_id)
-        if not ai_scope.is_prewritten(row):
-            # Off the pre-write list (e.g. the recap GameWorkflow starts at every final): written on open instead.
+        if job.reason != "manual" and not ai_scope.is_prewritten(row):
+            # Off the pre-write list (the list changed since it was started): written on open instead. A manual
+            # job (the runbook) writes any game in an AI league, which is also how a capped text is lifted.
             return "skipped"
-        out = ai_jobs.write_for_game(job.kind, row["id"], job.reason, base_url=ESPN_BASE)
+        out = ai_jobs.write_for_game(job.kind, row["id"], job.reason, base_url=ESPN_BASE, preflight=True)
     if out["status"] == "failed" and out.get("retry_after"):
         wait = min(max(out["retry_after"], 60.0), 3 * 3600.0)
         raise ApplicationError(f"{job.kind} {job.espn_id or ''}: every model rate-limited", type="RateLimited",
@@ -261,5 +273,5 @@ def texts_to_write(league: str, what: str, hours: int) -> list[str]:
 
 
 ALL = [sync_schedule, save_line, fetch_game_state, fetch_summary, grade_game, fetch_news, generate_preview,
-       texts_to_write]
-AI = [write_text]        # the `ai` task queue: at most 3 at once, one per Groq model
+       texts_to_write, recap_due]
+AI = [write_text]        # the `ai` task queue: AI_AT_ONCE at a time (1: one writer)

@@ -82,14 +82,40 @@ Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `ph
   (`config/favorites.json`) or college ranked vs ranked. Every other text is written the first time its page is
   opened (~15 s). Checked in activities at the moment a text is due, so the list keeps itself current.
 - **One queue per model, 120b first:** a model whose minute is full is waited for (worker) or given up on (page open:
-  fallback text); the next model is used only when one is cooling down after a 429 or erroring (Qwen invented claims
-  as a writer). Claims carry a token and their own basis; a failed refresh keeps the last good preview.
+  fallback text); a backup is used only when one is cooling down after a 429 or erroring (Qwen invented claims as a
+  writer; since 2026-10-01 the routes name no backup writer, so a limited writer means a Temporal retry or the
+  fallback). Claims carry a token and their own basis; a failed refresh keeps the last good preview.
 - **When text is written (Temporal):** `WriteTextWorkflow` per text (ID `ai-<kind>-<league>-<espn_id>`), activity
-  `write_text` on task queue `ai` (3 at once); a rate limit retries after Groq's own wait (`next_retry_delay`), up to
-  8 tries / 12 h. Midweek `PreviewBatchWorkflow` (NCAAF Wed+Thu, NFL Thu+Fri, 7 PM PT); the 8 AM `generate_preview`
-  step starts a refresh that rewrites only if the fingerprint (injuries, line, articles) changed; recap at every final
-  (`ai-recap` patch) and again after a changed regrade; headlines after each news pull (`ai-headlines` patch);
-  `LeftoverWorkflow` nightly 9:30 PM PT.
+  `write_text` on task queue `ai` (1 at a time, `AI_AT_ONCE`: one writer, 8K tokens a minute); a rate limit retries
+  after Groq's own wait (`next_retry_delay`), up to 8 tries / 12 h. Midweek `PreviewBatchWorkflow` (NCAAF Wed+Thu, NFL
+  Thu+Fri, 7 PM PT); the 8 AM `generate_preview` step starts a refresh that rewrites only if the fingerprint (injuries,
+  line, articles) changed; at a final, the `ai-recap` patch asks activity `recap_due` and starts the recap only for a
+  pre-write-list game in an AI league (again after a changed regrade); headlines after each news pull (`ai-headlines`
+  patch); `LeftoverWorkflow` nightly 9:30 PM PT. The `ai-*` schedules are created only for `AI_LEAGUES`.
+- **Worker savings (2026-10-01):** *preflight* (`client.unavailable_for`, `jobs.write_for_game/write_headlines(preflight=True)`,
+  worker only): when a text needs a model and the writer, or every checker outside its family that has a key, is
+  cooling down or out of budget, `write_text` raises `RateLimited` with the wait before the text is claimed or
+  drafted (nothing is spent on a draft nobody can check); a text that is already current is still "current", and a
+  preview with no articles still becomes "no sources". The page, and for a preview the article lookup (a Groq search
+  when ESPN has under 2 fresh articles, ~1.6K tokens of the search model's own budget), run first: the fingerprint
+  that decides those cases needs them. A preview's saved extract
+  carries its article URLs (`extract.urls`) and is kept on a rate-limit or 5xx failure, so the retry skips the extract
+  call (a check failure keeps none). Headlines with the same news and finals as the last ready set return `current`
+  (fingerprint in `ai_texts.fingerprint`; a manual run always writes).
+- **Rejection cap (Adam, 2026-10-01; migration 009 `ai_texts.rejections`, `store.REJECTION_CAP = 2` failed writes in
+  total, the first and one retry):** a text that fails twice for a reason retrying the same inputs won't fix (the fact check rejected it twice, a crash, too large) is not
+  written again until its inputs change: `jobs.write_for_game` returns `capped` (any caller: worker, refresh, nightly,
+  open) and the activity ends without a Temporal retry. Inputs = the claim's game day or score (api, which doesn't
+  compute fingerprints) plus, for the worker, the fact-sheet/article fingerprint. Rate limits, 5xx and a missing key or
+  checker (`unconfigured`) never count. The next claim for different inputs resets the count; a ready text clears it.
+  Headlines count failed rows for the same fingerprint since the last ready set. A "manual" job ignores the cap and
+  the pre-write list (runbook below); a search that returns different links is a new fingerprint, so the cap holds
+  best for a stable article set; the api's cap is basis-only, so an open-only game stays on its fallback for the day.
+  Held: spend-aware batch (E2, no token numbers yet) and storing the unchecked draft (migration 010, only if Qwen's
+  production rejection rate says it pays).
+- **The `ai-recap` patch has never run anywhere**, so it was changed in place on 2026-10-01 (the `recap_due` step) and
+  the four post-patch histories in `tests/fixtures/histories/` re-recorded (`SAVE_HISTORIES=1`). After the first
+  deploy, any change here needs a new `workflow.patched` id.
 - **On open (api):** `GET /api/games/{id}/ai` returns current text at once, else writes it within 20 s (preview) or
   10 s, **never waiting for quota** (`client.no_wait()`); `GET /api/headlines` for Screen A. A live game has no AI text
   (`none`). `written_at` (migration 008) is when the shown text was written: a failed refresh keeps the last good
@@ -150,6 +176,9 @@ change deployed mid-week), 3 real game histories as replay fixtures.
 - Kickoff changed, sync hasn't run: `workflow signal -w nfl-<espn_id> --name reschedule --input '{"start_iso": "2026-10-04T20:25:00+00:00"}'`
   (UTC with offset; preview_iso optional, default keeps the same lead)
 - Stuck after a bug fix: `workflow reset -w nfl-<espn_id> --type LastWorkflowTask`
+- Write one AI text now, lifting a cap (any game in an AI league): `workflow start --type WriteTextWorkflow
+  --task-queue scores --workflow-id ai-recap-nfl-<espn_id> --input '{"kind":"recap","league":"nfl","espn_id":"<espn_id>","reason":"manual"}'`
+  (`preview` for a preview). Lift every cap: `UPDATE ai_texts SET rejections = 0 WHERE rejections > 0;` (psql in `db`).
 - Beyond saving: `workflow terminate -w nfl-<espn_id> --reason ...`, then trigger ScheduleSync (starts a fresh one)
 - Failures: UI filter `ExecutionStatus='Failed'`, every Monday after the weekend
 - Save a real history for the replay test: `workflow show -w nfl-<espn_id> -o json > api/tests/fixtures/histories/<name>.json`

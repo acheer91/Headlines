@@ -32,7 +32,8 @@ def fake(client, monkeypatch):  # noqa: F811
         if not articles:
             return {"status": "no_sources", "model": "fake"}
         return state["result"] or ready("preview", sources=[{k: a[k] for k in ("title", "url", "outlet", "published")}
-                                                            for a in articles], extract={"storylines": []})
+                                                            for a in articles],
+                                        extract={"storylines": [], "urls": sorted(a["url"] for a in articles)})
 
     def recap(page):
         state["calls"]["recap"] += 1
@@ -168,7 +169,8 @@ def test_preview_refresh_reuses_the_extract_when_only_our_data_changed(client, f
     _sql("DELETE FROM game_summaries WHERE game_id = %s", gid)                         # injuries change on refetch
     _sql("UPDATE ai_texts SET fingerprint = 'old' WHERE game_id = %s", gid)
     assert jobs.write_for_game("preview", gid, "refresh")["status"] == "ready"
-    assert fake["calls"]["preview"][0] is None and fake["calls"]["preview"][-1] == {"storylines": []}
+    assert fake["calls"]["preview"][0] is None
+    assert fake["calls"]["preview"][-1] == {"storylines": [], "urls": [ARTICLE["url"]]}
 
 
 def test_headlines_endpoint(client, fake, monkeypatch):  # noqa: F811
@@ -377,3 +379,359 @@ def test_games_off_the_prewrite_list_are_left_for_page_opens(client, fake, monke
     assert env.run(activities.texts_to_write, "nfl", "previews", 144) == []
     favorite(monkeypatch, tmp_path, "BUF")
     assert env.run(activities.texts_to_write, "nfl", "previews", 144) == ["401900001"]
+
+
+# ---------- worker-side savings (2026-10-01): preflight, a saved extract, unchanged headlines, recap_due ----------
+
+def test_preflight_turns_a_text_away_before_it_is_claimed_or_drafted(client, fake, monkeypatch):  # noqa: F811
+    from app.ai import client as ai_client, jobs
+    gid = fake["ids"]["DAL"]
+    monkeypatch.setattr(ai_client, "unavailable_for", lambda kind: 600.0)
+    assert jobs.write_for_game("recap", gid, "final", preflight=True) == \
+        {"status": "failed", "id": None, "retry_after": 600.0}
+    assert fake["calls"]["recap"] == 0
+    assert _sql("SELECT count(*) FROM ai_texts WHERE game_id = %s", gid) == [(0,)]       # no row claimed
+    assert jobs.write_for_game("recap", gid, "open")["status"] == "ready"                 # the api never asks
+    assert jobs.write_for_game("recap", gid, "final", preflight=True)["status"] == "current"   # nothing to write
+
+
+def test_preflight_turns_a_preview_away_after_the_article_lookup_but_before_the_claim(client, fake, monkeypatch):  # noqa: F811
+    from app.ai import client as ai_client, jobs, sources
+    gid = fake["ids"]["BUF"]
+    lookups = []
+
+    def find(page, news, **kw):
+        lookups.append(1)
+        return [ARTICLE], []
+    monkeypatch.setattr(sources, "find_articles", find)
+    monkeypatch.setattr(ai_client, "unavailable_for", lambda kind: 600.0)
+    assert jobs.write_for_game("preview", gid, "midweek", preflight=True) == \
+        {"status": "failed", "id": None, "retry_after": 600.0}
+    assert lookups == [1]                                  # the fingerprint needs the articles, so they come first
+    assert fake["calls"]["preview"] == []                  # nothing drafted
+    assert _sql("SELECT count(*) FROM ai_texts WHERE game_id = %s", gid) == [(0,)]       # nothing claimed
+
+
+def test_preflight_lets_a_sourceless_preview_through(client, fake, monkeypatch):  # noqa: F811
+    from app.ai import client as ai_client, jobs
+    fake["articles"] = []
+    monkeypatch.setattr(ai_client, "unavailable_for", lambda kind: 600.0)       # no model is needed for "no sources"
+    assert jobs.write_for_game("preview", fake["ids"]["BUF"], "midweek", preflight=True)["status"] == "no_sources"
+
+
+def test_write_text_waits_for_a_limited_model_instead_of_claiming(client, fake, monkeypatch, tmp_path):  # noqa: F811
+    favorite(monkeypatch, tmp_path, "DAL")
+    from temporalio.exceptions import ApplicationError
+    from temporalio.testing import ActivityEnvironment
+    from app.ai import client as ai_client
+    from app.temporal import activities
+    from app.temporal.models import TextJob
+    monkeypatch.setattr(ai_client, "unavailable_for", lambda kind: 900.0)
+    espn_id = _sql("SELECT espn_id FROM games WHERE id = %s", fake["ids"]["DAL"])[0][0]
+    with pytest.raises(ApplicationError) as err:
+        ActivityEnvironment().run(activities.write_text, TextJob("recap", "nfl", espn_id, "final"))
+    assert err.value.type == "RateLimited" and err.value.next_retry_delay == timedelta(seconds=900)
+    assert fake["calls"]["recap"] == 0 and _sql("SELECT count(*) FROM ai_texts") == [(0,)]
+
+
+def test_a_rate_limited_preview_keeps_its_extract_for_the_retry(client, fake):  # noqa: F811
+    from app.ai import jobs
+    gid = fake["ids"]["BUF"]
+    ex = {"storylines": [], "edges": {"home": [], "away": []}, "picks": [], "urls": [ARTICLE["url"]]}
+    fake["result"] = {"status": "failed", "reason": "rate limited", "retry_after": 300.0, "model": "fake",
+                      "extract": ex}
+    assert jobs.write_for_game("preview", gid, "midweek")["status"] == "failed"
+    assert _sql("SELECT status, body IS NULL, extract IS NOT NULL FROM ai_texts WHERE game_id = %s",
+                gid) == [("failed", True, True)]
+    fake["result"] = None
+    assert jobs.write_for_game("preview", gid, "midweek")["status"] == "ready"
+    assert fake["calls"]["preview"][-1] == ex                                     # the retry skipped the extract call
+
+
+def test_a_saved_extract_is_not_reused_for_other_articles(client, fake):  # noqa: F811
+    from app.ai import jobs
+    gid = fake["ids"]["BUF"]
+    ex = {"storylines": [], "edges": {"home": [], "away": []}, "picks": [], "urls": [ARTICLE["url"]]}
+    fake["result"] = {"status": "failed", "reason": "rate limited", "retry_after": 300.0, "model": "fake",
+                      "extract": ex}
+    jobs.write_for_game("preview", gid, "midweek")
+    fake["result"] = None
+    fake["articles"] = [dict(ARTICLE, url="https://www.espn.com/nfl/story/_/id/9/z")]
+    assert jobs.write_for_game("preview", gid, "midweek")["status"] == "ready"
+    assert fake["calls"]["preview"][-1] is None
+
+
+def test_a_check_failure_keeps_no_new_extract(client, fake):  # noqa: F811
+    from app.ai import jobs
+    gid = fake["ids"]["BUF"]
+    fake["result"] = {"status": "failed", "reason": "check failed twice", "model": "fake"}
+    jobs.write_for_game("preview", gid, "midweek")
+    assert _sql("SELECT extract IS NULL FROM ai_texts WHERE game_id = %s", gid) == [(True,)]
+
+
+def test_headlines_with_nothing_new_are_not_written_again(client, fake, monkeypatch):  # noqa: F811
+    from app.ai import jobs, writer
+    calls = []
+
+    def write(news, finals):
+        calls.append(1)
+        return {"status": "ready", "body": {"items": []}, "model": "fake"}
+    monkeypatch.setattr(writer, "write_headlines", write)
+    _sql("INSERT INTO news_items (league, espn_id, headline, published_at) VALUES ('nfl', '1', 'Big news', now())")
+    assert jobs.write_headlines(["nfl"], "schedule")["status"] == "ready"
+    first = _sql("SELECT id FROM ai_texts WHERE kind = 'headlines'")
+    assert jobs.write_headlines(["nfl"], "schedule") == {"status": "current", "id": first[0][0]}
+    assert jobs.write_headlines(["nfl"], "manual")["status"] == "ready"                    # a manual run always writes
+    _sql("INSERT INTO news_items (league, espn_id, headline, published_at) VALUES ('nfl', '2', 'More news', now())")
+    assert jobs.write_headlines(["nfl"], "schedule")["status"] == "ready"
+    assert len(calls) == 3
+
+
+def test_a_failed_headlines_run_is_tried_again_with_the_same_inputs(client, fake, monkeypatch):  # noqa: F811
+    from app.ai import jobs, writer
+    results = iter([{"status": "failed", "reason": "check failed twice", "model": "fake"},
+                    {"status": "ready", "body": {"items": []}, "model": "fake"}])
+    monkeypatch.setattr(writer, "write_headlines", lambda news, finals: next(results))
+    _sql("INSERT INTO news_items (league, espn_id, headline, published_at) VALUES ('nfl', '1', 'Big news', now())")
+    assert jobs.write_headlines(["nfl"], "schedule")["status"] == "failed"
+    assert jobs.write_headlines(["nfl"], "schedule")["status"] == "ready"
+
+
+def test_headlines_preflight_turns_the_run_away_when_the_models_are_limited(client, fake, monkeypatch):  # noqa: F811
+    from app.ai import client as ai_client, jobs, writer
+    monkeypatch.setattr(ai_client, "unavailable_for", lambda kind: 120.0)
+    monkeypatch.setattr(writer, "write_headlines", lambda *a: pytest.fail("wrote while limited"))
+    _sql("INSERT INTO news_items (league, espn_id, headline, published_at) VALUES ('nfl', '1', 'Big news', now())")
+    assert jobs.write_headlines(["nfl"], "schedule", preflight=True) == \
+        {"status": "failed", "id": None, "retry_after": 120.0}
+    assert _sql("SELECT count(*) FROM ai_texts WHERE kind = 'headlines'") == [(0,)]
+
+
+def test_recap_due_follows_the_prewrite_list(client, fake, monkeypatch, tmp_path):  # noqa: F811
+    from temporalio.testing import ActivityEnvironment
+    from app.ai import scope
+    from app.temporal import activities
+    dal = _sql("SELECT espn_id FROM games WHERE id = %s", fake["ids"]["DAL"])[0][0]
+    env = ActivityEnvironment()
+    favorite(monkeypatch, tmp_path, "DAL")
+    assert env.run(activities.recap_due, "nfl", dal) is True
+    favorite(monkeypatch, tmp_path, "NE")                          # none of the fixture's teams
+    assert env.run(activities.recap_due, "nfl", dal) is False
+    favorite(monkeypatch, tmp_path, "DAL")
+    monkeypatch.setattr(scope, "AI_LEAGUES", {"ncaaf"})            # a favorite in a league without AI text
+    assert env.run(activities.recap_due, "nfl", dal) is False
+
+
+# ---------- the rejection cap (Adam, 2026-10-01): two failed writes for the same inputs, then wait for new ones ----------
+
+REJECTED = {"status": "failed", "reason": "check failed twice: x", "model": "fake"}
+
+
+def rejections(gid, kind):
+    return _sql("SELECT rejections FROM ai_texts WHERE game_id = %s AND kind = %s", gid, kind)[0][0]
+
+
+def test_a_text_rejected_twice_is_not_written_a_third_time(client, fake):  # noqa: F811
+    from app.ai import jobs
+    gid = fake["ids"]["DAL"]
+    fake["result"] = REJECTED
+    assert jobs.write_for_game("recap", gid, "nightly")["status"] == "failed"
+    assert jobs.write_for_game("recap", gid, "nightly")["status"] == "failed"
+    assert rejections(gid, "recap") == 2
+    out = jobs.write_for_game("recap", gid, "nightly")
+    assert out["status"] == "capped" and fake["calls"]["recap"] == 2                 # nothing was written
+    assert jobs.write_for_game("recap", gid, "refresh")["status"] == "capped"        # no caller gets past it
+    assert jobs.write_for_game("recap", gid, "manual")["status"] == "failed"         # the runbook forces it
+    assert fake["calls"]["recap"] == 3
+
+
+def test_rate_limits_and_a_missing_setup_never_count_as_rejections(client, fake):  # noqa: F811
+    from app.ai import jobs
+    gid = fake["ids"]["DAL"]
+    fake["result"] = {"status": "failed", "reason": "rate limited", "retry_after": 60.0, "model": "fake"}
+    for _ in range(3):
+        assert jobs.write_for_game("recap", gid, "nightly")["status"] == "failed"
+    fake["result"] = {"status": "failed", "reason": "no key", "unconfigured": True, "model": "fake"}
+    for _ in range(3):
+        assert jobs.write_for_game("recap", gid, "nightly")["status"] == "failed"
+    assert fake["calls"]["recap"] == 6 and rejections(gid, "recap") == 0
+
+
+def test_a_ready_text_clears_the_count(client, fake):  # noqa: F811
+    from app.ai import jobs
+    gid = fake["ids"]["DAL"]
+    fake["result"] = REJECTED
+    jobs.write_for_game("recap", gid, "nightly")
+    assert rejections(gid, "recap") == 1
+    fake["result"] = None
+    assert jobs.write_for_game("recap", gid, "nightly")["status"] == "ready"
+    assert rejections(gid, "recap") == 0
+
+
+def test_new_inputs_lift_the_cap(client, fake):  # noqa: F811
+    from app.ai import jobs
+    gid = fake["ids"]["BUF"]
+    fake["result"] = REJECTED
+    jobs.write_for_game("preview", gid, "midweek")
+    jobs.write_for_game("preview", gid, "midweek")
+    assert jobs.write_for_game("preview", gid, "midweek")["status"] == "capped"
+    # other articles: a different fingerprint, so it is written (and counted afresh)
+    fake["articles"] = [dict(ARTICLE, url="https://www.espn.com/nfl/story/_/id/9/z")]
+    assert jobs.write_for_game("preview", gid, "midweek")["status"] == "failed"
+    assert rejections(gid, "preview") == 1 and len(fake["calls"]["preview"]) == 3
+    # a moved kickoff: a different game day
+    fake["result"] = None
+    _sql("UPDATE games SET start_time = start_time + interval '1 day' WHERE id = %s", gid)
+    assert jobs.write_for_game("preview", gid, "midweek")["status"] == "ready"
+
+
+def test_the_api_does_not_rewrite_a_text_rejected_twice_for_this_score(client, fake):  # noqa: F811
+    gid = fake["ids"]["DAL"]
+    fake["result"] = REJECTED
+    for expected in (1, 2):
+        assert client.get(f"/api/games/{gid}/ai").json()["status"] == "failed"
+        assert fake["calls"]["recap"] == expected
+        _sql("UPDATE ai_texts SET updated_at = now() - interval '40 minutes' WHERE game_id = %s", gid)
+    assert client.get(f"/api/games/{gid}/ai").json()["status"] == "failed"          # past the 30 quiet minutes ...
+    assert fake["calls"]["recap"] == 2                                                # ... and still no third write
+
+
+def test_the_cap_reaches_the_worker_as_a_result_not_an_error(client, fake, monkeypatch, tmp_path):  # noqa: F811
+    favorite(monkeypatch, tmp_path, "DAL")
+    from temporalio.testing import ActivityEnvironment
+    from app.temporal import activities
+    from app.temporal.models import TextJob
+    espn_id = _sql("SELECT espn_id FROM games WHERE id = %s", fake["ids"]["DAL"])[0][0]
+    fake["result"] = REJECTED
+    env = ActivityEnvironment()
+    assert [env.run(activities.write_text, TextJob("recap", "nfl", espn_id, "nightly")) for _ in range(3)] == \
+        ["failed", "failed", "capped"]                       # "capped" ends the workflow: no Temporal retry
+
+
+def test_headlines_rejected_twice_wait_for_new_news(client, fake, monkeypatch):  # noqa: F811
+    from app.ai import jobs, writer
+    results = iter([dict(REJECTED), dict(REJECTED),
+                    {"status": "ready", "body": {"items": []}, "model": "fake"}, dict(REJECTED)])
+    calls = []
+
+    def write(news, finals):
+        calls.append(1)
+        return next(results)
+    monkeypatch.setattr(writer, "write_headlines", write)
+    news = "INSERT INTO news_items (league, espn_id, headline, published_at) VALUES ('nfl', '%s', '%s', now())"
+    _sql(news % ("1", "Big news"))
+    assert [jobs.write_headlines(["nfl"], "schedule")["status"] for _ in range(2)] == ["failed", "failed"]
+    assert jobs.write_headlines(["nfl"], "schedule") == {"status": "capped", "id": None}
+    assert len(calls) == 2
+    _sql(news % ("2", "More news"))                          # new inputs: written (a ready set), which clears it
+    assert jobs.write_headlines(["nfl"], "schedule")["status"] == "ready"
+    _sql(news % ("3", "Even more"))
+    assert jobs.write_headlines(["nfl"], "schedule")["status"] == "failed"          # counted afresh, not capped
+    assert len(calls) == 4
+
+
+def test_a_manual_headlines_run_ignores_the_cap(client, fake, monkeypatch):  # noqa: F811
+    from app.ai import jobs, writer
+    monkeypatch.setattr(writer, "write_headlines", lambda news, finals: dict(REJECTED))
+    _sql("INSERT INTO news_items (league, espn_id, headline, published_at) VALUES ('nfl', '1', 'Big news', now())")
+    for _ in range(2):
+        jobs.write_headlines(["nfl"], "schedule")
+    assert jobs.write_headlines(["nfl"], "schedule")["status"] == "capped"
+    assert jobs.write_headlines(["nfl"], "manual")["status"] == "failed"
+
+
+# ---------- review fixes (2026-10-01) ----------
+
+def test_claim_resets_the_count_when_the_inputs_change(client, fake):  # noqa: F811
+    from app import db
+    from app.ai import store
+    gid = fake["ids"]["DAL"]
+
+    def fail(basis, fingerprint=None):
+        with db.connect() as conn:
+            c = store.claim(conn, gid, "recap", basis, fingerprint)
+            assert store.save(conn, c, {"status": "failed", "reason": "check failed twice"})
+        return rejections(gid, "recap")
+    assert [fail("1-0"), fail("1-0")] == [1, 2]
+    assert fail("2-0") == 1                                # a corrected score: new inputs, counted afresh
+    assert fail("2-0") == 2
+    assert fail("2-0", "other-fingerprint") == 1           # a changed fact sheet: new inputs too
+
+
+def test_headlines_rejections_are_counted_since_the_last_ready_set(client, fake):  # noqa: F811
+    from app import db
+    from app.ai import store
+    failed = {"status": "failed", "reason": "check failed twice"}
+    ready_set = {"status": "ready", "body": {"items": []}, "model": "fake"}
+    with db.connect() as conn:
+        store.save_headlines(conn, failed, "schedule", "fp-x")
+        store.save_headlines(conn, failed, "schedule", "fp-x")
+        assert store.headlines_rejected_out(conn, "fp-x") is True
+        assert store.headlines_rejected_out(conn, "fp-y") is False          # other inputs
+        store.save_headlines(conn, ready_set, "schedule", "fp-z")
+        assert store.headlines_rejected_out(conn, "fp-x") is False          # a ready set since: counted afresh
+        store.save_headlines(conn, dict(failed, retry_after=60.0), "schedule", "fp-x")      # a rate limit isn't one
+        assert store.headlines_rejected_out(conn, "fp-x") is False
+
+
+def test_headlines_are_written_again_when_a_final_changes(client, fake, monkeypatch):  # noqa: F811
+    from app.ai import jobs, writer
+    calls = []
+    monkeypatch.setattr(writer, "write_headlines", lambda news, finals: (
+        calls.append(finals), {"status": "ready", "body": {"items": []}, "model": "fake"})[1])
+    gid = fake["ids"]["DAL"]
+    _sql("UPDATE games SET start_time = now() - interval '2 hours' WHERE id = %s", gid)    # a final inside the window
+    assert jobs.write_headlines(["nfl"], "schedule")["status"] == "ready" and len(calls[0]) >= 1
+    assert jobs.write_headlines(["nfl"], "schedule")["status"] == "current"
+    _sql("UPDATE games SET home_score = home_score + 1 WHERE id = %s", gid)                # a stat correction
+    assert jobs.write_headlines(["nfl"], "schedule")["status"] == "ready" and len(calls) == 2
+
+
+def test_a_manual_job_writes_any_game_and_lifts_the_cap(client, fake, monkeypatch, tmp_path):  # noqa: F811
+    favorite(monkeypatch, tmp_path, "NE")                                  # DAL is not on the pre-write list
+    from temporalio.testing import ActivityEnvironment
+    from app.ai import jobs
+    from app.temporal import activities
+    from app.temporal.models import TextJob
+    gid = fake["ids"]["DAL"]
+    espn_id = _sql("SELECT espn_id FROM games WHERE id = %s", gid)[0][0]
+    env = ActivityEnvironment()
+    assert env.run(activities.write_text, TextJob("recap", "nfl", espn_id, "nightly")) == "skipped"
+    fake["result"] = REJECTED
+    assert [jobs.write_for_game("recap", gid, "open")["status"] for _ in range(3)] == ["failed", "failed", "capped"]
+    fake["result"] = None
+    assert env.run(activities.write_text, TextJob("recap", "nfl", espn_id, "manual")) == "ready"      # the runbook
+    assert rejections(gid, "recap") == 0
+
+
+def test_write_text_and_the_worker_are_wired_for_preflight(client, fake, monkeypatch):  # noqa: F811
+    from temporalio.testing import ActivityEnvironment
+    from app.temporal import activities
+    from app.temporal.models import TextJob
+    seen = {}
+
+    def headlines(leagues, reason, preflight=False):
+        seen.update(leagues=leagues, reason=reason, preflight=preflight)
+        return {"status": "current", "id": None}
+    monkeypatch.setattr(activities.ai_jobs, "write_headlines", headlines)
+    assert ActivityEnvironment().run(activities.write_text, TextJob("headlines", "nfl,ncaaf", None, "schedule")) == "current"
+    assert seen == {"leagues": ["nfl", "ncaaf"], "reason": "schedule", "preflight": True}
+    assert activities.recap_due in activities.ALL and activities.write_text in activities.AI
+
+
+def test_unavailable_for_with_the_shared_quota(client, monkeypatch):  # noqa: F811
+    from app.ai import client as ai_client
+    from app.ai.quota import DbQuota
+    q = DbQuota()
+    monkeypatch.setattr(ai_client, "quota", q)
+    monkeypatch.setattr(ai_client, "WRITERS", ["openai/w"])
+    monkeypatch.setattr(ai_client, "CHECKERS", ["qwen/q"])
+    monkeypatch.setattr(ai_client, "GROQ_TPD", 151000)
+    assert ai_client.unavailable_for("recap") is None
+    q.cool("openai/w", 300)
+    assert 290 < ai_client.unavailable_for("recap") <= 300                  # the writer is cooling (in Postgres)
+    _sql("DELETE FROM ai_cooling")                                           # the writer is back
+    q.reserve(["qwen/q"], 150000, 200000, wait=False)                        # the checker has spent its day
+    wait = ai_client.unavailable_for("recap")
+    assert wait is not None and 80000 < wait <= 86400
+

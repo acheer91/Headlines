@@ -527,11 +527,19 @@ def _run(kind: str, fn: Callable[[dict], dict]) -> dict:
         out = {"status": "failed", "reason": f"check failed twice: {exc}"}
     except client.RateLimited as exc:
         out = {"status": "failed", "reason": f"rate limited: {exc}", "retry_after": exc.retry_after}
-    except (client.NoKey, client.NoChecker, client.TooLarge) as exc:
+        if stats.get("extract"):
+            out["extract"] = stats["extract"]                          # the retry skips the extract call
+    except (client.NoKey, client.NoChecker) as exc:
+        # Retrying can't help, but the text isn't at fault: fix the setup (a key back, a checker). Not counted as a
+        # rejection (store.counts_as_rejection), so the text isn't held off once the setup is fixed.
+        out = {"status": "failed", "reason": str(exc), "unconfigured": True}
+    except client.TooLarge as exc:
         out = {"status": "failed", "reason": str(exc)}                 # retrying can't help
     except client.AIError as exc:
         # A 5xx, a timeout, an unreadable check: worth another try later (the worker retries on retry_after).
         out = {"status": "failed", "reason": str(exc), "retry_after": TRANSIENT_RETRY}
+        if stats.get("extract"):
+            out["extract"] = stats["extract"]
     return out | {"calls": stats["calls"], "checks": stats.get("checks", 0), "rejected": stats.get("rejected", []),
                   "seconds": round(time.monotonic() - t, 1), "model": client.last_writer(),
                   "checker": client.last_checker()}
@@ -540,8 +548,9 @@ def _run(kind: str, fn: Callable[[dict], dict]) -> dict:
 # ---------------------------------------------------------------- preview
 
 def write_preview(game: dict, articles: list[dict], extract: dict | None = None) -> dict:
-    """extract: the article extract saved with an earlier version of this preview (keyed by article URL), for the
-    same articles. The game-morning refresh passes it when only our own data changed, skipping the extract call."""
+    """extract: a saved article extract (keyed by article URL) for exactly these articles: from an earlier version of
+    this preview (the game-morning refresh, when only our own data changed) or from an attempt that was rate limited
+    after its extract call (jobs._reusable_extract). Skips the extract call."""
     if not articles:
         return {"status": "no_sources", "calls": 0, "rejected": [], "seconds": 0.0,
                 "model": client.route("preview")[0][0]}
@@ -578,6 +587,9 @@ def write_preview(game: dict, articles: list[dict], extract: dict | None = None)
             # Saved by URL: map onto today's numbering. The same articles can come back in another order, and
             # positions would then point an edge at the wrong article (audit, 2026-09-29).
             extract = _by_id(saved, {a["url"]: i for i, a in ids.items()})
+        # Kept for the caller even if the write below is rate limited: the retry reuses it (jobs._reusable_extract).
+        stats["extract"] = (_by_url(extract, {i: a["url"] for i, a in ids.items()})
+                            | {"urls": sorted(a["url"] for a in articles)})
         sheet = {"game": gf["facts"], "storylines": extract.get("storylines") or [],
                  "edges": extract.get("edges") or {}}
         fj = json.dumps(sheet, ensure_ascii=False)
@@ -610,7 +622,7 @@ def write_preview(game: dict, articles: list[dict], extract: dict | None = None)
                           "url": a["url"]})
         return {"status": "ready", "body": {"preview": out["preview"], "edges": edges, "picks": picks},
                 "sources": [{k: a[k] for k in ("title", "url", "outlet", "published")} for a in articles],
-                "extract": _by_url(extract, {i: a["url"] for i, a in ids.items()})}
+                "extract": stats["extract"]}
 
     return _run("preview", go)
 

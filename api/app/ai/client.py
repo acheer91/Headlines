@@ -307,16 +307,51 @@ def _over_budget(name: str, cost: int) -> float | None:
     return max(frees_in, 60.0)
 
 
-_RETRY = re.compile(r"try again in (?:(\d+)h)?(?:(\d+)m)?(?:([\d.]+)s)?")
+PREFLIGHT_TOKENS = 2000     # a Groq call costs thousands: with less left in the day than this, a model is spent
+
+
+def _blocked_for(name: str) -> float | None:
+    """Seconds until `name` can be asked (cooling down after a 429, or today's budget spent); None when it can."""
+    cool = quota.cooling_left([name])
+    spent = _over_budget(name, 1 if _is_openrouter(name) or _is_gemini(name) else PREFLIGHT_TOKENS)
+    return None if cool is None and spent is None else max(cool or 0.0, spent or 0.0)
+
+
+def _keyless(name: str) -> bool:
+    """A pool whose key isn't set is left out of every route (_failover), so it can't check anything."""
+    if _is_openrouter(name):
+        return not os.environ.get("OPENROUTER_API_KEY")
+    if _is_gemini(name):
+        return not os.environ.get("GEMINI_API_KEY")
+    return False
+
+
+def unavailable_for(kind: str) -> float | None:
+    """Seconds until a text of this kind can be written at all, or None when it can be tried now. It can't when its
+    writer is cooling down or out of budget, or when every checker allowed to check that writer's text is (the
+    writer's tokens would go on a draft nobody can check; an overflow checker with no key doesn't count). Per-minute
+    room isn't looked at: a call waits for that. The worker asks before it claims a text, so a limited model costs a
+    few queries instead of a claim, a draft and a failed row, and a retry comes back when the model does."""
+    writers, checkers = route(kind)
+    waits = {m: _blocked_for(m) for m in writers}
+    usable = next((m for m in writers if waits[m] is None), None)
+    if usable is None:
+        return min(waits.values(), default=None)
+    allowed = [m for m in checkers if family(m) != family(usable) and not _keyless(m)]
+    blocked = [_blocked_for(m) for m in allowed]
+    return None if not allowed or None in blocked else min(blocked)
+
+
+_RETRY = re.compile(r"try again in ((?:[\d.]+(?:ms|h|m|s))+)")
+_UNIT = re.compile(r"([\d.]+)(ms|h|m|s)")
+_UNIT_SECONDS = {"h": 3600.0, "m": 60.0, "s": 1.0, "ms": 0.001}
 
 
 def _retry_after(text: str) -> float:
-    """Seconds from Groq's 429 text ("Please try again in 6m49.1s"); a minute when it doesn't say."""
+    """Seconds from Groq's 429 text ("Please try again in 6m49.1s", "...in 340ms"); a minute when it doesn't say."""
     m = _RETRY.search(text or "")
-    if not m or not any(m.groups()):
-        return 60.0
-    h, mi, s = (float(x) if x else 0.0 for x in m.groups())
-    return h * 3600 + mi * 60 + s
+    secs = sum(float(n) * _UNIT_SECONDS[u] for n, u in _UNIT.findall(m.group(1))) if m else 0.0
+    return secs if secs > 0 else 60.0
 
 
 def _failover(models: list[str], prompt: str, json_out: bool, max_out: int, avoid: str | None,
@@ -386,6 +421,7 @@ def _failover(models: list[str], prompt: str, json_out: bool, max_out: int, avoi
                 raise                 # a writer's bad JSON is the text's fault: the writer rewrites it
             last = exc                # a checker's bad JSON: ask the next checker (gpt-oss-20b ran out of room, Sep 29)
         except NoKey as exc:
+            quota.used(handle, 0)         # nothing was asked, so nothing is spent against the day
             if not (_is_openrouter(name) or _is_gemini(name)):
                 raise                 # every Groq model uses the same key: no point trying the others
             last = exc                # no OpenRouter or Gemini key: that pool is just left out
@@ -541,6 +577,9 @@ def groq_search(query: str) -> list[dict]:
         tools = d["choices"][0]["message"].get("executed_tools") or []
     except RateLimited as exc:
         quota.cool(GROQ_SEARCH_MODEL, exc.retry_after)   # writing and checking skip it too until then
+        raise
+    except NoKey:
+        quota.used(handle, 0)                            # nothing was asked, so nothing is spent against the day
         raise
     except (KeyError, IndexError):
         raise AIError("groq: bad reply") from None

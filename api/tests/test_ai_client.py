@@ -92,7 +92,9 @@ def test_waiting_writer_sleeps_for_the_good_model(fresh, monkeypatch):
 
 
 @pytest.mark.parametrize("text,secs", [("Please try again in 6m49.104s.", 409.104), ("try again in 1h2m3s", 3723),
-                                       ("try again in 12.5s", 12.5), ("no hint", 60.0)])
+                                       ("try again in 12.5s", 12.5), ("no hint", 60.0),
+                                       ("Please try again in 20ms.", 0.02), ("try again in 340ms", 0.34),
+                                       ("try again in 419.999999ms", 0.42), ("try again in 1m30.5s", 90.5)])
 def test_retry_after(text, secs):
     assert client._retry_after(text) == pytest.approx(secs)
 
@@ -372,3 +374,149 @@ def test_gemini_in_a_route_has_its_requests_a_day(fresh, monkeypatch):
     with pytest.raises(client.RateLimited):
         client.write("y")
     assert asked == ["gemini-x"]
+
+
+# ---------- preflight (2026-10-01): is a text of this kind writable at all right now? ----------
+
+def test_unavailable_for_is_none_when_writer_and_a_checker_can_be_asked(fresh):
+    assert client.unavailable_for("recap") is None
+
+
+def test_unavailable_for_a_cooling_writer(fresh, monkeypatch):
+    monkeypatch.setattr(client, "WRITERS", ["big"])
+    client.quota.cool("big", 300)
+    assert 290 < client.unavailable_for("recap") <= 300
+
+
+def test_unavailable_for_a_writer_that_has_spent_its_day(fresh, monkeypatch):
+    monkeypatch.setattr(client, "WRITERS", ["big"])
+    monkeypatch.setattr(client, "GROQ_TPD", 3000)
+    assert client.unavailable_for("recap") is None
+    client.quota.reserve(["big"], 1500, 8000, wait=False)          # 1,500 spent: 1,500 + a 2,000 floor is over 3,000
+    assert 86000 < client.unavailable_for("recap") <= 86400        # until that spend leaves the rolling day
+    monkeypatch.setattr(client, "GROQ_TPD", 3500)
+    assert client.unavailable_for("recap") is None                 # room for a call again
+
+
+def test_unavailable_for_is_none_when_a_backup_writer_is_free(fresh, monkeypatch):
+    monkeypatch.setattr(client, "WRITERS", ["big", "qwen"])
+    client.quota.cool("big", 300)
+    assert client.unavailable_for("recap") is None                 # a backup writer is free (AI_WRITERS only)
+
+
+def test_unavailable_for_waits_for_the_soonest_of_two_limited_writers(fresh, monkeypatch):
+    monkeypatch.setattr(client, "WRITERS", ["big", "qwen"])
+    client.quota.cool("big", 300)
+    client.quota.cool("qwen", 120)
+    assert 110 < client.unavailable_for("recap") <= 120
+
+
+def test_unavailable_for_checks_the_family_of_the_writer_that_will_be_used(fresh, monkeypatch):
+    monkeypatch.setattr(client, "WRITERS", ["openai/a", "qwen/q"])
+    monkeypatch.setattr(client, "CHECKERS", ["qwen/q", "openai/b"])
+    client.quota.cool("openai/a", 600)                             # the backup, qwen/q, will write ...
+    client.quota.cool("openai/b", 200)                             # ... so only openai/b may check, and it is cooling
+    assert 190 < client.unavailable_for("recap") <= 200
+
+
+def test_unavailable_for_when_every_allowed_checker_is_limited(fresh, monkeypatch):
+    monkeypatch.setattr(client, "WRITERS", ["big"])
+    monkeypatch.setattr(client, "CHECKERS", ["qwen", "small", "big"])
+    client.quota.cool("qwen", 600)
+    assert client.unavailable_for("recap") is None                 # "small" can still check
+    client.quota.cool("small", 120)
+    assert 110 < client.unavailable_for("recap") <= 120            # the soonest of the checkers
+    # "big" is the writer's own family: it being free doesn't make the text checkable
+
+
+def test_unavailable_for_leaves_a_missing_checker_to_the_normal_path(fresh, monkeypatch):
+    monkeypatch.setattr(client, "WRITERS", ["openai/gpt-oss-120b"])
+    monkeypatch.setattr(client, "CHECKERS", ["openai/gpt-oss-20b"])
+    assert client.unavailable_for("recap") is None                 # NoChecker fails the text closed, not retried
+
+
+def test_unavailable_for_counts_a_checkers_daily_requests(fresh, monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setattr(client, "WRITERS", ["big"])
+    monkeypatch.setattr(client, "CHECKERS", ["or:q:free"])
+    monkeypatch.setattr(client, "OPENROUTER_RPD", 1)
+    client.quota.reserve(["or:q:free"], 1, 20, wait=False)
+    assert client.unavailable_for("recap") > 59
+
+
+# ---------- schedules (2026-10-01): AI schedules cover only AI leagues ----------
+
+def test_ai_schedules_cover_only_ai_leagues(monkeypatch):
+    from app.ai import scope
+    from app.temporal import schedules
+    monkeypatch.setattr(schedules, "LEAGUES", ["nfl", "ncaaf"])
+    monkeypatch.setattr(scope, "AI_LEAGUES", {"nfl"})
+    out = schedules._schedules()
+    assert set(out) == {"schedule-sync", "headlines", "ai-leftover", "ai-previews-nfl"}
+    assert out["ai-leftover"][1] == ["nfl"] and out["schedule-sync"][1] == ["nfl", "ncaaf"]
+    assert out["headlines"][1] == ["nfl", "ncaaf"]
+    monkeypatch.setattr(scope, "AI_LEAGUES", {"nfl", "ncaaf"})
+    assert set(schedules._schedules()) == {"schedule-sync", "headlines", "ai-leftover", "ai-previews-nfl",
+                                           "ai-previews-ncaaf"}
+    monkeypatch.setattr(scope, "AI_LEAGUES", set())
+    assert set(schedules._schedules()) == {"schedule-sync", "headlines"}
+
+
+def test_a_checker_without_a_key_is_not_a_checker_for_preflight(fresh, monkeypatch):
+    monkeypatch.setattr(client, "WRITERS", ["openai/w"])
+    monkeypatch.setattr(client, "CHECKERS", ["qwen/q", "or:qwen/q:free"])
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    client.quota.cool("qwen/q", 600)
+    assert 590 < client.unavailable_for("recap") <= 600            # the keyless overflow pool can't check
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    assert client.unavailable_for("recap") is None                 # with a key it can
+
+
+def test_unavailable_for_with_the_real_routes(fresh, monkeypatch):
+    monkeypatch.setattr(client, "WRITERS", [])
+    monkeypatch.setattr(client, "CHECKERS", [])
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    for kind in ("recap", "preview", "headlines"):
+        assert client.unavailable_for(kind) is None
+    client.quota.cool("qwen/qwen3.8-27b", 600)
+    assert client.unavailable_for("recap") is None                 # OpenRouter's Qwen can still check
+    client.quota.cool("or:qwen/qwen3.8-27b:free", 300)
+    assert 290 < client.unavailable_for("preview") <= 300          # both Qwens limited: the sooner one
+    client.quota.cool("openai/gpt-oss-120b", 900)
+    assert 890 < client.unavailable_for("headlines") <= 900        # no backup writer: its wait is the answer
+
+
+def test_a_missing_key_releases_the_reservation(fresh, monkeypatch):
+    def no_key(body):
+        raise client.NoKey("GROQ_API_KEY not set")
+    monkeypatch.setattr(client, "_groq_post", no_key)
+    for _ in range(5):
+        with pytest.raises(client.NoKey):
+            client.write("x")
+    assert client.quota.spent_today("big", requests=False)[0] == 0   # nothing was asked, nothing spent
+
+
+def test_reusable_extract():
+    from app.ai.jobs import _reusable_extract as reusable
+    arts = [{"url": "u1"}, {"url": "u2"}]
+    assert reusable(None, arts) is None
+    kept = {"urls": ["u2", "u1"], "storylines": []}
+    assert reusable({"extract": kept, "body": None, "sources": None}, arts) == kept       # a failed row's, any order
+    assert reusable({"extract": {"urls": ["u1"]}, "body": None, "sources": None}, arts) is None
+    old = {"extract": {"storylines": []}, "body": {"preview": "p"}, "sources": [{"url": "u1"}, {"url": "u2"}]}
+    assert reusable(old, arts) == old["extract"]                                          # saved before "urls"
+    assert reusable(dict(old, body=None), arts) is None
+    assert reusable(dict(old, sources=[{"url": "u1"}]), arts) is None
+
+
+def test_rejected_out():
+    from app.ai import store
+    row = {"rejections": 2, "claim_basis": "b", "claim_fingerprint": "f"}
+    assert store.rejected_out(row, "b", "f") and store.rejected_out(row, "b")        # api: fingerprint unknown
+    assert not store.rejected_out(row, "b", "other") and not store.rejected_out(row, "other")
+    assert not store.rejected_out(dict(row, rejections=1), "b", "f") and not store.rejected_out(None, "b")
+    assert store.rejected_out(dict(row, claim_fingerprint=None), "b", None)          # a recap has no fingerprint
+    assert store.counts_as_rejection({"status": "failed", "reason": "x"})
+    assert not store.counts_as_rejection({"status": "failed", "retry_after": 5.0})
+    assert not store.counts_as_rejection({"status": "failed", "unconfigured": True})
+    assert not store.counts_as_rejection({"status": "ready"})

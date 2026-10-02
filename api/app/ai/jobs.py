@@ -4,7 +4,18 @@ and the api (writing on open), so both follow the same rules.
 
 A result is {"status": ..., "id": row id or None, "retry_after": seconds (rate limited only)}. Status is the
 stored row's (ready / failed / no_sources), or current (nothing to do), busy (another writer holds the row),
-skipped (the game isn't in the state this kind needs) or missing (no such game).
+skipped (the game isn't in the state this kind needs), missing (no such game) or capped (rejected store.REJECTION_CAP
+times for these inputs: it waits for new ones; a "manual" run ignores that).
+
+With preflight (the worker), a text that needs a model while the writer or every allowed checker is cooling down or
+out of budget returns failed + retry_after before it is claimed or drafted: no row churn, no wasted draft. The page
+is still built first, and for a preview so is the article lookup (a Groq search when ESPN has fewer than 2 fresh
+articles, ~1.6K tokens of the search model's own budget): "current", "no sources" and the rejection cap all need the
+fingerprint, which includes the articles. The api leaves preflight off: it never waits, and its failed row keeps the
+page quiet for 30 minutes.
+
+The rejection cap counts a failure for one set of inputs: the game day or score and, for the worker, the fingerprint
+of the fact sheet and the kept articles. Another article set (a search that returned different links) is new inputs.
 
 No database connection is held while a model writes (seconds, sometimes a minute of waiting for quota).
 """
@@ -62,7 +73,25 @@ def fingerprint(page: dict, articles: list[dict]) -> str:
     return hashlib.sha1(json.dumps(data, sort_keys=True, default=str).encode()).hexdigest()[:16]
 
 
-def write_for_game(kind: str, game_id: int, reason: str, base_url: str = espn.BASE) -> dict:
+def _unavailable(what: str, wait: float) -> dict:
+    log.info("ai %s: models limited for another %.0fs, nothing built", what, wait)
+    return {"status": "failed", "id": None, "retry_after": wait}
+
+
+def _reusable_extract(before: dict | None, articles: list[dict]) -> dict | None:
+    """The saved article extract for exactly these articles, or None. The extract carries the URLs it was made from,
+    so one saved by a failed write (rate limited after the extract call) is reused too; one saved before that, with
+    no list, only beside the text it was written for."""
+    saved = before.get("extract") if before else None
+    if not saved:
+        return None
+    urls = sorted(a["url"] for a in articles)
+    if "urls" in saved:
+        return saved if sorted(saved["urls"]) == urls else None
+    return saved if before["body"] is not None and sorted(s["url"] for s in before["sources"] or []) == urls else None
+
+
+def write_for_game(kind: str, game_id: int, reason: str, base_url: str = espn.BASE, preflight: bool = False) -> dict:
     with db.connect() as conn:
         held = store.get(conn, game_id, kind)
     if store.being_written(held):
@@ -89,19 +118,26 @@ def write_for_game(kind: str, game_id: int, reason: str, base_url: str = espn.BA
         fp = fingerprint(page, articles)
     with db.connect() as conn:
         before = store.get(conn, game_id, kind)
-        if store.current(before, b, fp):
-            return {"status": "current", "id": before["id"]}
+    if store.current(before, b, fp):
+        return {"status": "current", "id": before["id"]}
+    if reason != "manual" and store.rejected_out(before, b, fp):
+        log.info("ai %s game %s: rejected %d times for these inputs, waiting for new ones", kind, game_id,
+                 before["rejections"])
+        return {"status": "capped", "id": before["id"]}
+    # A preview with no articles is written as "no sources" without a model call: nothing to wait for.
+    if (preflight and not (kind == "preview" and not articles)
+            and (wait := client.unavailable_for(kind)) is not None):
+        return _unavailable(f"{kind} game {game_id}", wait)
+    with db.connect() as conn:
         c = store.claim(conn, game_id, kind, b, fp, reason)
     if c is None:
         return {"status": "busy", "id": before["id"] if before else None}
 
     try:
         if kind == "preview":
-            # Game-morning refresh with the same articles: only our own data changed, so reuse the saved extract
-            # (stored by article URL, so it maps onto today's article order).
-            same_articles = (before and before["body"] is not None and before["extract"]
-                             and sorted(s["url"] for s in before["sources"] or []) == sorted(a["url"] for a in articles))
-            result = writer.write_preview(page, articles, before["extract"] if same_articles else None)
+            # Same articles as a saved extract (a game-morning refresh, or a retry after a rate limit that came
+            # after the extract call): reuse it. Stored by article URL, so it maps onto today's article order.
+            result = writer.write_preview(page, articles, _reusable_extract(before, articles))
         else:
             result = writer.write_recap(page)
     except Exception as exc:  # noqa: BLE001 — a bug must not leave the row stuck at 'writing'
@@ -117,7 +153,15 @@ def write_for_game(kind: str, game_id: int, reason: str, base_url: str = espn.BA
     return {"status": result["status"], "id": c.id, "retry_after": result.get("retry_after")}
 
 
-def write_headlines(leagues: list[str], reason: str) -> dict:
+def headlines_fingerprint(news: list[dict], lines: list[str]) -> str:
+    """What a headline set is written from: the stored news it reads and the finals it lists."""
+    data = {"news": sorted(n["url"] or n["headline"] for n in news), "finals": lines}
+    return hashlib.sha1(json.dumps(data, sort_keys=True).encode()).hexdigest()[:16]
+
+
+def write_headlines(leagues: list[str], reason: str, preflight: bool = False) -> dict:
+    """The Home headlines. Nothing new since the last ready set (same news, same finals) means nothing to write:
+    a run with the same inputs would only spend the writer's tokens on the same feed. A manual run always writes."""
     leagues = [lg for lg in leagues if scope.ai_league(lg)]
     if not leagues:
         return {"status": "skipped", "id": None}
@@ -129,13 +173,24 @@ def write_headlines(leagues: list[str], reason: str) -> dict:
             WHERE g.state = 'post' AND g.completed IS TRUE AND g.league = ANY(%s)
               AND g.start_time > now() - interval '2 days'
             ORDER BY g.start_time""", (leagues,)).fetchall()
+        last = store.latest_headlines(conn)
     lines = [f"{r['league'].upper()}: {r['away']} {r['away_score']}, {r['home']} {r['home_score']} (final)"
              for r in finals]
     if not news and not lines:
         return {"status": "skipped", "id": None}
+    fp = headlines_fingerprint(news, lines)
+    if reason != "manual" and last and last["fingerprint"] == fp:
+        return {"status": "current", "id": last["id"]}
+    if reason != "manual":
+        with db.connect() as conn:
+            if store.headlines_rejected_out(conn, fp):
+                log.info("ai headlines: rejected %d times for these inputs, waiting for new ones", store.REJECTION_CAP)
+                return {"status": "capped", "id": None}
+    if preflight and (wait := client.unavailable_for("headlines")) is not None:
+        return _unavailable("headlines", wait)
     result = writer.write_headlines(news, lines)
     with db.connect() as conn:
-        rid = store.save_headlines(conn, result, reason)
+        rid = store.save_headlines(conn, result, reason, fp)
     log.info("ai headlines (%s): %s by %s", reason, result["status"], result.get("model"))
     return {"status": result["status"], "id": rid, "retry_after": result.get("retry_after")}
 

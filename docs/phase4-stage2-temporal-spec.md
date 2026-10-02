@@ -7,6 +7,14 @@ Phase 4 handoff (2.3–2.5) with the plan agreed on Sep 29: several free Groq mo
 midweek, recaps for every final, and durable retries. Evidence and numbers: `phase4-results.md`,
 `phase4-status.md`. Code it builds on: `api/app/ai/` on branch `phase-4-prototype`.
 
+**Revised Oct 1, 2026 (CTO routing, 4a657c6, and the worker changes after it).** One writer (`gpt-oss-120b`), no backup
+writer, a checker from another family: so the "three models in parallel" and "model-to-model failover" parts below no
+longer hold. The worker runs one text at a time (8K tokens a minute), the only recovery from a limited writer is the
+Temporal retry, headlines are written by the same writer as everything else (Gemini is deferred), and AI leagues are
+`AI_LEAGUES` (NFL first). Changes made for it: AI schedules only for AI leagues; the recap child starts only for
+pre-write-list games (`recap_due`); preflight before a text is built; a rate-limited preview keeps its extract;
+unchanged headlines are skipped. See CLAUDE.md, "Worker savings".
+
 Build gate lifted by Adam on Sep 29. Deploy gates: Adam approves the samples, Phase 5b signed off (from the
 original handoff; no code depends on 5b, only on 5a), a Tue/Wed slot.
 
@@ -55,8 +63,8 @@ The app still never depends on Temporal: with the worker down, pages show stored
 - **Schedules:** `previews-ncaaf` Wed and Thu 7:00 PM PT; `previews-nfl` Thu and Fri 7:00 PM PT (D1).
 - **Body:** activity `upcoming_without_preview(league, through)` lists games in the next weekend window whose
   preview is missing, failed, or stale; then it starts one `WriteTextWorkflow` per game, **at most 3 running at
-  once** (one per Groq model), waiting for each to finish before starting the next. That is the "all models at
-  once" idea: three per-minute budgets in parallel, about 24K tokens a minute instead of 8K.
+  once** (one per Groq model), waiting for each to finish before starting the next. *(Oct 1: one writer, so the
+  `ai` queue runs one at a time and 8K tokens a minute is the ceiling; the three-budget idea is gone.)*
 - Runs twice per league so the second evening picks up anything the first missed (rate limits, late-added
   games).
 
@@ -76,13 +84,14 @@ The app still never depends on Temporal: with the worker down, pages show stored
 ### 4. `HeadlinesWorkflow` (existing) — versioned change
 
 - After the news loop, behind `workflow.patched("ai-headlines")`: start `WriteTextWorkflow(headlines)`.
-  Headlines try Gemini first (4 requests a day of its 20), then the Groq chain (D3).
+  Headlines try Gemini first (4 requests a day of its 20), then the Groq chain (D3). *(Oct 1: Gemini is deferred;
+  headlines use the same writer and checker, and a run with the same news and finals as the last set is skipped.)*
 
 ### 5. `LeftoverWorkflow` (new) — spend what's left each night
 
 - **Schedule:** daily 9:30 PM PT.
 - **Body:** finds texts still missing or `failed` for the next 3 days (previews) and the last 2 days (recaps),
-  and starts `WriteTextWorkflow` for them, most urgent first, with the same limit of 3 at once. Stops at the
+  and starts `WriteTextWorkflow` for them, most urgent first, with the `ai` queue's one at a time. Stops at the
   first `RateLimited` from every model (the day's budget is gone).
 - Groq's daily window is a rolling 24 hours, so this mostly catches up on failures; it doesn't "use up" a
   budget that resets.
@@ -97,7 +106,8 @@ and can collide on the same Groq model. Proposal:
   one `UPDATE ... RETURNING` so two processes never both take the last slot.
 - **The API never waits for room.** On open, if no model has room or all are cooling, it returns
   `writing`/fallback at once (the page's 20 s budget) instead of sleeping up to a minute. Only the worker waits.
-- **An `ai` task queue** on the worker with `max_concurrent_activities=3`, so AI work never delays ESPN work
+- **An `ai` task queue** on the worker with `max_concurrent_activities=AI_AT_ONCE` (3 at first, 1 since Oct 1: one
+  writer), so AI work never delays ESPN work
   (line saves, status polls, grading) on the `scores` queue.
 
 ## Storage (migration 007, extends handoff 2.1)
@@ -128,16 +138,16 @@ poorly, midweek volume drops to option C's list plus opened games, as in the ori
 
 | Failure | What happens |
 |---|---|
-| One model rate-limited | client fails over to the next (built) |
+| One model rate-limited | client fails over to the next (built; Oct 1: no backup writer, so the activity retries) |
 | Every model limited | activity retries at the time Groq gives; batch pauses its starts |
-| Fact check fails twice | row `failed`, template text; the nightly job tries again once |
+| Fact check fails twice | row `failed`, template text; tried once more, then held until its inputs change (Oct 1: `ai_texts.rejections`, migration 009, `store.REJECTION_CAP = 2` failed writes in total; a "manual" job lifts it) |
 | Worker down | nothing written ahead; pages write on open; schedules catch up within 12 h (existing policy) |
 | A model retired by Groq | client skips a model that returns 404 (add to `_failover`); remove it from `AI_WRITERS` |
 | Groq down entirely | template text everywhere; screens unchanged otherwise |
 
 ## Tests
 
-- `test_workflows.py` (time-skipping): batch starts at most 3 children; a `RateLimited` retry waits the given
+- `test_workflows.py` (time-skipping): batch starts one child per game; a `RateLimited` retry waits the given
   delay; refresh with an unchanged fingerprint writes nothing; recap child starts at the final and again after a
   changed regrade; duplicate starts of the same text do nothing.
 - `test_replay.py`: old histories replay with the `ai-recap` and `ai-headlines` patches; save new histories that

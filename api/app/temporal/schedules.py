@@ -15,6 +15,7 @@ from temporalio.client import (Client, Schedule, ScheduleActionStartWorkflow, Sc
                                ScheduleCalendarSpec, ScheduleOverlapPolicy, SchedulePolicy, ScheduleRange,
                                ScheduleSpec, ScheduleUpdate)
 
+from ..ai import scope as ai_scope
 from .workflows import TASK_QUEUE, HeadlinesWorkflow, LeftoverWorkflow, PreviewBatchWorkflow, ScheduleSyncWorkflow
 from .worker import connect
 
@@ -27,15 +28,19 @@ WED, THU, FRI = 3, 4, 5      # Temporal's day_of_week: 0 = Sunday
 def _schedules() -> dict:
     """schedule id -> (workflow, leagues, Pacific hours, minute, days of the week or None for every day).
     Phase 4 (Adam, 2026-09-29): previews are written midweek, NCAAF Wed and Thu evening, NFL Thu and Fri
-    evening; the nightly job catches up at 9:30 PM."""
+    evening; the nightly job catches up at 9:30 PM. The AI schedules cover only AI_LEAGUES (CTO, 2026-10-01: NFL
+    first): a league without AI text gets no schedule that would find nothing to do. Scores, news and headlines
+    stay on ENABLED_LEAGUES."""
+    ai = [lg for lg in LEAGUES if ai_scope.ai_league(lg)]
     out = {
         "schedule-sync": (ScheduleSyncWorkflow, LEAGUES, [6], 0, None),
         "headlines": (HeadlinesWorkflow, LEAGUES, [7, 17], 0, None),
-        "ai-leftover": (LeftoverWorkflow, LEAGUES, [21], 30, None),
     }
-    if "ncaaf" in LEAGUES:
+    if ai:
+        out["ai-leftover"] = (LeftoverWorkflow, ai, [21], 30, None)
+    if "ncaaf" in ai:
         out["ai-previews-ncaaf"] = (PreviewBatchWorkflow, ["ncaaf"], [19], 0, [WED, THU])
-    if "nfl" in LEAGUES:
+    if "nfl" in ai:
         out["ai-previews-nfl"] = (PreviewBatchWorkflow, ["nfl"], [19], 0, [THU, FRI])
     return out
 
