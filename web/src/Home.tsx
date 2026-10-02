@@ -7,9 +7,12 @@ import { usePull } from "./usePull";
 
 const looksLikeHeadlines = (v: unknown) => !!v && Array.isArray((v as NonNullable<Headlines>).items);
 
-// A final score line (the writer keeps the code-built "... (final)" shape): shown as a score row with a Final
-// chip instead of the suffix. A news item gets a league chip read from its ESPN link; no link, no chip.
+// A final score line, phrased both ways seen in production ("Steelers 24, Browns 27 (final)" and
+// "NFL final: Steelers 24, Browns 27"): shown as a score row with a Final chip, boilerplate stripped.
+// A news item gets a league chip read from its ESPN link; no link or an off-league link, no chip.
 const FINAL_SUFFIX = /\s*\(final\)\.?\s*$/i;
+const FINAL_PREFIX = /^\s*(?:nfl|ncaaf|cfb)?\s*final:\s*/i;
+const LEAGUE_PREFIX = /^\s*(?:nfl|ncaaf|cfb):\s*/i;
 const leagueOf = (url: string | null) =>
   url?.includes("/nfl/") ? "NFL" : url?.includes("/college-football/") ? "CFB" : null;
 
@@ -57,9 +60,11 @@ export function Home() {
           <>
             <ul className="headlines">
               {h.items.map((item) => {
-                const final = FINAL_SUFFIX.test(item.text);
+                const final = FINAL_SUFFIX.test(item.text) || FINAL_PREFIX.test(item.text);
                 const chip = final ? "Final" : leagueOf(item.url);
-                const text = final ? item.text.replace(FINAL_SUFFIX, "") : item.text;
+                const text = final
+                  ? item.text.replace(FINAL_SUFFIX, "").replace(FINAL_PREFIX, "").replace(LEAGUE_PREFIX, "")
+                  : item.text;
                 return (
                   <li key={item.text} className={final ? "headline-final" : undefined}>
                     {chip && <span className={`chip${final ? " chip-final" : ""}`}>{chip}</span>}
