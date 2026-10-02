@@ -5,6 +5,8 @@ import pytest
 
 from app.ai import client
 
+REAL_GROQ_POST = client._groq_post       # the fixture fakes it; the header test needs the real one
+
 
 @pytest.fixture(autouse=True)
 def fresh(monkeypatch):
@@ -124,7 +126,7 @@ def test_all_models_cooling_retries_when_the_first_frees_up(fresh):
 
 def test_reply_allowance_shrinks_to_fit_the_minute(fresh, monkeypatch):
     seen = []
-    monkeypatch.setattr(client, "_groq_write", lambda p, j, name, max_out, checker, **kw: (seen.append(max_out) or ("{}", 1)))
+    monkeypatch.setattr(client, "_groq_write", lambda p, j, name, max_out, checker, **kw: (seen.append(max_out) or ("{}", 1, {})))
     client.write("x" * 4 * 6000)                                        # ~6,000 prompt tokens
     assert seen == [8000 - 6000 - client.MARGIN]
     with pytest.raises(client.TooLarge):
@@ -545,7 +547,7 @@ def test_without_the_tokenizer_gpt_oss_is_estimated_on_the_high_side(monkeypatch
 def test_the_minute_is_reserved_from_the_counted_prompt(fresh, monkeypatch):
     monkeypatch.setattr(client, "WRITERS", ["openai/gpt-oss-120b"])
     seen = []
-    monkeypatch.setattr(client, "_groq_write", lambda p, j, name, max_out, checker, **kw: (seen.append(max_out) or ("{}", 1)))
+    monkeypatch.setattr(client, "_groq_write", lambda p, j, name, max_out, checker, **kw: (seen.append(max_out) or ("{}", 1, {})))
     p = "Steelers 2.5, 38.5; T.J. Watt questionable. " * 300                 # ~5,200 counted, ~3,300 estimated
     counted = client.prompt_tokens("openai/gpt-oss-120b", p)
     client.write(p)
@@ -564,3 +566,154 @@ def test_extract_calls_use_low_reasoning_and_a_smaller_reply(fresh, monkeypatch)
     client.write("x", json_out=True)
     assert (bodies[0]["reasoning_effort"], bodies[0]["max_completion_tokens"]) == ("low", client.LIGHT_MAX_OUT)
     assert (bodies[1]["reasoning_effort"], bodies[1]["max_completion_tokens"]) == (client.REASONING, client.MAX_OUT)
+
+
+def test_a_write_can_name_its_reasoning_effort(fresh, monkeypatch):
+    # M3 (RECAP_REASONING): the recap writer's effort for this call. The reply allowance stays the writer's, a light
+    # call stays low, and a call that names none gets REASONING as before.
+    monkeypatch.setattr(client, "WRITERS", ["openai/gpt-oss-120b"])
+    monkeypatch.setattr(client, "GROQ_TPM", 100_000)          # four calls in one minute, without waiting for it
+    bodies = []
+
+    def post(body):
+        bodies.append(body)
+        return {"choices": [{"message": {"content": "{}"}}], "usage": {"total_tokens": 5}}
+    monkeypatch.setattr(client, "_groq_post", post)
+    client.write("x", json_out=True, reasoning="low")
+    client.write("x", json_out=True, reasoning="medium")
+    client.write("x", json_out=True, light=True, reasoning="medium")
+    client.write("x", json_out=True)
+    assert [(b["reasoning_effort"], b["max_completion_tokens"]) for b in bodies] == [
+        ("low", client.MAX_OUT), ("medium", client.MAX_OUT), ("low", client.LIGHT_MAX_OUT),
+        (client.REASONING, client.MAX_OUT)]
+
+
+# ---------- M1 (2026-10-02): Groq's cached prompt tokens and each call's kind, logged only ----------
+
+def _groq_reply(usage):
+    return {"choices": [{"message": {"content": "{}"}}], "usage": usage}
+
+
+GROQ_EXAMPLE = {"prompt_tokens": 4641, "completion_tokens": 1817, "total_tokens": 6458,
+                "prompt_tokens_details": {"cached_tokens": 4608}}       # Groq's prompt-caching docs
+
+
+@pytest.mark.parametrize("usage,want", [
+    (GROQ_EXAMPLE, (6458, 4608)),
+    ({"total_tokens": 5}, (5, None)),                                  # no prompt_tokens_details: not reported
+    ({"total_tokens": 5, "prompt_tokens_details": None}, (5, None)),
+    ({"total_tokens": 5, "prompt_tokens_details": {}}, (5, None)),
+    ({"total_tokens": 5, "prompt_tokens_details": {"cached_tokens": 0}}, (5, 0)),     # reported, nothing cached
+    ({"total_tokens": 5, "prompt_tokens_details": {"cached_tokens": "12"}}, (5, None)),
+    (None, (0, None)),
+])
+def test_groq_usage_reads_cached_tokens(usage, want):
+    assert client._groq_usage({"usage": usage}) == want
+
+
+def test_cached_tokens_are_logged_and_still_charged(fresh, monkeypatch):
+    monkeypatch.setattr(client, "_groq_post", lambda body: _groq_reply(GROQ_EXAMPLE))
+    client.begin("recap")
+    client.write("x")
+    pt, out = client._sizing("big", "x", client.MAX_OUT)
+    (entry,) = client.quota._day["big"]
+    assert entry[1:] == [pt + out, 6458, "recap:write", 4608, None, None]     # reserved, used, kind, cached, headers
+    assert client.quota.spent_today("big", False)[0] == 6458         # the day counts total tokens, cached included
+    assert list(client.quota._windows["big"]) == [(entry[0], pt + out)]     # the minute holds the full reservation
+
+
+def test_missing_cached_tokens_are_logged_as_none(fresh):
+    client.write("x")                                                  # the fake reply has no prompt_tokens_details
+    (entry,) = client.quota._day["big"]
+    assert entry[2] == 5 and entry[4] is None
+
+
+def test_each_call_is_logged_with_its_kind(fresh, monkeypatch):
+    monkeypatch.setattr(client, "GROQ_TPM", 100_000)          # nine calls in one minute, without waiting for it
+    kinds = []
+    real = client.quota.reserve
+    monkeypatch.setattr(client.quota, "reserve", lambda *a, **kw: kinds.append(kw.get("kind")) or real(*a, **kw))
+    client.begin("preview")
+    client.write("extract", json_out=True, light=True)
+    client.write("extract\n\nYour previous draft was rejected: x.", json_out=True, light=True)
+    client.write("write")
+    client.check("c")
+    client.write("write\n\nYour previous draft was rejected: y.")
+    client.begin("one_liner")
+    client.write("line", light=True)                                   # light, but the one-liner is the text itself
+    client.write("line\n\nYour previous draft was rejected: z.", light=True)
+    client.begin("headlines")
+    client.write("line\n\nYour previous draft was rejected: z.")      # a new text: no earlier prompt to repeat
+    client.forget_last()
+    client.check("c")                                                  # outside a text (check_eval)
+    assert kinds == ["preview:extract", "preview:re-extract", "preview:write", "preview:check", "preview:rewrite",
+                     "one_liner:write", "one_liner:rewrite", "headlines:write", "check"]
+
+
+def test_a_failover_logs_each_reservation_with_the_kind(fresh, monkeypatch):
+    _, plan = fresh
+    plan["big"] = "429"
+    client.begin("recap")
+    client.write("x")
+    assert [e[3] for m in ("big", "qwen") for e in client.quota._day[m]] == ["recap:write", "recap:write"]
+
+
+def test_writers_rewrite_is_logged_as_a_rewrite(fresh, monkeypatch):
+    from app.ai import writer
+    kinds = []
+    real = client.quota.reserve
+    monkeypatch.setattr(client.quota, "reserve", lambda *a, **kw: kinds.append(kw.get("kind")) or real(*a, **kw))
+    seen = []
+
+    def check(out):
+        seen.append(out)
+        if len(seen) == 1:
+            raise writer.CheckFailed("recap is 240 words")
+    client.begin("recap")
+    writer._step("the recap prompt", check, {"calls": 0})
+    assert kinds == ["recap:write", "recap:rewrite"]
+
+
+def test_search_logs_its_kind_and_cached_tokens(fresh, monkeypatch):
+    kinds = []
+    real = client.quota.reserve
+    monkeypatch.setattr(client.quota, "reserve", lambda *a, **kw: kinds.append(kw.get("kind")) or real(*a, **kw))
+    reply = {"choices": [{"message": {"content": "DONE", "executed_tools": []}}],
+             "usage": {"total_tokens": 1600, "prompt_tokens_details": {"cached_tokens": 900}}}
+    monkeypatch.setattr(client, "_groq_post", lambda body: reply)
+    client.begin("recap")                                              # a thread's last text says nothing about search
+    assert client.groq_search("q") == []
+    (entry,) = client.quota._day[client.GROQ_SEARCH_MODEL]
+    assert kinds == ["preview:search"] and entry[2:] == [1600, "preview:search", 900, None, None]
+
+
+# ---------- T1's second condition: Groq's per-minute rate-limit headers, logged with each call ----------
+
+class _Reply:
+    """An httpx response as _groq_post reads it."""
+    def __init__(self, headers, usage=None):
+        self.status_code, self.headers, self.text = 200, headers, ""
+        self._d = _groq_reply(usage or {"total_tokens": 6458, "prompt_tokens_details": {"cached_tokens": 4608}})
+
+    def json(self):
+        return self._d
+
+
+@pytest.mark.parametrize("text,secs", [("7.66s", 7.66), ("2m59.56s", 179.56), ("340ms", 0.34), ("1h2m3s", 3723.0),
+                                       ("", None), (None, None)])
+def test_groq_durations_in_seconds(text, secs):
+    assert client._seconds(text) == secs
+
+
+def test_the_rate_limit_headers_are_logged_with_the_call(fresh, monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "test-not-a-key")
+    monkeypatch.setattr(client, "GROQ_TPM", 100_000)          # three calls in one minute, without waiting for it
+    replies = iter([_Reply({"x-ratelimit-remaining-tokens": "1542", "x-ratelimit-reset-tokens": "48.6s"}),
+                    _Reply({}), _Reply({"x-ratelimit-remaining-tokens": "n/a"})])
+    monkeypatch.setattr(client.httpx, "post", lambda *a, **kw: next(replies))
+    monkeypatch.setattr(client, "_groq_post", REAL_GROQ_POST)          # it reads the headers; httpx is the fake
+    client.begin("recap")
+    for _ in range(3):
+        client.write("x")
+    day = [e[4:] for e in client.quota._day["big"]]
+    assert day == [[4608, 1542, 48.6], [4608, None, None], [4608, None, None]]      # cached, remaining, reset

@@ -738,52 +738,85 @@ def recap_length(game: dict) -> tuple[str, str]:
     return "standard", "standard"
 
 
-def write_recap(game: dict) -> dict:
-    """One call: the fact sheet comes from code (facts.recap_facts), so there is no extract step to misread."""
+# M3 (2026-10-02): code's recap outline (facts.recap_outline) and a low-reasoning recap writer exist only in T3's arms
+# (python -m app.ai.outline_eval passes recap_prompt(outline=True) and client.write(reasoning=) itself). No production
+# switch until Z5 and T3 both pass: a recap's prompt and request are exactly what they were (GROQ_REASONING, medium).
+
+
+def _recap_size(game: dict) -> tuple[str, str, int, int | None, int | None]:
+    """(tier, why, recap words, words a team or None, words in all at most or None)."""
     if ONE_MINUTE_READ:
         tier, why = recap_length(game)
         recap_w, team_w = RECAP_WORDS[tier]
-        cap = round((recap_w + 2 * team_w) * LENGTH_SLACK)
-    else:
-        tier, why, recap_w, team_w, cap = "standard", "about 120 words", FLAT_RECAP_WORDS, None, None
+        return tier, why, recap_w, team_w, round((recap_w + 2 * team_w) * LENGTH_SLACK)
+    return "standard", "about 120 words", FLAT_RECAP_WORDS, None, None
+
+
+def outline_text(plan: dict | None) -> str:
+    """facts.recap_outline as the prompt shows it; '' for none."""
+    if not plan:
+        return ""
+    return prompts.OUTLINE_NOTE.format(frame=plan["frame"],
+                                       lines="\n".join(f"{i}. {line}" for i, line in enumerate(plan["lines"], 1)))
+
+
+def recap_prompt(game: dict, sheet: dict | None = None, outline: bool = False) -> str:
+    """The recap writer's prompt. The style guide sits in the fixed text up top, the examples after it with the game's
+    own parts (M2), and the outline with those. outline: add facts.recap_outline (T3's outline arms only)."""
+    sheet = sheet or facts.recap_facts(game)
+    _, _, recap_w, team_w, _ = _recap_size(game)
+    plan = facts.recap_outline(game, sheet) if outline else None
+    return prompts.WRITE_RECAP.format(facts=json.dumps(sheet["facts"], ensure_ascii=False), voice=prompts.VOICE,
+                                      guardrails=prompts.GUARDRAILS,
+                                      home=game["home"]["name"], away=game["away"]["name"], recap_words=recap_w,
+                                      style=prompts.RECAP_STYLE + "\n\n" if RECAP_VOICE else "",
+                                      examples=("Examples, from other games (their facts are not yours):\n\n"
+                                                + prompts.recap_examples(game["home"]["name"],
+                                                                         game["away"]["name"]) + "\n\n"
+                                                if RECAP_VOICE else ""),
+                                      team_len=f"2-3 sentences, about {team_w} words" if team_w else "2-3 sentences",
+                                      length_note=prompts.ONE_MINUTE_NOTE if team_w else "",
+                                      outline=outline_text(plan))
+
+
+def recap_code_check(x: dict, game: dict, sheet: dict) -> None:
+    """Every code check on a recap draft, in order, before the model's fact check: CheckFailed with what is wrong.
+    outline_eval runs it on first drafts too (log only)."""
+    _, _, recap_w, team_w, cap = _recap_size(game)
+    texts = [x.get("recap"), x.get("home"), x.get("away")]
+    _texts_ok(texts, json.dumps(sheet["facts"], ensure_ascii=False))
+    claims_ok(texts, game, sheet)
+    words = len((x.get("recap") or "").split())
+    total = sum(len(t.split()) for t in texts)
+    if cap is None:
+        if not 60 <= words <= 200:
+            raise CheckFailed(f"recap is {words} words")
+    elif words < 60 or total > cap:
+        raise CheckFailed(f"recap is {words} words and {total} in all; keep the recap at about {recap_w} "
+                          f"words, each team at about {team_w}, {cap} in all at most")
+    joined = " ".join(t or "" for t in texts)
+    copy = RECAP_VOICE and copied(joined, [{"text": ex} for _, ex in prompts.RECAP_EXAMPLES], EXAMPLE_COPY_WORDS)
+    joke = RECAP_VOICE and re.search(prompts.EXAMPLE_JOKES, joined, re.I)
+    if copy or joke:
+        raise CheckFailed(f"reused the examples: {(copy or joke[0])!r}; write your own lines and comparisons")
+    bet = bet_talk(texts)
+    if bet:
+        raise CheckFailed(f"bet talk in the prose: {bet!r}")
+
+
+def write_recap(game: dict) -> dict:
+    """One call: the fact sheet comes from code (facts.recap_facts), so there is no extract step to misread."""
+    tier, why, *_ = _recap_size(game)
 
     def go(stats):
         sheet = facts.recap_facts(game)
         fj = json.dumps(sheet["facts"], ensure_ascii=False)
 
         def check_write(x):
-            texts = [x.get("recap"), x.get("home"), x.get("away")]
-            _texts_ok(texts, fj)
-            claims_ok(texts, game, sheet)
-            words = len((x.get("recap") or "").split())
-            total = sum(len(t.split()) for t in texts)
-            if cap is None:
-                if not 60 <= words <= 200:
-                    raise CheckFailed(f"recap is {words} words")
-            elif words < 60 or total > cap:
-                raise CheckFailed(f"recap is {words} words and {total} in all; keep the recap at about {recap_w} "
-                                  f"words, each team at about {team_w}, {cap} in all at most")
-            joined = " ".join(t or "" for t in texts)
-            copy = RECAP_VOICE and copied(joined, [{"text": ex} for _, ex in prompts.RECAP_EXAMPLES], EXAMPLE_COPY_WORDS)
-            joke = RECAP_VOICE and re.search(prompts.EXAMPLE_JOKES, joined, re.I)
-            if copy or joke:
-                raise CheckFailed(f"reused the examples: {(copy or joke[0])!r}; write your own lines and comparisons")
-            bet = bet_talk(texts)
-            if bet:
-                raise CheckFailed(f"bet talk in the prose: {bet!r}")
-            _fact_check(texts, fj, stats)
+            recap_code_check(x, game, sheet)
+            _fact_check([x.get("recap"), x.get("home"), x.get("away")], fj, stats)
 
-        out = _step(prompts.WRITE_RECAP.format(facts=fj, voice=prompts.VOICE, guardrails=prompts.GUARDRAILS,
-                                               home=game["home"]["name"], away=game["away"]["name"],
-                                               recap_words=recap_w,
-                                               style=(prompts.RECAP_STYLE + "\n\nExamples, from other games (their "
-                                                      "facts are not yours):\n\n"
-                                                      + prompts.recap_examples(game["home"]["name"], game["away"]["name"])
-                                                      if RECAP_VOICE else ""),
-                                               team_len=f"2-3 sentences, about {team_w} words" if team_w
-                                               else "2-3 sentences",
-                                               length_note=prompts.ONE_MINUTE_NOTE if team_w else ""),
-                    check_write, stats)
+        out = _step(recap_prompt(game, sheet), check_write, stats)
         # Bet results are the graded text itself, added by code: the model once called a push a win (2026-09-29).
         return {"status": "ready", "body": {"recap": out["recap"], "bets": bets_line(game),
                                             "home": out["home"], "away": out["away"]},
@@ -814,13 +847,17 @@ def write_one_liner(game: dict) -> dict:
     """One checked sentence on the live game (Adam, Oct 1: back after the CTO cut it). Failure: the app shows the
     box-score template (summary.one_liner), never unchecked text."""
     def go(stats):
+        # One sheet, trimmed to the prompt's hooks (M4): the writer and the fact-checker see the same facts. claims_ok
+        # knows every leader on the box score, trimmed or not: "Swift has 128 rushing yards" (the team's total, in
+        # FACTS) is still a team total given to a player, and more players can only add refusals.
         sheet = facts.live_facts(game)
         fj = json.dumps(sheet["facts"], ensure_ascii=False)
+        claims_sheet = dict(sheet, players=facts.players(game))
 
         def check(x):
             line = x.get("line")
             _texts_ok([line], fj)
-            claims_ok([line], game, sheet, final=False)
+            claims_ok([line], game, claims_sheet, final=False)
             if isinstance(line, str) and len(line.split()) > ONE_LINER_MAX_WORDS:
                 raise CheckFailed(f"one-liner is {len(line.split())} words")
             copy = copied(line, [{"text": ex} for ex in prompts.ONE_LINER_EXAMPLES], EXAMPLE_COPY_WORDS)

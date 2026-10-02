@@ -117,12 +117,13 @@ def rows(md: str) -> tuple[list[list[str]], list[str]]:
     return [[str(i + 1)] + r + ["", "", ""] for i, r in enumerate(out)], skipped
 
 
-def write_sheet(md: str, path: Path) -> tuple[int, list[str]]:
+def write_sheet(md: str, path: Path, causes: list[str] = CAUSES) -> tuple[int, list[str]]:
+    """causes: the cause column's choices, named in its header (outline_eval's T3 sheet has its own)."""
     data, skipped = rows(md)
     with path.open("w", encoding="utf-8-sig", newline="") as f:
         w = csv.writer(f)
         w.writerow(["id", "section", "text", "part", "claim", "facts it rests on / source",
-                    "verdict (" + " / ".join(VERDICTS) + ")", "cause (" + " / ".join(CAUSES) + ")", "note"])
+                    "verdict (" + " / ".join(VERDICTS) + ")", "cause (" + " / ".join(causes) + ")", "note"])
         w.writerows(data)
     return len(data), skipped
 

@@ -35,8 +35,12 @@ Tue Oct 6) ships first or with it.
 On the server (`ssh ubuntu@scores`, repo in `~/scores-app`):
 
 1. `git pull && docker compose up -d --build`. The api applies migrations at startup. A server at Phase 5a (006)
-   gets `007_ai_text`, `008_ai_written_at` and `009_ai_rejections`, in that order. Rehearsed: an upgrade from 008 to
-   009 on a database holding data keeps its rows (`rejections` = 0) and a rerun applies nothing.
+   gets `007_ai_text`, `008_ai_written_at`, `009_ai_rejections` and `010_ai_call_cache` (the prep layer's log-only
+   `ai_calls.kind`, `cached_tokens`, `remaining_tokens`, `reset_tokens_secs`), in that order. Rehearsed: an upgrade
+   from 008 to 009 on a database holding data keeps its rows (`rejections` = 0) and a rerun applies nothing; 010 is
+   not rehearsed on data (it only adds nullable columns). The worker starts only once the api is healthy (compose
+   `service_healthy`: the api answers only after startup ran the migrations), so no text is reserved against an
+   `ai_calls` without `kind`. `docker compose ps api` shows `(healthy)` within about a minute.
 2. `docker compose exec api python -m app.migrate` prints `applied: nothing (up to date)` (the api already applied them
    at startup); a list of file names means it just applied those.
 3. `docker compose exec worker python -m app.temporal.schedules --show` (a schedule the server doesn't have yet shows
@@ -80,8 +84,10 @@ Run once a day from the first scheduled previews: `docker compose exec worker py
 | "Last 24 hours against each budget": `gpt-oss-120b` tokens against 200,000; the OpenRouter pool (all `or:` models) against 50 requests | The writer's budget is the scarce one. How close the heaviest game day gets (a Sunday, NFL only) decides whether a spend-aware batch (held) is worth building. |
 | "peak 60 s reserved" against 8,000 | The writer's minute. Persistent peaks at the limit mean texts queue behind each other. |
 | "unreported calls" | Calls that failed or never reported usage stay counted at their reservation. A growing number is budget lost to errors. |
-| "tokens per written text" | The first real per-text cost (all kinds mixed; per kind needs a `kind` on `ai_calls`). |
-| Rejections: the share of texts whose latest attempt was a rejection (including a preview whose refresh was rejected and kept its earlier text), and the reasons by rule | Qwen's false-rejection rate in production. This decides whether storing the unchecked draft (migration 010, held) pays. |
+| "tokens per first draft, by kind" (and "tokens per written text" by day) | The first real per-text cost. By kind divides by first drafts (`<kind>:write` calls, `ai_calls.kind` from 010), so a one-liner rewritten every 15 minutes counts each time; the by-day figure divides by texts (one per game and kind) and runs high for one-liners and refreshed previews. |
+| "M2: recap rewrites per first draft" against 0.586 (before M2), and "reused the examples" among the reasons | M2 moved Adam's examples next to FACTS without an eval. If the rate rises with that reason, move them back above the rules (`prompts.WRITE_RECAP`). Zero tokens. |
+| "T1: does Groq count cached tokens?": rewrites with cached tokens (needs 50%) and how far `x-ratelimit-remaining-tokens` fell between back-to-back calls | M1's log-only week. Only if cached tokens show on half the rewrites and the minute falls by the uncached tokens only does M1 earn a ledger credit. The header is per minute: read the pairs as a guide. |
+| Rejections: the share of texts whose latest attempt was a rejection (including a preview whose refresh was rejected and kept its earlier text), and the reasons by rule | Qwen's false-rejection rate in production. This decides whether storing the unchecked draft (migration 011, held) pays. |
 | The "held by the cap" column, and worker log lines `rejected N times for these inputs` | Texts the cap is holding. |
 
 Suggested triggers (a proposal for Adam, not agreed): build the spend-aware batch if the writer passes about 60% of its

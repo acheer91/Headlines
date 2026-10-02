@@ -1,5 +1,6 @@
 """Writer checks with a fake model: no live AI calls in tests."""
 import json
+import os
 
 import pytest
 
@@ -212,6 +213,47 @@ def test_live_one_liner_may_say_tied_inside_a_quarter(model):
          "header": {"home": {"linescores": [7, 7, 0]}, "away": {"linescores": [7, 7, 0]}}}
     model([{"line": "The Eagles responded in the second quarter and it is tied 14-14."}])
     assert writer.write_one_liner(g)["status"] == "ready"
+
+
+def _live_phi_chi():
+    from tests.test_ai_facts import load
+    g = load("final_phi_chi")
+    g.update(state="in", status_detail="Q3 10:12", line={"home_spread": -3.0, "total": 44.5})
+    return g
+
+
+def test_one_liner_writer_and_checker_see_the_same_trimmed_facts(model, monkeypatch):
+    # M4 (2026-10-02): the writer's prompt and the fact-checker's carry the same FACTS, trimmed to the prompt's hooks.
+    seen = []
+    monkeypatch.setattr(client, "check", lambda prompt: seen.append(prompt) or json.dumps({"problems": []}))
+    calls = model([{"line": "Three giveaways already. Philadelphia is gift-wrapping this one."}])
+    assert writer.write_one_liner(_live_phi_chi())["status"] == "ready"
+    facts_in = lambda p: p.split("FACTS:\n", 1)[1].split("\n\nTEXT:", 1)[0].strip()
+    assert facts_in(calls[0]) == facts_in(seen[0])
+    assert "Passing leader" in facts_in(calls[0])
+    assert not any(w in facts_in(calls[0]) for w in ("Rushing leader", "possession", "over/under", "penalties"))
+
+
+def test_one_liner_refuses_what_the_trimmed_sheet_left_out(model):
+    # The rushing leader's 84 yards and the 36:53 of possession were on the old sheet; now they're unsupported.
+    model([{"line": "Swift has 84 yards already. Chicago is in no hurry."},
+           {"line": "Chicago has held it for 36:53. The Eagles are spectators."}])
+    res = writer.write_one_liner(_live_phi_chi())
+    assert res["status"] == "failed"
+    assert "'84'" in res["rejected"][0] and "'36', '53'" in res["rejected"][1]
+
+
+def test_one_liner_code_checks_know_the_leaders_the_trimmed_sheet_left_out(model, checker):
+    # 128 is Chicago's rushing so far (in FACTS), not Swift's: the trimmed sheet has no Swift, so only the full list
+    # of leaders lets claims_ok refuse it (review of M4, Oct 2). The writer's FACTS still leave him out.
+    g = _live_phi_chi()
+    from app.ai import facts
+    assert "So far, rushing: Eagles 107, Bears 128." in facts.live_facts(g)["facts"]
+    calls = model([{"line": "Swift has 128 rushing yards already."}, {"line": "Chicago leads by 20 right now."}])
+    res = writer.write_one_liner(g)
+    assert res["status"] == "ready" and len(calls) == 2
+    assert "isn't on the player's line" in res["rejected"][0] and "D'Andre Swift" in res["rejected"][0]
+    assert "Swift" not in calls[0].split("FACTS:", 1)[1]
 
 
 def test_no_checker_outside_the_family_fails_closed_without_a_retry(model, monkeypatch):
@@ -626,6 +668,70 @@ def test_recap_voice_can_be_switched_off(model, monkeypatch):
     calls = model([{"recap": f"Bears won. {WORDS}", "home": "x", "away": "y"}])
     assert writer.write_recap(GAME)["status"] == "ready"
     assert "Example 1:" not in calls[0] and "tension in FACTS" not in calls[0]
+
+
+@pytest.mark.parametrize("voice", [True, False])
+def test_the_recap_prompt_starts_with_the_text_every_game_shares(model, monkeypatch, voice):
+    # M2 (2026-10-02): the text that is the same for every game comes first and the game's own parts (examples, team
+    # names, FACTS) last, so Groq can reuse the cached prefix from one recap to the next. Same words, new order.
+    from app.ai import prompts
+    monkeypatch.setattr(writer, "RECAP_VOICE", voice)
+    other = {**GAME, "home": {**GAME["home"], "name": "Dallas Cowboys", "short": "Cowboys"},
+             "away": {**GAME["away"], "name": "Baltimore Ravens", "short": "Ravens"}}
+    calls = model([{}] * 4)                                         # the wrong shape: two calls a game, then failed
+    writer.write_recap(GAME)
+    writer.write_recap(other)
+    shared = os.path.commonprefix([calls[0], calls[2]])
+    for fixed in (prompts.VOICE, prompts.GUARDRAILS, "Also (each of these was a real error)", "FACTS is a list"):
+        assert fixed in shared
+    assert (prompts.RECAP_STYLE in shared) is voice and ("Examples, from other games" in shared) is voice
+    for own in ("Chicago Bears", "Dallas Cowboys", "Example 1:\nNew England", "FACTS:\n["):
+        assert own not in shared
+    assert calls[0].index("Return JSON only:") > calls[0].index(prompts.GUARDRAILS)
+
+
+# ---------- M3 (2026-10-02): the code-built recap outline and a low-reasoning writer, in T3's arms only ----------
+
+def _fixture(name):
+    from tests.test_ai_facts import load
+    return load(name)
+
+
+def test_the_outline_is_off_and_the_default_prompt_is_unchanged():
+    # Off unless asked (only outline_eval asks), and off means the prompt is exactly today's (the 16 finals' request
+    # bodies were diffed byte for byte before and after M3). On, the only change is the outline block, before FACTS.
+    from app.ai import facts
+    for name in ("final_lar_den", "final_ne_jax", "final_phi_chi"):
+        g = _fixture(name)
+        off, on = writer.recap_prompt(g), writer.recap_prompt(g, outline=True)
+        assert off == writer.recap_prompt(g, outline=False) and "OUTLINE" not in off
+        block = writer.outline_text(facts.recap_outline(g))
+        assert block and on == off.replace("\nFACTS:\n", "\n" + block + "FACTS:\n", 1)
+
+
+def test_the_outline_sits_after_the_shared_text():
+    from app.ai import facts, prompts
+    games = [_fixture("final_lar_den"), _fixture("final_sea_wsh")]
+    prompts_on = [writer.recap_prompt(g, outline=True) for g in games]
+    plan = facts.recap_outline(games[0])
+    assert "Angle: Broncos trailed by double digits at a quarter break and won." in prompts_on[0]
+    assert all(f"{i}. {line}" in prompts_on[0] for i, line in enumerate(plan["lines"], 1))
+    assert prompts_on[0].index("OUTLINE") > prompts_on[0].index("Return JSON only:")
+    assert prompts_on[0].index("FACTS:\n[") > prompts_on[0].index("OUTLINE")
+    shared = os.path.commonprefix(prompts_on)
+    assert prompts.GUARDRAILS in shared and "OUTLINE" not in shared       # the cached prefix is unchanged (M2)
+
+
+def test_production_recaps_have_no_outline_or_reasoning_switch(monkeypatch):
+    # Review of M3 (Oct 2): RECAP_OUTLINE / RECAP_REASONING turned T3's arms on in production with no Z5 or T3 gate.
+    assert not hasattr(writer, "RECAP_OUTLINE") and not hasattr(writer, "RECAP_REASONING")
+    efforts = []
+
+    def write(prompt, json_out=False, light=False, **kw):
+        efforts.append((kw.get("reasoning", "unset"), "OUTLINE" in prompt))
+        return json.dumps({"recap": "Bears won 27-7. " + WORDS, "home": "Bears good.", "away": "Eagles not."})
+    monkeypatch.setattr(client, "write", write)
+    assert writer.write_recap(GAME)["status"] == "ready" and efforts == [("unset", False)]   # the client's own
 
 
 def test_only_the_extraction_steps_ask_for_extract_mode(monkeypatch):

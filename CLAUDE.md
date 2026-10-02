@@ -113,7 +113,7 @@ Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `ph
   Headlines count failed rows for the same fingerprint since the last ready set. A "manual" job ignores the cap and
   the pre-write list (runbook below); a search that returns different links is a new fingerprint, so the cap holds
   best for a stable article set; the api's cap is basis-only, so an open-only game stays on its fallback for the day.
-  Held: spend-aware batch (E2, no token numbers yet) and storing the unchecked draft (migration 010, only if Qwen's
+  Held: spend-aware batch (E2, no token numbers yet) and storing the unchecked draft (migration 011, only if Qwen's
   production rejection rate says it pays).
 - **The `ai-recap` patch has never run anywhere**, so it was changed in place on 2026-10-01 (the `recap_due` step) and
   the four post-patch histories in `tests/fixtures/histories/` re-recorded (`SAVE_HISTORIES=1`). After the first
@@ -141,6 +141,34 @@ Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `ph
   OpenRouter models as one pool), then per model and day the calls, tokens, peak 60 s and unreported calls; texts by outcome; the rejection rate and top reasons; who wrote and checked.
   `ai_calls` is kept 14 days (`quota.KEEP`; it was 2) so a week of real numbers exists. First-deploy steps and the
   first-week reading guide: `docs/phase4-deploy-checklist.md`.
+- **Prep layer (2026-10-02, branch `phase-4-prep-layer`; code only, no local model):** M1 logs each call's
+  `ai_calls.kind` (`<text>:<step>`, `client.call_kind`), Groq's cached prompt tokens and its per-minute rate-limit
+  headers (migration 010, log only: budgets still count every token until T1, the log-only week, passes; the usage
+  report's T1 and M2 sections read them). M2 puts the recap prompt's shared text first (examples after the rules; the
+  report compares recap rewrites per first draft with 0.586). M4 trims the one-liner's FACTS to its prompt's hooks
+  (`facts.LIVE_STATS`/`LIVE_LEADERS`; claims_ok still knows every leader). M3 (code's recap outline,
+  `facts.recap_outline`, and a low-reasoning recap writer) has no production switch: Z5 (`python -m app.ai.angle_eval
+  --labels ...`) matched 11/16 on Oct 2, FAIL. T3 (`python -m app.ai.outline_eval`, built, never run) refuses a real
+  run until `--labels` pass Z5 on `--z5-fixtures <dir>`, a fresh set (`angle_eval.fresh_set_problem`: not under
+  tests/, its manifest's facts.py sha256 still facts.py's, none of the 16 finals the rules were tuned on), so the Oct 2
+  labels can't open it. M9 (headline candidates by rule) is not built: Z3 failed. The compose worker
+  waits for the api to be healthy (migrations applied).
+- **Z5 week-5 test** (pre-registered Oct 2: `docs/z5-preregistration.txt`, facts.py sha256 `554727d6...8387a4`, rule
+  order also in commit 92491ad). Adam ruled NE @ JAX a blowout, so the recap angle now checks the margin first
+  (blowout, close_finish, then outgained_but_lost, turnovers): 15/16 on the Oct 2 labels, but in-sample, so it proves
+  nothing. "Week 5" is ESPN's
+  regular-season **week 4** (Oct 1-5): the 16 fixtures (Sep 24-28) are ESPN's week 3, which the Oct 2 notes call week 4.
+  1. After Monday night's game: `python -m app.ai.angle_fixtures --season 2026 --week 4 --out <dir>` (ESPN only: no
+     tokens, no database; never under tests/). A game not final yet (not canceled or postponed) stops it with nothing
+     written: rerun once it is. `--partial` writes the week without it (manifest `partial`): not the pre-registered week.
+  2. A blind labeller: Adam, or an agent that has never seen facts.py, angle_eval output or an outline, **started
+     outside `C:/Users/axos2/Desktop/Headliners` with no file tools and the text of `<dir>/labels_sheet.md` pasted into
+     its prompt** (this file and the project memory name the rule order; never the session that changed the rules).
+     Save its reply (the labels JSON, the sheet's reply format) and its sha256 before scoring.
+  3. `python -m app.ai.angle_eval --fixtures <dir> --labels <labels.json>`: it refuses a set that isn't fresh and prints
+     facts.py's sha256: check it is the pre-registered one. **Pass bar: code matches at least 85% of the finals, rounded
+     up** (13 of 15, 14 of 16). On a pass, T3: `outline_eval --run --labels <labels.json> --z5-fixtures <dir>`.
+     Any rule change after a look needs another fresh week.
 - **Tests:** `tests/test_ai_*.py` (no live model calls), `test_workflows.py` (every simulated game runs a fake `ai`
   worker: a waiting AI task stops time-skipping), `test_replay.py` (old histories replay with the patches), `test_ai_replay.py` / `test_ai_review_sheet.py` (need git history; skipped without it).
 

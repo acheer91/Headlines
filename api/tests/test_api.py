@@ -232,9 +232,14 @@ def test_migrations_applied_and_idempotent(client):
     names = [r[0] for r in _sql("SELECT name FROM schema_migrations ORDER BY name")]
     assert names == sorted(p.name for p in migrate.MIGRATIONS_DIR.glob("*.sql"))          # every file, once
     assert names[:3] == ["001_init.sql", "002_game_details.sql", "003_season_type_and_status.sql"]
-    assert names[-1] == "009_ai_rejections.sql"
+    assert names[-1] == "010_ai_call_cache.sql"
     assert _sql("""SELECT 1 FROM information_schema.columns
                    WHERE table_name = 'ai_texts' AND column_name = 'rejections'""") == [(1,)]
+    assert _sql("""SELECT column_name, data_type FROM information_schema.columns
+                   WHERE table_name = 'ai_calls' AND column_name IN ('kind', 'cached_tokens', 'remaining_tokens',
+                                                                     'reset_tokens_secs')
+                   ORDER BY column_name""") == [("cached_tokens", "integer"), ("kind", "text"),
+                                                ("remaining_tokens", "integer"), ("reset_tokens_secs", "real")]
     assert migrate.migrate(TEST_DB) == []                    # second run applies nothing
     tables = {r[0] for r in _sql("SELECT table_name FROM information_schema.tables WHERE table_schema='public'")}
     assert {"game_summaries", "bet_results", "ai_texts", "ai_calls", "ai_cooling"} <= tables

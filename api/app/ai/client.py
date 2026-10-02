@@ -123,6 +123,7 @@ def begin(kind: str | None) -> None:
     _last.kind = kind
     _last.writer = None
     _last.checker = None
+    _last.prompt = None
 
 
 def forget_last() -> None:
@@ -143,21 +144,49 @@ def last_writer() -> str:
     return getattr(_last, "writer", None) or model()
 
 
-def write(prompt: str, *, json_out: bool = False, light: bool = False) -> str:
+def write(prompt: str, *, json_out: bool = False, light: bool = False, reasoning: str | None = None) -> str:
     """One text from the kind's writer (or its named backup). Returns the reply (a JSON string when json_out).
     light: a short structured reply, not prose (an extraction step pulling claims out of articles or news, or the
-    live one-liner): low reasoning and a smaller reply allowance (LIGHT_MAX_OUT), so it holds less of the minute."""
+    live one-liner): low reasoning and a smaller reply allowance (LIGHT_MAX_OUT), so it holds less of the minute.
+    reasoning: a gpt-oss writer's effort for this call instead of REASONING (only outline_eval's T3 arms, M3); the
+    reply allowance stays MAX_OUT."""
     text, used = _failover(route(_kind())[0], prompt, json_out, LIGHT_MAX_OUT if light else MAX_OUT,
-                           avoid=None, low_effort=light)
+                           avoid=None, low_effort=light, kind=call_kind(_write_step(prompt, light)),
+                           reasoning=reasoning)
     _last.writer = used
     return text
 
 
 def check(prompt: str) -> str:
     """One fact check, by a model from another family than the one that wrote the text. Returns a JSON string."""
-    text, used = _failover(route(_kind())[1], prompt, True, CHECK_MAX_OUT, avoid=last_writer(), checker=True)
+    text, used = _failover(route(_kind())[1], prompt, True, CHECK_MAX_OUT, avoid=last_writer(), checker=True,
+                           kind=call_kind("check"))
     _last.checker = used
     return text
+
+
+SEARCH_KIND = "preview:search"      # groq_search finds a preview's articles, before the preview's text begins
+
+
+def call_kind(step: str) -> str:
+    """What a model call was for, as logged on its ai_calls row (migration 010): '<text kind>:<step>' (recap:write,
+    preview:extract, headlines:check, ...), or the step alone outside a text (check_eval). Log only: routing and
+    budgets never read it."""
+    k = _kind()
+    return f"{k}:{step}" if k else step
+
+
+def _write_step(prompt: str, light: bool) -> str:
+    """The step a writer call is: 'extract' (a light call, except the one-liner, which is light itself) or 'write';
+    're-extract' / 'rewrite' when it is this text's previous prompt again plus why the draft was rejected
+    (writer._step appends that to the first prompt). A rewrite repeats a whole prompt, so it is where Groq's cache
+    should hit (T1 counts cached tokens on rewrites)."""
+    step = "extract" if light and _kind() != "one_liner" else "write"
+    first = getattr(_last, "prompt", None)
+    if first and prompt.startswith(first):
+        return "re-extract" if step == "extract" else "rewrite"
+    _last.prompt = prompt
+    return step
 
 
 def last_checker() -> str | None:
@@ -182,7 +211,9 @@ class MemoryQuota:
 
     def __init__(self):
         self._windows: dict[str, deque] = {}
-        self._day: dict[str, deque] = {}         # model -> [monotonic time, reserved, used or None] for 24 h
+        # model -> [monotonic time, reserved, used or None, kind, cached tokens, remaining tokens, reset seconds] for
+        # 24 h (the last three None until Groq reports them)
+        self._day: dict[str, deque] = {}
         self._cooling: dict[str, float] = {}     # model -> monotonic time it may be tried again
         self._lock = threading.Lock()
 
@@ -192,9 +223,11 @@ class MemoryQuota:
             w.popleft()
         return sum(c for _, c in w) + cost <= limit or not w
 
-    def reserve(self, models: list[str], cost: int, limit: int, wait: bool) -> tuple[str, object] | None:
+    def reserve(self, models: list[str], cost: int, limit: int, wait: bool,
+                kind: str | None = None) -> tuple[str, object] | None:
         """The first model that isn't cooling down and has room this minute, reserved. With wait, sleep until the
-        first usable model has room; without, None at once. None when every model is cooling down."""
+        first usable model has room; without, None at once. None when every model is cooling down. kind is only
+        logged (call_kind)."""
         global paced_seconds
         with self._lock:
             while True:
@@ -205,7 +238,7 @@ class MemoryQuota:
                 for m in usable:
                     if self._room(m, cost, limit, now):
                         self._windows[m].append((now, cost))
-                        entry = [now, cost, None]
+                        entry = [now, cost, None, kind, None, None, None]
                         self._day.setdefault(m, deque()).append(entry)
                         return m, entry
                 if not wait:
@@ -218,10 +251,15 @@ class MemoryQuota:
         with self._lock:
             self._cooling[model_name] = max(self._cooling.get(model_name, 0), time.monotonic() + seconds)
 
-    def used(self, handle: object, tokens: int) -> None:
+    def used(self, handle: object, tokens: int, cached: int | None = None, remaining: int | None = None,
+             reset: float | None = None) -> None:
+        """tokens: what the call counts against the day (Groq's total_tokens). cached: the prompt tokens Groq served
+        from its cache; remaining / reset: Groq's x-ratelimit-remaining-tokens and -reset-tokens after the call. All
+        three logged only, never taken off `tokens` (M1 waits for the log-only week, T1)."""
         if handle is not None:
             with self._lock:
                 handle[2] = tokens
+                handle[4:7] = [cached, remaining, reset]
 
     def spent_today(self, pool: str, requests: bool) -> tuple[float, float]:
         """(spent in the last 24 h, seconds until the oldest of it leaves the window) for a model, or for every
@@ -273,12 +311,12 @@ def _waiting() -> bool:
     return getattr(_mode, "wait", True)
 
 
-def _wait(cost: int, limit: int, key: str) -> object:
+def _wait(cost: int, limit: int, key: str, kind: str | None = None) -> object:
     """Hold one call to a single model (search) until it has room this minute. Returns the quota handle."""
     day = _over_budget(key, cost)
     if day is not None:
         raise RateLimited(f"{key}: today's budget is spent", day)
-    got = quota.reserve([key], cost, limit, _waiting())
+    got = quota.reserve([key], cost, limit, _waiting(), kind=kind)
     if got is None:
         raise RateLimited(f"{key}: no room this minute")
     return got[1]
@@ -412,7 +450,8 @@ def _sizing(name: str, prompt: str, max_out: int) -> tuple[int, int]:
 
 
 def _failover(models: list[str], prompt: str, json_out: bool, max_out: int, avoid: str | None,
-              checker: bool = False, low_effort: bool = False) -> tuple[str, str]:
+              checker: bool = False, low_effort: bool = False, kind: str | None = None,
+              reasoning: str | None = None) -> tuple[str, str]:
     order = [m for m in models if avoid is None or family(m) != family(avoid)]
     if not order:
         # Never fall back to the writer's own family (it once fell back to the whole list here).
@@ -444,7 +483,7 @@ def _failover(models: list[str], prompt: str, json_out: bool, max_out: int, avoi
             tried.add(name)
             last = RateLimited(f"{name}: today's budget is spent", day)
             continue
-        got = quota.reserve([name], each, limit, _waiting())
+        got = quota.reserve([name], each, limit, _waiting(), kind=kind)
         if got is None:
             if quota.is_cooling(name):         # started cooling meanwhile (another process got a 429)
                 tried.add(name)
@@ -453,13 +492,15 @@ def _failover(models: list[str], prompt: str, json_out: bool, max_out: int, avoi
         name, handle = got
         tried.add(name)
         try:
+            logged = {}           # what only a Groq reply adds to its ai_calls row (_groq_log)
             if _is_openrouter(name):
                 text, used = _openrouter_write(prompt, json_out, name, max_out, checker)
             elif _is_gemini(name):
                 text, used = _gemini_call(prompt, json_out, name), 1
             else:
-                text, used = _groq_write(prompt, json_out, name, max_out, checker, low_effort=low_effort)
-            quota.used(handle, used)
+                text, used, logged = _groq_write(prompt, json_out, name, max_out, checker, low_effort=low_effort,
+                                                 reasoning=reasoning)
+            quota.used(handle, used, **logged)
             if name != order[0]:
                 log.warning("ai failover: %s %s -> %s (%s)", "checker" if checker else "writer", order[0], name,
                             "cooling down" if order[0] not in tried else last)
@@ -559,6 +600,27 @@ def _is_json(text: str) -> bool:
 
 # ---------------------------------------------------------------- Groq
 
+# The reply's rate-limit headers, kept with its JSON under this key (T1 reads them from ai_calls; M1, log only).
+RATE_HEADERS = "_x_ratelimit"
+
+
+def _seconds(text: str | None) -> float | None:
+    """Groq's durations ("7.66s", "2m59.56s", "340ms") in seconds; None when there is none."""
+    parts = _UNIT.findall(text or "")
+    return round(sum(float(n) * _UNIT_SECONDS[u] for n, u in parts), 3) if parts else None
+
+
+def _rate_headers(headers) -> tuple[int | None, float | None]:
+    """(x-ratelimit-remaining-tokens, x-ratelimit-reset-tokens in seconds): the model's tokens-a-minute room after
+    this call and when it is whole again (Groq's rate-limit docs: both per minute only)."""
+    left = headers.get("x-ratelimit-remaining-tokens")
+    try:
+        left = int(left) if left is not None else None
+    except ValueError:
+        left = None
+    return left, _seconds(headers.get("x-ratelimit-reset-tokens"))
+
+
 def _groq_post(body: dict) -> dict:
     key = os.environ.get("GROQ_API_KEY")
     if not key:
@@ -574,9 +636,12 @@ def _groq_post(body: dict) -> dict:
     if r.status_code != 200:
         raise AIError(f"groq {r.status_code}")
     try:
-        return r.json()
+        d = r.json()
     except ValueError:
         raise AIError("groq: bad reply") from None
+    if isinstance(d, dict):
+        d[RATE_HEADERS] = _rate_headers(r.headers)
+    return d
 
 
 MAX_OUT = 3000           # includes the model's reasoning tokens
@@ -591,14 +656,33 @@ REASONING = os.environ.get("GROQ_REASONING", "medium")   # "low" made factual sl
 tokens_used = 0         # Groq writing tokens this process (the samples script reports it per text)
 
 
+def _groq_usage(d: dict) -> tuple[int, int | None]:
+    """(total tokens, cached prompt tokens) from a Groq reply. total_tokens includes the cached ones and is what the
+    budget counts. Cached is usage.prompt_tokens_details.cached_tokens (Groq's prompt-caching docs; their example:
+    6,458 total = 4,641 prompt, 4,608 of them cached, + 1,817 reply), None when Groq doesn't send it."""
+    u = d.get("usage") or {}
+    details = u.get("prompt_tokens_details")
+    cached = details.get("cached_tokens") if isinstance(details, dict) else None
+    return u.get("total_tokens") or 0, cached if type(cached) is int and cached >= 0 else None
+
+
+def _groq_log(d: dict) -> dict:
+    """What a Groq reply adds to its ai_calls row beyond the tokens it counts, as quota.used's keywords: the cached
+    prompt tokens and the rate-limit headers (T1's two conditions: cached tokens on the rewrites, and whether
+    x-ratelimit-remaining-tokens falls by the uncached tokens only). Logged only."""
+    remaining, reset = d.get(RATE_HEADERS) or (None, None)
+    return {"cached": _groq_usage(d)[1], "remaining": remaining, "reset": reset}
+
+
 def _groq_write(prompt: str, json_out: bool, name: str, max_out: int, checker: bool,
-                low_effort: bool = False) -> tuple[str, int]:
+                low_effort: bool = False, reasoning: str | None = None) -> tuple[str, int, dict]:
+    """(reply, total tokens, _groq_log's fields). reasoning: this write's effort instead of REASONING."""
     body = {"model": name, "max_completion_tokens": max_out, "messages": [{"role": "user", "content": prompt}]}
     if name.startswith("openai/gpt-oss"):
         # Checking is comparison and extraction is copying claims out, not writing: low reasoning leaves the reply
         # room for the JSON and holds less of the minute (Adam, Sep 29: low for extract, medium for write). The
         # live one-liner is light too: two short sentences, each written again in 15 minutes.
-        body["reasoning_effort"] = "low" if checker or low_effort else REASONING
+        body["reasoning_effort"] = "low" if checker or low_effort else (reasoning or REASONING)
     else:
         body["reasoning_format"] = "hidden"     # Qwen: keep its thinking out of the JSON reply
     if checker:
@@ -607,7 +691,7 @@ def _groq_write(prompt: str, json_out: bool, name: str, max_out: int, checker: b
         body["response_format"] = {"type": "json_object"}
     d = _groq_post(body)
     global tokens_used
-    used = (d.get("usage") or {}).get("total_tokens") or 0
+    used = _groq_usage(d)[0]
     tokens_used += used
     try:
         text = d["choices"][0]["message"]["content"]
@@ -615,7 +699,7 @@ def _groq_write(prompt: str, json_out: bool, name: str, max_out: int, checker: b
         raise AIError("groq: bad reply") from None
     if not text:
         raise AIError("groq: empty reply")
-    return text, used
+    return text, used, _groq_log(d)
 
 
 SEARCH_SYSTEM = "Run exactly one web search with the user's query, unchanged. Do not open any page. Reply DONE."
@@ -628,10 +712,10 @@ def groq_search(query: str) -> list[dict]:
     body = {"model": GROQ_SEARCH_MODEL, "reasoning_effort": "low", "max_completion_tokens": 300,
             "tools": [{"type": "browser_search"}],
             "messages": [{"role": "system", "content": SEARCH_SYSTEM}, {"role": "user", "content": query}]}
-    handle = _wait(2000, GROQ_TPM, GROQ_SEARCH_MODEL)    # search shares gpt-oss-20b's minute and day
+    handle = _wait(2000, GROQ_TPM, GROQ_SEARCH_MODEL, SEARCH_KIND)    # search shares gpt-oss-20b's minute and day
     try:
         d = _groq_post(body)
-        quota.used(handle, (d.get("usage") or {}).get("total_tokens") or 2000)
+        quota.used(handle, _groq_usage(d)[0] or 2000, **_groq_log(d))
         tools = d["choices"][0]["message"].get("executed_tools") or []
     except RateLimited as exc:
         quota.cool(GROQ_SEARCH_MODEL, exc.retry_after)   # writing and checking skip it too until then
