@@ -43,7 +43,8 @@ class GameState:
 @dataclass
 class TextJob:
     """One AI text for WriteTextWorkflow (Phase 4). kind: preview | recap | headlines. For headlines, league is
-    a comma-separated list and espn_id is None. reason: midweek | refresh | final | nightly | schedule | manual."""
+    a comma-separated list and espn_id is None. reason: midweek | refresh | final | nightly | schedule | manual | open (a page open
+    handed over for lack of quota)."""
     kind: str
     league: str
     espn_id: str | None

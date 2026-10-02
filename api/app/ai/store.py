@@ -17,6 +17,7 @@ from psycopg.types.json import Jsonb
 # a worker writer can wait minutes for quota while holding its claim.
 WRITING_TIMEOUT = timedelta(minutes=16)
 FAILED_QUIET = timedelta(minutes=30)    # a page open doesn't retry a text that failed this recently (same basis)
+QUEUED = "queued"                       # reason on a failed row a page open handed to the worker (main._hand_to_worker)
 # A text that failed this many times for reasons retrying won't fix (check failed twice, a non-retryable error) is
 # not written again for the same inputs (Adam, 2026-10-01): it waits for new ones. Rate limits and 5xx never count.
 REJECTION_CAP = 2
@@ -132,6 +133,13 @@ def save(conn, c: Claim, result: dict) -> bool:
                             int(counts_as_rejection(result)), c.id, c.token)).fetchone()
     conn.commit()
     return row is not None
+
+
+def mark_queued(conn, row_id: int) -> None:
+    """A page open ran out of quota and handed this text to the worker: the app says "being written" until the
+    worker claims it (its claim sets its own reason) or FAILED_QUIET passes."""
+    conn.execute("UPDATE ai_texts SET reason = %s WHERE id = %s AND status = 'failed'", (QUEUED, row_id))
+    conn.commit()
 
 
 def save_headlines(conn, result: dict, reason: str, fingerprint: str | None = None) -> int:

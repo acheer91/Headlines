@@ -141,9 +141,12 @@ def last_writer() -> str:
     return getattr(_last, "writer", None) or model()
 
 
-def write(prompt: str, *, json_out: bool = False) -> str:
-    """One text from the kind's writer (or its named backup). Returns the reply (a JSON string when json_out)."""
-    text, used = _failover(route(_kind())[0], prompt, json_out, MAX_OUT, avoid=None)
+def write(prompt: str, *, json_out: bool = False, extract: bool = False) -> str:
+    """One text from the kind's writer (or its named backup). Returns the reply (a JSON string when json_out).
+    extract: an extraction step (pulling claims out of articles or news), not prose: low reasoning and a smaller
+    reply allowance (EXTRACT_MAX_OUT), so it holds less of the writer's minute."""
+    text, used = _failover(route(_kind())[0], prompt, json_out, EXTRACT_MAX_OUT if extract else MAX_OUT,
+                           avoid=None, low_effort=extract)
     _last.writer = used
     return text
 
@@ -354,20 +357,65 @@ def _retry_after(text: str) -> float:
     return secs if secs > 0 else 60.0
 
 
+# ---------------------------------------------------------------- counting prompt tokens
+
+# Tokens Groq wraps around a gpt-oss prompt (its chat template), measured against Groq's own prompt_tokens on
+# 2026-10-01: 71 for a plain reply, 95 in JSON mode, the same at low and medium reasoning.
+GPT_OSS_OVERHEAD = 100
+TOKENIZER = "o200k_harmony"     # gpt-oss's tokenizer, published in tiktoken
+_encoding: object = None
+_encoding_lock = threading.Lock()
+
+
+def _gpt_oss_encoding():
+    """tiktoken's o200k_harmony, loaded once; None when it can't be (no package, or its file can't be fetched).
+    The Docker image bakes the file in (TIKTOKEN_CACHE_DIR), so a server never downloads it at run time."""
+    global _encoding
+    with _encoding_lock:
+        if _encoding is None:
+            try:
+                import tiktoken
+                _encoding = tiktoken.get_encoding(TOKENIZER)
+            except Exception as exc:  # noqa: BLE001 — counting falls back to an estimate, never fails a text
+                log.warning("tokenizer %s unavailable, estimating gpt-oss prompts: %s", TOKENIZER, exc)
+                _encoding = False
+        return _encoding or None
+
+
+def prompt_tokens(name: str, prompt: str) -> int:
+    """A prompt's size in tokens as Groq will count it, for reserving the minute. gpt-oss: counted with its own
+    tokenizer plus the chat template. The old ~4 characters a token ran low: an article extract reserved 7,800 and
+    used 9,029 (Oct 1), and a fact-check prompt came to 3.5 characters a token. Other models: estimated at ~4
+    characters a token (their prompts are short checks); gpt-oss without the tokenizer: ~3."""
+    if _same_model(name).startswith("openai/gpt-oss"):
+        enc = _gpt_oss_encoding()
+        if enc is not None:
+            return len(enc.encode(prompt, disallowed_special=())) + GPT_OSS_OVERHEAD
+        return len(prompt) // 3 + GPT_OSS_OVERHEAD
+    return len(prompt) // 4
+
+
+def _sizing(name: str, prompt: str, max_out: int) -> tuple[int, int]:
+    """(prompt tokens, reply allowance) for one call to `name`. Groq counts the prompt plus the whole reply allowance
+    against the minute (429s when we counted real usage, 2026-09-29), so that is what is reserved. One request can
+    never be more than the minute, so the allowance shrinks to fit; a prompt that leaves too little room is refused.
+    OpenRouter and Gemini count requests, not tokens: nothing to fit."""
+    pt = prompt_tokens(name, prompt)
+    if _is_openrouter(name) or _is_gemini(name):
+        return pt, max_out
+    out = min(max_out, GROQ_TPM - pt - MARGIN)
+    if out < MIN_OUT:
+        raise TooLarge(f"prompt of ~{pt} tokens leaves no room for a reply in {GROQ_TPM} a minute")
+    return pt, out
+
+
 def _failover(models: list[str], prompt: str, json_out: bool, max_out: int, avoid: str | None,
-              checker: bool = False) -> tuple[str, str]:
+              checker: bool = False, low_effort: bool = False) -> tuple[str, str]:
     order = [m for m in models if avoid is None or family(m) != family(avoid)]
     if not order:
         # Never fall back to the writer's own family (it once fell back to the whole list here).
         raise NoChecker(f"no checker outside the {family(avoid)} family in {models}")
-    # Groq counts the prompt plus the whole reply allowance against the minute (429s when we counted real usage,
-    # 2026-09-29), so that is what we reserve: ~4 characters a token plus max_out. One request can never be more
-    # than the minute, so the reply allowance shrinks to fit; a prompt that leaves too little room is refused.
-    prompt_tokens = len(prompt) // 4
-    max_out = min(max_out, GROQ_TPM - prompt_tokens - MARGIN)
-    if max_out < MIN_OUT:
-        raise TooLarge(f"prompt of ~{prompt_tokens} tokens leaves no room for a reply in {GROQ_TPM} a minute")
-    cost = prompt_tokens + max_out
+    asked = max_out
     last: AIError = RateLimited("every model is rate-limited or has no room this minute")
     tried: set[str] = set()
     while True:
@@ -383,7 +431,8 @@ def _failover(models: list[str], prompt: str, json_out: bool, max_out: int, avoi
             if wait is not None:
                 raise RateLimited(f"every model cooling down for {wait:.0f}s", max(wait, 1.0))
             raise last
-        each, limit = _minute(name, cost)
+        pt, max_out = _sizing(name, prompt, asked)       # per model: gpt-oss prompts are counted exactly
+        each, limit = _minute(name, pt + max_out)
         day = _over_budget(name, each)
         if day is not None:
             # Today's budget is spent: skip it like a 429 until its oldest call leaves the 24 h window (both
@@ -407,7 +456,7 @@ def _failover(models: list[str], prompt: str, json_out: bool, max_out: int, avoi
             elif _is_gemini(name):
                 text, used = _gemini_call(prompt, json_out, name), 1
             else:
-                text, used = _groq_write(prompt, json_out, name, max_out, checker)
+                text, used = _groq_write(prompt, json_out, name, max_out, checker, low_effort=low_effort)
             quota.used(handle, used)
             if name != order[0]:
                 log.warning("ai failover: %s %s -> %s (%s)", "checker" if checker else "writer", order[0], name,
@@ -530,17 +579,22 @@ def _groq_post(body: dict) -> dict:
 
 MAX_OUT = 3000           # includes the model's reasoning tokens
 CHECK_MAX_OUT = 2000     # the fact-check reply is a short JSON list (plus the model's reasoning)
-MARGIN = 200             # our ~4-characters-a-token estimate runs a little low
+# An extraction reply is a JSON list of claims, at low reasoning. The one measured extract (medium reasoning,
+# PIT @ CLE, Oct 1) spent its whole 3,000; 1,500 is a first setting, to tighten once low-reasoning extracts are measured.
+EXTRACT_MAX_OUT = int(os.environ.get("AI_EXTRACT_MAX_OUT", "1500"))
+MARGIN = 200             # slack on top of the prompt count (an estimate, for models we can't count exactly)
 MIN_OUT = 600            # less room than this for a reply isn't worth a call
 REASONING = os.environ.get("GROQ_REASONING", "medium")   # "low" made factual slips (wrong team, wrong bet result)
 tokens_used = 0         # Groq writing tokens this process (the samples script reports it per text)
 
 
-def _groq_write(prompt: str, json_out: bool, name: str, max_out: int, checker: bool) -> tuple[str, int]:
+def _groq_write(prompt: str, json_out: bool, name: str, max_out: int, checker: bool,
+                low_effort: bool = False) -> tuple[str, int]:
     body = {"model": name, "max_completion_tokens": max_out, "messages": [{"role": "user", "content": prompt}]}
     if name.startswith("openai/gpt-oss"):
-        # Checking is comparison, not writing; low reasoning leaves the reply room for the JSON.
-        body["reasoning_effort"] = "low" if checker else REASONING
+        # Checking is comparison and extraction is copying claims out, not writing: low reasoning leaves the reply
+        # room for the JSON and holds less of the minute (Adam, Sep 29: low for extract, medium for write).
+        body["reasoning_effort"] = "low" if checker or low_effort else REASONING
     else:
         body["reasoning_format"] = "hidden"     # Qwen: keep its thinking out of the JSON reply
     if checker:

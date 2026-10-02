@@ -124,7 +124,7 @@ def test_all_models_cooling_retries_when_the_first_frees_up(fresh):
 
 def test_reply_allowance_shrinks_to_fit_the_minute(fresh, monkeypatch):
     seen = []
-    monkeypatch.setattr(client, "_groq_write", lambda p, j, name, max_out, checker: (seen.append(max_out) or ("{}", 1)))
+    monkeypatch.setattr(client, "_groq_write", lambda p, j, name, max_out, checker, **kw: (seen.append(max_out) or ("{}", 1)))
     client.write("x" * 4 * 6000)                                        # ~6,000 prompt tokens
     assert seen == [8000 - 6000 - client.MARGIN]
     with pytest.raises(client.TooLarge):
@@ -520,3 +520,44 @@ def test_rejected_out():
     assert not store.counts_as_rejection({"status": "failed", "retry_after": 5.0})
     assert not store.counts_as_rejection({"status": "failed", "unconfigured": True})
     assert not store.counts_as_rejection({"status": "ready"})
+
+
+# ---------- under the writer's minute (Oct 1): counted prompts, low-reasoning extracts ----------
+
+def test_gpt_oss_prompts_are_counted_with_its_tokenizer():
+    import tiktoken
+    p = "Pittsburgh at Cleveland: Steelers -2.5, total 38.5. T.J. Watt (hamstring) is questionable. " * 20
+    n = len(tiktoken.get_encoding("o200k_harmony").encode(p))
+    assert client.prompt_tokens("openai/gpt-oss-120b", p) == n + client.GPT_OSS_OVERHEAD
+    assert client.prompt_tokens("or:openai/gpt-oss-20b:free", p) == n + client.GPT_OSS_OVERHEAD
+    assert client.prompt_tokens("qwen/qwen3.8-27b", p) == len(p) // 4      # other models: still estimated
+    assert n > len(p) // 4                                                  # the old estimate ran low here
+
+
+def test_without_the_tokenizer_gpt_oss_is_estimated_on_the_high_side(monkeypatch):
+    monkeypatch.setattr(client, "_encoding", False)                         # tiktoken couldn't load
+    assert client.prompt_tokens("openai/gpt-oss-120b", "x" * 3000) == 1000 + client.GPT_OSS_OVERHEAD
+
+
+def test_the_minute_is_reserved_from_the_counted_prompt(fresh, monkeypatch):
+    monkeypatch.setattr(client, "WRITERS", ["openai/gpt-oss-120b"])
+    seen = []
+    monkeypatch.setattr(client, "_groq_write", lambda p, j, name, max_out, checker, **kw: (seen.append(max_out) or ("{}", 1)))
+    p = "Steelers 2.5, 38.5; T.J. Watt questionable. " * 300                 # ~5,200 counted, ~3,300 estimated
+    counted = client.prompt_tokens("openai/gpt-oss-120b", p)
+    client.write(p)
+    assert seen == [client.GROQ_TPM - counted - client.MARGIN] and seen[0] < client.MAX_OUT     # shrunk by the real size
+
+
+def test_extract_calls_use_low_reasoning_and_a_smaller_reply(fresh, monkeypatch):
+    monkeypatch.setattr(client, "WRITERS", ["openai/gpt-oss-120b"])
+    bodies = []
+
+    def post(body):
+        bodies.append(body)
+        return {"choices": [{"message": {"content": "{}"}}], "usage": {"total_tokens": 5}}
+    monkeypatch.setattr(client, "_groq_post", post)
+    client.write("x", json_out=True, extract=True)
+    client.write("x", json_out=True)
+    assert (bodies[0]["reasoning_effort"], bodies[0]["max_completion_tokens"]) == ("low", client.EXTRACT_MAX_OUT)
+    assert (bodies[1]["reasoning_effort"], bodies[1]["max_completion_tokens"]) == (client.REASONING, client.MAX_OUT)

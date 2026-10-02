@@ -83,3 +83,24 @@ def test_recap_players_and_stats_for_the_code_check():
     f = facts.recap_facts(load("final_phi_chi"))
     assert {"name": "D'Andre Swift", "last_name": "Swift", "side": "home", "value": "20 CAR, 84 YDS"} in f["players"]
     assert f["stats"]["possessionTime"] == {"home": "36:53", "away": "23:07"}
+
+
+# ---------- article text cut to the paragraphs about this game (Oct 1) ----------
+
+def test_relevant_text_keeps_the_paragraphs_about_the_game():
+    from app.ai import sources
+    about = "The Steelers lean on T.J. Watt against Cleveland's line. " * 6
+    other = "Elsewhere, the Chiefs and Bills both won big on Sunday. " * 6
+    text = "\n".join([about, other, "Watt has 4 sacks in 3 games against this offense. " * 3])
+    out = sources.relevant_text(text, ["Steelers", "Cleveland", "Watt"])
+    assert "Chiefs" not in out and "4 sacks" in out
+    short = "A note on the Steelers.\n" + other
+    assert sources.relevant_text(short, ["Steelers"]) == " ".join(short.split())   # too little kept: all of it
+
+
+def test_player_terms_come_from_injuries_and_leaders():
+    from app.ai import sources
+    game = {"injuries": {"home": [{"name": "Elgton Jenkins"}], "away": [{"name": "Joey Porter Jr."}]},
+            "leaders": {"rows": [{"home": {"name": "Shedeur Sanders"}, "away": {"name": "Aaron Rodgers"}},
+                                 {"home": None, "away": {"name": "D.J. Moore"}}]}}
+    assert sources.player_terms(game) == ["Jenkins", "Moore", "Porter", "Rodgers", "Sanders"]

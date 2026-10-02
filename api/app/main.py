@@ -6,6 +6,7 @@ data with stale=true, so the scoreboard never goes blank because a feed hiccuppe
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
@@ -197,9 +198,13 @@ def game(game_id: int):
 
 # ---------- Phase 4: AI text ----------
 # Written ahead by the worker; a text nobody wrote ahead is written here, on open, within these limits. The api
-# never waits for free-tier quota (client.no_wait): with no room it answers at once and the app shows fallback text.
+# never waits for free-tier quota (client.no_wait): with no room it hands the text to the worker, which does wait
+# (_hand_to_worker), and the app says it is being written. A preview's extract and write are two calls that don't
+# fit one minute of the writer's quota together, so an opened preview usually finishes there.
 AI_WAIT = {"preview": 20.0, "recap": 10.0}
 _ai_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="ai-open")
+TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS")     # unset: no hand-off (the app never depends on Temporal)
+TEMPORAL_NAMESPACE = os.environ.get("TEMPORAL_NAMESPACE", "default")
 
 
 def _ai_out(kind: str | None, row: dict | None) -> dict:
@@ -210,22 +215,54 @@ def _ai_out(kind: str | None, row: dict | None) -> dict:
                 "written_at": None}
     shown = ai_store.showable(row)
     status = row["status"] if shown is None or row["status"] != "writing" else "ready"
+    if status == "failed" and row["reason"] == ai_store.QUEUED:
+        status = "queued"                       # handed to the worker after a page open ran out of quota
     return {"kind": kind, "status": status, "body": row["body"] if shown else None,
             "sources": row["sources"] if shown else None, "updated_at": row["updated_at"].isoformat(),
             # When the shown text was written: a failed refresh keeps the last good preview (CTO, 2026-10-01).
             "written_at": row["written_at"].isoformat() if shown and row["written_at"] else None}
 
 
-def _write_on_open(kind: str, game_id: int) -> dict:
+def _hand_to_worker(kind: str, game_row: dict) -> bool:
+    """Start the worker's WriteTextWorkflow for a text this page open couldn't finish for lack of quota (Oct 1).
+    The worker waits for the writer's minute, so the next pull has it. "open" lets the worker write a game that
+    isn't on the pre-write list. False when Temporal isn't configured or doesn't answer: the old fallback stays."""
+    if not TEMPORAL_ADDRESS:
+        return False
+    from temporalio.client import Client
+
+    from .temporal.models import TextJob
+    from .temporal.starter import start_text
+
+    async def go():
+        client = await asyncio.wait_for(Client.connect(TEMPORAL_ADDRESS, namespace=TEMPORAL_NAMESPACE), 5)
+        await start_text(client, TextJob(kind, game_row["league"], game_row["espn_id"], "open"))  # False: already on it
+
+    try:
+        asyncio.run(go())
+        return True
+    except Exception as exc:  # noqa: BLE001 — Temporal down: the page shows its fallback, as before
+        log.warning("ai %s for game %s: hand-off to the worker failed: %s", kind, game_row["id"], exc)
+        return False
+
+
+def _write_on_open(kind: str, game_row: dict) -> dict:
     with ai_client.no_wait():
-        return ai_jobs.write_for_game(kind, game_id, "open", base_url=ESPN_BASE)
+        out = ai_jobs.write_for_game(kind, game_row["id"], "open", base_url=ESPN_BASE)
+    if out["status"] == "failed" and out.get("retry_after") and _hand_to_worker(kind, game_row):
+        if out.get("id"):
+            with db.connect() as conn:
+                ai_store.mark_queued(conn, out["id"])
+        out["queued"] = True
+    return out
 
 
 @app.get("/api/games/{game_id}/ai")
 def game_ai(game_id: int):
     """The AI text that fits the game now (handoff 2.6): preview (pre), recap (played final); none live (the
     one-liner is the box-score template) or in a league without AI text (AI_LEAGUES).
-    status: ready | no_sources ("No fresh previews") | failed or writing (the app shows fallback text) | missing.
+    status: ready | no_sources ("No fresh previews") | writing or queued (being written: the next pull may have it)
+    | failed (the app shows fallback text) | missing.
     Current text comes back at once, and so does a text that failed for the same inputs in the last 30 minutes
     (a pull shouldn't pay for the same failure again) or that was rejected twice for this game day or score
     (ai_store.REJECTION_CAP). Otherwise this request writes it (or waits for whoever is
@@ -245,7 +282,7 @@ def game_ai(game_id: int):
         return _ai_out(kind, stored)
     if ai_store.being_written(stored) and ai_store.showable(stored):
         return _ai_out(kind, stored)            # a preview mid-refresh: its last good text, at once
-    job = _ai_pool.submit(_write_on_open, kind, game_id)
+    job = _ai_pool.submit(_write_on_open, kind, game_row)
     deadline = time.monotonic() + AI_WAIT[kind]
     try:
         job.result(timeout=AI_WAIT[kind])
@@ -260,7 +297,10 @@ def game_ai(game_id: int):
             row = ai_store.get(conn, game_id, kind)
         settled = row is not None and (row["status"] != "writing" or ai_store.showable(row) is not None)
         if settled or (job.done() and row is None) or time.monotonic() >= deadline:
-            return _ai_out(kind, row)
+            out = _ai_out(kind, row)
+            if row is None and job.done() and not job.exception() and job.result().get("queued"):
+                out["status"] = "queued"        # handed off before a row existed (a preview's article search)
+            return out
         time.sleep(1)
 
 

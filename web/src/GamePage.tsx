@@ -394,6 +394,9 @@ function Injuries({ g }: { g: GameDetail }) {
 const readyBody = <K extends string>(ai: AiText | null, kind: AiText["kind"], key: K) =>
   ai && ai.kind === kind && ai.status === "ready" && ai.body && key in ai.body ? (ai.body as Record<K, unknown>) : null;
 
+/** The server is writing it (or handed it to the worker): the next pull may have it. */
+const beingWritten = (ai: AiText | null) => ai?.status === "writing" || ai?.status === "queued";
+
 const shortDate = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
 /** C1: the preview, edges per team with their sources, and writers' picks, attributed and linked. */
@@ -402,7 +405,12 @@ function PreviewSections({ g, ai, loading }: { g: GameDetail; ai: AiText | null;
     | { preview: string; edges: { home: { text: string; url: string; outlet: string }[]; away: { text: string; url: string; outlet: string }[] }; picks: { writer: string; outlet: string; pick: string; url: string }[] }
     | null;
   const waiting = loading && !body;
-  const fallback = ai?.status === "no_sources" ? "No fresh previews" : "Preview unavailable right now.";
+  const fallback =
+    ai?.status === "no_sources"
+      ? "No fresh previews"
+      : beingWritten(ai)
+        ? "Writing the preview… pull again in a minute."
+        : "Preview unavailable right now.";
   if (ai?.status === "none") return null; // a league without AI text (AI_LEAGUES)
   return (
     <>
@@ -475,7 +483,10 @@ function RecapSections({ g, ai, loading }: { g: GameDetail; ai: AiText | null; l
         ) : loading ? (
           <p className="muted empty">Writing the recap…</p>
         ) : (
-          <p className="empty">{fallback} {bets}</p>
+          <>
+            <p className="empty">{fallback} {bets}</p>
+            {beingWritten(ai) && <p className="muted small">Writing the recap… pull again in a minute.</p>}
+          </>
         )}
       </Section>
       {body && (

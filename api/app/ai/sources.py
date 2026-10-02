@@ -32,7 +32,10 @@ MAX_ARTICLES = 4          # Adam, 2026-09-29
 ENOUGH_FROM_ESPN = 2      # fewer fresh ESPN articles than this -> search
 MAX_FETCH = 8             # pages fetched per preview, to stay inside the on-open time budget
 MIN_WORDS = 150
-MAX_WORDS = 700           # per article sent to the writer: 4 articles must fit Groq's 8,000 tokens a minute
+# Per article sent to the writer, after relevant_text keeps only the paragraphs about this game (Oct 1: was 700
+# words of the page as it came; an extract of 4 such articles took 9,029 of the writer's 8,000 tokens a minute).
+MAX_WORDS = 500
+MIN_RELEVANT_WORDS = 80   # fewer relevant words than this: the filter missed how the article names things; keep it all
 FETCH_TIMEOUT = 8
 LEAGUE_WORDS = {"nfl": "NFL", "ncaaf": "college football", "nba": "NBA", "epl": "Premier League", "mls": "MLS"}
 
@@ -109,6 +112,31 @@ def mentions(text: str, terms: list[str]) -> bool:
     return any(re.search(rf"\b{re.escape(t)}\b", text) for t in terms)
 
 
+_SUFFIX = re.compile(r"\s+(jr\.?|sr\.?|ii|iii|iv|v)$", re.I)
+
+
+def player_terms(game: dict) -> list[str]:
+    """Last names of the players our own data names for this game (the injury report, the leaders): a paragraph
+    about one of them is about this game even when it names neither team."""
+    names = [p.get("name") for side in ("home", "away") for p in (game.get("injuries") or {}).get(side) or []]
+    names += [(r.get(side) or {}).get("name") for r in (game.get("leaders") or {}).get("rows") or []
+              for side in ("home", "away")]
+    out = set()
+    for n in names:
+        words = _SUFFIX.sub("", n or "").split()
+        if words and len(words[-1]) >= 4:
+            out.add(words[-1])
+    return sorted(out)
+
+
+def relevant_text(text: str, terms: list[str]) -> str:
+    """Only the paragraphs that name a team or one of the game's players (Oct 1, to fit the writer's minute): the
+    rest of a page (other games, the league, ads) is tokens the extract never uses. Too little left: the whole text."""
+    kept = [p for p in text.split("\n") if mentions(p, terms)]
+    out = " ".join(kept)
+    return out if len(out.split()) >= MIN_RELEVANT_WORDS else " ".join(text.split())
+
+
 def _fetch(url: str) -> tuple[str, str | None]:
     """(final url, html) or (url, None). Follows redirects."""
     try:
@@ -120,8 +148,9 @@ def _fetch(url: str) -> tuple[str, str | None]:
     return str(r.url), r.text
 
 
-def check(cand: dict, home: dict, away: dict, now: datetime) -> tuple[dict | None, str]:
-    """Fetch one candidate {url, title, published?} and apply every rule. Returns (article, reason)."""
+def check(cand: dict, home: dict, away: dict, now: datetime, players: list[str] = ()) -> tuple[dict | None, str]:
+    """Fetch one candidate {url, title, published?} and apply every rule. Returns (article, reason). Its text is the
+    paragraphs about this game (relevant_text: the teams, `players`), cut at MAX_WORDS."""
     url, html = _fetch(cand["url"])
     name = outlet(url)
     if not name:
@@ -143,7 +172,8 @@ def check(cand: dict, home: dict, away: dict, now: datetime) -> tuple[dict | Non
     published = now - rng[1]    # the worst case, i.e. the oldest the article can be
     return {"url": url, "outlet": name, "title": cand.get("title") or title,
             "published": published.isoformat(timespec="minutes"), "date_source": used,
-            "text": " ".join(words[:MAX_WORDS])}, "kept"
+            "text": " ".join(relevant_text(text, team_terms(home) + team_terms(away) + list(players))
+                             .split()[:MAX_WORDS])}, "kept"
 
 
 def search_query(game: dict) -> str:
@@ -165,7 +195,8 @@ def find_articles(game: dict, news: list[dict], *, now: datetime | None = None,
             for n in news if n.get("url")
             and mentions(f"{n['headline']} {n.get('description') or ''}", hs + as_)]
     trail: list[dict] = []
-    kept = _check_all(espn[:MAX_FETCH], home, away, now, trail, "espn")
+    players = player_terms(game)
+    kept = _check_all(espn[:MAX_FETCH], home, away, now, trail, "espn", players)
     if search and len(kept) < ENOUGH_FROM_ESPN:
         try:
             found = client.groq_search(search_query(game))
@@ -178,18 +209,18 @@ def find_articles(game: dict, news: list[dict], *, now: datetime | None = None,
             found = []
         seen = {a["url"] for a in kept} | {c["url"] for c in espn}
         found = [f for f in found if f["url"] not in seen and outlet(f["url"])]
-        kept += _check_all(found[:MAX_FETCH], home, away, now, trail, "search")
+        kept += _check_all(found[:MAX_FETCH], home, away, now, trail, "search", players)
     uniq = {a["url"]: a for a in kept}
     # Newest first, URL as the tie-break, so the same articles always come back in the same order.
     ranked = sorted(uniq.values(), key=lambda a: (a["published"], a["url"]), reverse=True)
     return ranked[:MAX_ARTICLES], trail
 
 
-def _check_all(cands: list[dict], home, away, now, trail: list[dict], via: str) -> list[dict]:
+def _check_all(cands: list[dict], home, away, now, trail: list[dict], via: str, players: list[str] = ()) -> list[dict]:
     if not cands:
         return []
     with ThreadPoolExecutor(max_workers=6) as pool:
-        results = list(pool.map(lambda c: check(c, home, away, now), cands))
+        results = list(pool.map(lambda c: check(c, home, away, now, players), cands))
     out = []
     for c, (art, why) in zip(cands, results):
         trail.append({"via": via, "url": c["url"], "result": why})

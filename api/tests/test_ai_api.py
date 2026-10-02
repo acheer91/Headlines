@@ -735,3 +735,76 @@ def test_unavailable_for_with_the_shared_quota(client, monkeypatch):  # noqa: F8
     wait = ai_client.unavailable_for("recap")
     assert wait is not None and 80000 < wait <= 86400
 
+
+# ---------- a page open that runs out of quota hands the text to the worker (Oct 1) ----------
+
+RATE_LIMITED = {"status": "failed", "reason": "rate limited: no room this minute", "retry_after": 60.0,
+                "model": "fake"}
+
+
+def test_a_rate_limited_open_is_handed_to_the_worker(client, fake, monkeypatch):  # noqa: F811
+    from app import main
+    handed = []
+    monkeypatch.setattr(main, "_hand_to_worker", lambda kind, row: handed.append((kind, row["espn_id"])) or True)
+    gid = fake["ids"]["DAL"]
+    fake["result"] = RATE_LIMITED
+    first = client.get(f"/api/games/{gid}/ai").json()
+    assert first["status"] == "queued" and first["body"] is None
+    assert handed == [("recap", _sql("SELECT espn_id FROM games WHERE id = %s", gid)[0][0])]
+    assert _sql("SELECT status, reason FROM ai_texts WHERE game_id = %s", gid) == [("failed", "queued")]
+    assert client.get(f"/api/games/{gid}/ai").json()["status"] == "queued"       # the next pull says so at once
+    assert fake["calls"]["recap"] == 1 and len(handed) == 1
+
+
+def test_without_the_worker_a_rate_limited_open_falls_back_as_before(client, fake, monkeypatch):  # noqa: F811
+    from app import main
+    monkeypatch.setattr(main, "TEMPORAL_ADDRESS", None)
+    fake["result"] = RATE_LIMITED
+    assert client.get(f"/api/games/{fake['ids']['DAL']}/ai").json()["status"] == "failed"
+    assert _sql("SELECT reason FROM ai_texts WHERE game_id = %s", fake["ids"]["DAL"]) == [("open",)]
+
+
+def test_a_rejected_text_is_not_handed_over(client, fake, monkeypatch):  # noqa: F811
+    from app import main
+    monkeypatch.setattr(main, "_hand_to_worker", lambda kind, row: pytest.fail("handed over a rejected text"))
+    fake["result"] = {"status": "failed", "reason": "check failed twice: x", "model": "fake"}
+    assert client.get(f"/api/games/{fake['ids']['DAL']}/ai").json()["status"] == "failed"
+
+
+def test_the_worker_writes_a_handed_over_text_off_the_prewrite_list(client, fake, monkeypatch, tmp_path):  # noqa: F811
+    favorite(monkeypatch, tmp_path, "NE")                                  # DAL is not on the pre-write list
+    from temporalio.testing import ActivityEnvironment
+    from app.temporal import activities
+    from app.temporal.models import TextJob
+    espn_id = _sql("SELECT espn_id FROM games WHERE id = %s", fake["ids"]["DAL"])[0][0]
+    env = ActivityEnvironment()
+    assert env.run(activities.write_text, TextJob("recap", "nfl", espn_id, "nightly")) == "skipped"
+    assert env.run(activities.write_text, TextJob("recap", "nfl", espn_id, "open")) == "ready"
+
+
+def test_hand_to_worker_starts_the_text_workflow_and_survives_temporal_down(monkeypatch):
+    from temporalio.client import Client
+    from app import main
+    from app.temporal import starter
+    from app.temporal.models import TextJob
+    monkeypatch.setattr(main, "TEMPORAL_ADDRESS", "temporal:7233")
+    started = []
+
+    async def connect(addr, namespace="default"):
+        return "client"
+
+    async def start(client_, job):
+        started.append(job)
+        return True
+    monkeypatch.setattr(Client, "connect", staticmethod(connect))
+    monkeypatch.setattr(starter, "start_text", start)
+    row = {"id": 1, "league": "nfl", "espn_id": "401"}
+    assert main._hand_to_worker("preview", row) is True
+    assert started == [TextJob("preview", "nfl", "401", "open")]
+
+    async def down(addr, namespace="default"):
+        raise RuntimeError("connection refused")
+    monkeypatch.setattr(Client, "connect", staticmethod(down))
+    assert main._hand_to_worker("preview", row) is False                   # the page keeps its fallback
+    monkeypatch.setattr(main, "TEMPORAL_ADDRESS", None)
+    assert main._hand_to_worker("preview", row) is False

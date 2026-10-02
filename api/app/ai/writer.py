@@ -180,9 +180,9 @@ def copied(text: str, articles: list[dict], n: int = COPY_WORDS) -> str | None:
     return None
 
 
-def _json(prompt: str) -> dict:
+def _json(prompt: str, extract: bool = False) -> dict:
     try:
-        out = json.loads(client.write(prompt, json_out=True))
+        out = json.loads(client.write(prompt, json_out=True, extract=extract))
     except (ValueError, client.BadReply):
         raise CheckFailed("reply was not JSON") from None
     if not isinstance(out, dict):
@@ -190,14 +190,14 @@ def _json(prompt: str) -> dict:
     return out
 
 
-def _step(prompt: str, check: Callable[[dict], None], stats: dict) -> dict:
-    """One writer JSON call plus its check, rerun once if the check fails, told what was wrong.
-    RateLimited/AIError propagate."""
+def _step(prompt: str, check: Callable[[dict], None], stats: dict, extract: bool = False) -> dict:
+    """One writer JSON call plus its check, rerun once if the check fails, told what was wrong. extract: an
+    extraction step (client.write's low-reasoning mode). RateLimited/AIError propagate."""
     ask = prompt
     for attempt in (1, 2):
         stats["calls"] += 1
         try:
-            out = _json(ask)
+            out = _json(ask, extract)
             try:
                 check(out)
             except (AttributeError, KeyError, TypeError):    # JSON of the wrong shape, e.g. an edge that's a string
@@ -582,7 +582,8 @@ def write_preview(game: dict, articles: list[dict], extract: dict | None = None)
 
         if saved is None:
             extract = _step(prompts.EXTRACT_PREVIEW.format(game=g, articles=arts, home=game["home"]["name"],
-                                                           away=game["away"]["name"]), check_extract, stats)
+                                                           away=game["away"]["name"]), check_extract, stats,
+                            extract=True)
         else:
             # Saved by URL: map onto today's numbering. The same articles can come back in another order, and
             # positions would then point an edge at the wrong article (audit, 2026-09-29).
@@ -818,7 +819,7 @@ def write_headlines(news: list[dict], finals: list[str]) -> dict:
             if not numbers_ok(json.dumps(x, ensure_ascii=False), inputs):
                 raise CheckFailed("extract has numbers not in the inputs")
 
-        facts = _step(prompts.EXTRACT_HEADLINES.format(news=nj, finals=fin), check_extract, stats)
+        facts = _step(prompts.EXTRACT_HEADLINES.format(news=nj, finals=fin), check_extract, stats, extract=True)
         fj = json.dumps(facts, ensure_ascii=False)
 
         def check_write(x):

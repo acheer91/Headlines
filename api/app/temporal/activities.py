@@ -237,14 +237,16 @@ def write_text(job: TextJob) -> str:
     there instead of on a fixed backoff. A text that needs a model while the writer (or every allowed checker) is
     cooling down or out of budget is turned away before it is claimed or drafted (preflight). `capped`: rejected
     store.REJECTION_CAP times for these inputs, so it waits for new ones (no retry). A "manual" job (the runbook)
-    ignores both the pre-write list and that cap."""
+    ignores both the pre-write list and that cap; an "open" job (a page open handed it over for lack of quota)
+    ignores the pre-write list only."""
     if job.kind == "headlines":
         out = ai_jobs.write_headlines([x for x in job.league.split(",") if x], job.reason, preflight=True)
     else:
         row = _stored(job.league, job.espn_id)
-        if job.reason != "manual" and not ai_scope.is_prewritten(row):
+        if job.reason not in ("manual", "open") and not ai_scope.is_prewritten(row):
             # Off the pre-write list (the list changed since it was started): written on open instead. A manual
-            # job (the runbook) writes any game in an AI league, which is also how a capped text is lifted.
+            # job (the runbook) writes any game in an AI league, which is also how a capped text is lifted; an
+            # open job is a page open the api couldn't finish (main._hand_to_worker).
             return "skipped"
         out = ai_jobs.write_for_game(job.kind, row["id"], job.reason, base_url=ESPN_BASE, preflight=True)
     if out["status"] == "failed" and out.get("retry_after"):

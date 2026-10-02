@@ -118,10 +118,21 @@ Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `ph
   deploy, any change here needs a new `workflow.patched` id.
 - **On open (api):** `GET /api/games/{id}/ai` returns current text at once, else writes it within 20 s (preview) or
   10 s, **never waiting for quota** (`client.no_wait()`); `GET /api/headlines` for Screen A. A live game has no AI text
-  (`none`). `written_at` (migration 008) is when the shown text was written: a failed refresh keeps the last good
+  (`none`). **A page open that runs out of quota hands the text to the worker** (Oct 1, `main._hand_to_worker`: a
+  `WriteTextWorkflow` with reason `open`, which the worker writes even off the pre-write list, waiting for the minute);
+  the row's reason becomes `queued`, `/ai` says `queued` and the app "Writing the preview… pull again in a minute".
+  A preview's extract and write don't fit one minute of 120b together (PIT @ CLE, Oct 1: 9,029 + 3,587 tokens), so an
+  opened preview usually finishes there. No `TEMPORAL_ADDRESS` (api env) or Temporal down: the old fallback. `written_at` (migration 008) is when the shown text was written: a failed refresh keeps the last good
   preview, and the app shows "Updated <time>" under it (CTO: acceptable with the timestamp).
 - **Quota is shared through Postgres** (`AI_QUOTA=db`: `ai_calls`, `ai_cooling`), so the api and worker can't
-  collide; Groq counts prompt + max reply against the minute, so that is what's reserved.
+  collide; Groq counts prompt + max reply against the minute, so that is what's reserved. **gpt-oss prompts are
+  counted** with its tokenizer (`tiktoken` `o200k_harmony`, baked into the image via `TIKTOKEN_CACHE_DIR`) plus 100
+  for Groq's chat template (measured Oct 1: 71 plain, 95 JSON); other models ~4 characters a token. The old estimate
+  ran 20-35% low (an extract reserved 7,800 and used 9,029).
+- **Extraction steps run light** (`client.write(extract=True)`: the preview's article extract and the headlines'
+  news extract): low reasoning, reply allowance `AI_EXTRACT_MAX_OUT` (1,500; the one medium extract measured used its
+  whole 3,000). **Article text is cut to the paragraphs about the game** (`sources.relevant_text`: a team or a player
+  from our injury report or leaders), at most 500 words an article (was 700 of the page as it came).
 - **Keys** (`GROQ_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`) live only in `.env`; no key, or removing it, is the off switch (every AI
   section shows fallback text). Prompts carry only public sports data (free tiers may use prompts for training).
 - **Tests:** `tests/test_ai_*.py` (no live model calls), `test_workflows.py` (every simulated game runs a fake `ai`

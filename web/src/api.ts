@@ -145,8 +145,9 @@ export type Source = { title: string; url: string; outlet: string; published: st
 
 export type AiText = {
   kind: "preview" | "recap" | null;
-  /** ready | no_sources ("No fresh previews") | failed or writing (show fallback text) | missing | none */
-  status: "ready" | "no_sources" | "failed" | "writing" | "missing" | "none";
+  /** ready | no_sources ("No fresh previews") | writing or queued (being written: pull again) | failed (show
+   * fallback text) | missing | none */
+  status: "ready" | "no_sources" | "failed" | "writing" | "queued" | "missing" | "none";
   body:
     | { preview: string; edges: { home: Edge[]; away: Edge[] }; picks: Pick[] }
     | { recap: string; bets: string; home: string; away: string }

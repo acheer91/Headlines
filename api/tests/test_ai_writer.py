@@ -20,7 +20,7 @@ def fake(replies):
     it = iter(replies)
     calls = []
 
-    def write(prompt, json_out=False):
+    def write(prompt, json_out=False, extract=False):
         calls.append(prompt)
         return json.dumps(next(it))
     return write, calls
@@ -106,7 +106,7 @@ def test_no_fifth_quarter(model):
 def test_invalid_json_is_rewritten(model, monkeypatch):
     replies = iter(["bad", {"recap": f"Bears won. {WORDS}", "home": "x", "away": "y"}])
 
-    def write(prompt, json_out=False):
+    def write(prompt, json_out=False, extract=False):
         r = next(replies)
         if r == "bad":
             raise client.BadReply("groq: reply was not valid JSON")
@@ -153,7 +153,7 @@ def test_wrong_shape_is_a_failed_check(model):
 
 
 def test_rate_limit_gives_failed(monkeypatch):
-    def limited(prompt, json_out=False):
+    def limited(prompt, json_out=False, extract=False):
         raise client.RateLimited("groq 429")
     monkeypatch.setattr(client, "write", limited)
     res = writer.write_recap(GAME)
@@ -258,7 +258,7 @@ def test_extract_carries_its_articles_and_survives_a_rate_limit_on_the_write(mod
     """A rate limit after the extract call hands the extract back, so the retry doesn't pay for it again."""
     replies = iter([PREVIEW_FACTS])
 
-    def write(prompt, json_out=False):
+    def write(prompt, json_out=False, extract=False):
         try:
             return json.dumps(next(replies))
         except StopIteration:
@@ -272,7 +272,7 @@ def test_extract_carries_its_articles_and_survives_a_rate_limit_on_the_write(mod
 
 def test_failures_say_whether_the_setup_or_the_text_was_at_fault(monkeypatch):
     def failing(exc):
-        def write(prompt, json_out=False):
+        def write(prompt, json_out=False, extract=False):
             raise exc
         monkeypatch.setattr(client, "write", write)
         return writer.write_recap(GAME)
@@ -605,3 +605,21 @@ def test_recap_voice_can_be_switched_off(model, monkeypatch):
     calls = model([{"recap": f"Bears won. {WORDS}", "home": "x", "away": "y"}])
     assert writer.write_recap(GAME)["status"] == "ready"
     assert "Example 1:" not in calls[0] and "tension in FACTS" not in calls[0]
+
+
+def test_only_the_extraction_steps_ask_for_extract_mode(monkeypatch):
+    flags = []
+    replies = iter([PREVIEW_FACTS, {"preview": WORDS, "edges": {"home": [], "away": []}},
+                    {"items": [{"fact": "Bears won 27-7", "news": 1}]},
+                    {"items": [{"text": f"Headline {c}", "news": 1} for c in "ABCDEF"]}])
+
+    def write(prompt, json_out=False, extract=False):
+        flags.append(extract)
+        return json.dumps(next(replies))
+    monkeypatch.setattr(client, "write", write)
+    assert writer.write_preview(dict(GAME, state="pre"), [ARTICLE])["status"] == "ready"
+    from datetime import datetime, timezone
+    news = [{"published_at": datetime(2026, 9, 28, tzinfo=timezone.utc), "headline": "Bears beat Eagles",
+             "description": "", "url": "https://www.espn.com/nfl/story/_/id/2/y"}]
+    assert writer.write_headlines(news, ["NFL: Eagles 7, Bears 27 (final)"])["status"] == "ready"
+    assert flags == [True, False, True, False]          # preview: extract, write; headlines: extract, write

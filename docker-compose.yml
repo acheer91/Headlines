@@ -31,6 +31,7 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       AI_QUOTA: db                # the api and the worker share the free-tier quota through Postgres
+      TEMPORAL_ADDRESS: temporal:7233   # a page open that runs out of quota hands the text to the worker
     volumes:
       - ./config:/srv/config:ro   # edit favorites without rebuilding
     depends_on:
