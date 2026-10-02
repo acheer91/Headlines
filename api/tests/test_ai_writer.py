@@ -215,6 +215,34 @@ def test_live_one_liner_may_say_tied_inside_a_quarter(model):
     assert writer.write_one_liner(g)["status"] == "ready"
 
 
+def _live_phi_chi():
+    from tests.test_ai_facts import load
+    g = load("final_phi_chi")
+    g.update(state="in", status_detail="Q3 10:12", line={"home_spread": -3.0, "total": 44.5})
+    return g
+
+
+def test_one_liner_writer_and_checker_see_the_same_trimmed_facts(model, monkeypatch):
+    # M4 (2026-10-02): the writer's prompt and the fact-checker's carry the same FACTS, trimmed to the prompt's hooks.
+    seen = []
+    monkeypatch.setattr(client, "check", lambda prompt: seen.append(prompt) or json.dumps({"problems": []}))
+    calls = model([{"line": "Three giveaways already. Philadelphia is gift-wrapping this one."}])
+    assert writer.write_one_liner(_live_phi_chi())["status"] == "ready"
+    facts_in = lambda p: p.split("FACTS:\n", 1)[1].split("\n\nTEXT:", 1)[0].strip()
+    assert facts_in(calls[0]) == facts_in(seen[0])
+    assert "Passing leader" in facts_in(calls[0])
+    assert not any(w in facts_in(calls[0]) for w in ("Rushing leader", "possession", "over/under", "penalties"))
+
+
+def test_one_liner_refuses_what_the_trimmed_sheet_left_out(model):
+    # The rushing leader's 84 yards and the 36:53 of possession were on the old sheet; now they're unsupported.
+    model([{"line": "Swift has 84 yards already. Chicago is in no hurry."},
+           {"line": "Chicago has held it for 36:53. The Eagles are spectators."}])
+    res = writer.write_one_liner(_live_phi_chi())
+    assert res["status"] == "failed"
+    assert "'84'" in res["rejected"][0] and "'36', '53'" in res["rejected"][1]
+
+
 def test_no_checker_outside_the_family_fails_closed_without_a_retry(model, monkeypatch):
     def check(prompt):
         raise client.NoChecker("no checker outside the openai family")

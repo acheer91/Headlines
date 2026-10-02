@@ -56,8 +56,34 @@ def test_live_facts_mark_the_current_quarter():
     assert "Baltimore Ravens leads by 3 right now." in lines
     assert "Points in Q2: Ravens 10, Cowboys 3." in lines
     assert "Points in Q3 (in progress): Ravens 4, Cowboys 5." in lines
-    assert "Baltimore Ravens has the ball, 3rd & 4 at DAL 35." in lines
+    assert not any("has the ball" in l for l in lines)       # not a hook the one-liner uses (M4)
     assert not any("Final" in l or "won by" in l for l in lines)
+
+
+def test_live_facts_keep_only_the_one_liner_hooks():
+    # M4 (2026-10-02): the lines ONE_LINER and Adam's examples can use, nothing else. The passers stay: their lines
+    # are the only interception count a live box score has ("Two picks already").
+    g = load("final_phi_chi")
+    g.update(state="in", status_detail="Q3 10:12", situation={"possession": "CHI", "down_distance": "2nd & 7 at CHI 34"},
+             line={"home_spread": -3.0, "total": 44.5, "provider": "Draft Kings"})
+    sheet = facts.live_facts(g)
+    lines = sheet["facts"]
+    for kept in ("Home team: Chicago Bears. Visiting team: Philadelphia Eagles.",
+                 "Before kickoff, point spread: Chicago Bears favored by 3 points (Draft Kings).",
+                 "Chicago Bears leads by 20 right now.",
+                 "So far, total yards: Eagles 248, Bears 375.", "So far, passing: Eagles 141, Bears 247.",
+                 "So far, rushing: Eagles 107, Bears 128.", "So far, 3rd down: Eagles 2-9 (22%), Bears 5-13 (38%).",
+                 "Eagles Passing leader (so far): Jalen Hurts, QB: 16/25, 153 YDS, 1 INT."):
+        assert kept in lines
+    assert any(l.startswith("So far, giveaways") for l in lines)
+    for dropped in ("over/under", "has the ball", "time of possession", "penalties", "Rushing leader",
+                    "Receiving leader"):
+        assert not any(dropped in l for l in lines), dropped
+    # The code check gets the same sheet: only the passers, only the kept stats.
+    assert [p["name"] for p in sheet["players"]] == ["Jalen Hurts", "Case Keenum"]
+    assert set(sheet["stats"]) == set(facts.LIVE_STATS)
+    assert facts.recap_facts(g)["stats"]["possessionTime"]            # the recap's sheet is untouched
+    assert "Over/under total: 44.5 points." in facts.preview_facts(g)["facts"]
 
 
 def test_tied_quarter_break():

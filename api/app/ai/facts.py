@@ -202,14 +202,32 @@ def _edge_lines(game: dict, short: dict) -> list[str]:
     return out
 
 
+# The live one-liner's sheet holds only what its prompt (prompts.ONE_LINER) and Adam's examples can use (M4,
+# 2026-10-02): the score, who was favored, the lead, points per quarter, the team stats the prompt names, and the
+# passers' lines (the only place a live box score counts interceptions: "Two picks already"). Left out: time of
+# possession, penalties, the rushing and receiving leaders, the over/under (betting words are banned in the line) and
+# who has the ball. The writer, claims_ok and the fact-checker all get this same sheet.
+LIVE_STATS = ("totalYards", "netPassingYards", "rushingYards", "turnovers", "thirdDownEff")
+LIVE_LEADERS = ("passingYards",)
+
+
+def _only(block: dict | None, keys: tuple[str, ...]) -> dict:
+    """A team-stats or leaders block with only the rows whose key is in `keys`."""
+    block = block or {}
+    return dict(block, rows=[r for r in block.get("rows") or [] if r.get("key") in keys])
+
+
 def live_facts(game: dict) -> dict:
-    """The fact sheet for the live one-liner: the game so far, nothing about how it will end."""
+    """The fact sheet for the live one-liner: the game so far, nothing about how it will end, trimmed to the hooks
+    its prompt uses (LIVE_STATS, LIVE_LEADERS)."""
+    game = dict(game, team_stats=_only(game.get("team_stats"), LIVE_STATS),
+                leaders=_only(game.get("leaders"), LIVE_LEADERS))
     n = _names(game)
     short = {s: n[s]["short"] or n[s]["name"] for s in ("home", "away")}
     h, a = game["home"].get("score"), game["away"].get("score")
     facts = [f"Live, {game.get('status_detail') or 'in progress'}: {n['away']['name']} {a}, {n['home']['name']} {h}.",
              f"Home team: {n['home']['name']}. Visiting team: {n['away']['name']}."]
-    facts += [f"Before kickoff, {line[0].lower()}{line[1:]}" for line in _line(game, n)]
+    facts += [f"Before kickoff, {line[0].lower()}{line[1:]}" for line in _line(game, n, total=False)]
     if h is not None and a is not None:
         facts.append("Tied." if h == a else
                      f"{n['home' if h > a else 'away']['name']} leads by {abs(h - a)} right now.")
@@ -221,11 +239,6 @@ def live_facts(game: dict) -> dict:
         for i, (x, y) in enumerate(zip(al, hl)):
             done = "" if i < len(hl) - 1 else " (in progress)"
             facts.append(f"Points in {_period(i)}{done}: {short['away']} {x}, {short['home']} {y}.")
-    sit = game.get("situation") or {}
-    if sit.get("possession"):
-        side = next((s for s in ("home", "away") if n[s]["abbr"] == sit["possession"]), None)
-        who = n[side]["name"] if side else sit["possession"]
-        facts.append(f"{who} has the ball{', ' + sit['down_distance'] if sit.get('down_distance') else ''}.")
     facts += [f"So far, {line[0].lower()}{line[1:]}" for line in _stat_lines(game, short)]
     facts += [line.replace("(this game)", "(so far)") for line in _leader_lines(game, short)]
     return {"teams": n, "facts": facts, "players": players(game), "stats": stats(game)}
@@ -241,7 +254,8 @@ def _kickoff(game: dict) -> str | None:
     return f"{t:%A, %B} {t.day}, {t:%I:%M %p}".replace(" 0", " ") + " ET"
 
 
-def _line(game: dict, n: dict) -> list[str]:
+def _line(game: dict, n: dict, total: bool = True) -> list[str]:
+    """The point spread, and the over/under unless total is False (the live one-liner can't use it)."""
     ln = game.get("line") or {}
     out = []
     sp = ln.get("home_spread")
@@ -253,7 +267,7 @@ def _line(game: dict, n: dict) -> list[str]:
             fav = "home" if sp < 0 else "away"
             out.append(f"Point spread: {n[fav]['name']} favored by {abs(sp):g} points"
                        f"{' (' + ln['provider'] + ')' if ln.get('provider') else ''}.")
-    if ln.get("total") is not None:
+    if total and ln.get("total") is not None:
         out.append(f"Over/under total: {float(ln['total']):g} points.")
     return out
 

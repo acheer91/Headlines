@@ -816,6 +816,7 @@ def write_one_liner(game: dict) -> dict:
     """One checked sentence on the live game (Adam, Oct 1: back after the CTO cut it). Failure: the app shows the
     box-score template (summary.one_liner), never unchecked text."""
     def go(stats):
+        # One sheet, trimmed to the prompt's hooks (M4): the writer, claims_ok and the fact-checker see the same facts.
         sheet = facts.live_facts(game)
         fj = json.dumps(sheet["facts"], ensure_ascii=False)
 

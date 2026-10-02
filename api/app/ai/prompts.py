@@ -207,6 +207,8 @@ TEXT:
 
 # Adam's examples (Oct 1), the ones our live box score can back up. Others he gave need drive or play-by-play data
 # we don't have ("three straight punts", "abandoning the run", "backup quarterback", "two explosive plays").
+# facts.live_facts keeps only the lines these examples and ONE_LINER's "Look first for" list use (M4, 2026-10-02):
+# a new hook here needs its stat added to facts.LIVE_STATS or LIVE_LEADERS.
 ONE_LINER_EXAMPLES = [
     "One-score game. Somehow, only one team feels like it's in trouble.",
     "Close on the scoreboard. Not particularly close at the line of scrimmage.",
