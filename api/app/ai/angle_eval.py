@@ -9,7 +9,9 @@ no network, no database.
 Labels: {"angles": [the allowed ids], "<fixture name>": "<angle id>", ...}, a fixture named as in tests/fixtures/ai
 ("final_phi_chi" or "phi_chi"). The labeller picks each final's lead story blind, from its fact sheet and the
 meanings in facts.ANGLES (never the rules, which --angles-out leaves out and lists alphabetically, not by
-priority). Pass bar (prep plan, Z5): code matches 14 of the 16 finals.
+priority). Pass bar (prep plan, Z5): code matches 14 of the 16 finals. The first labels (Oct 2) matched 11/16: FAIL,
+so T3 stays parked (outline_eval refuses a run without a labels file that passes here). Retuning the angle rules on
+these 16 finals fits them in-sample: after any change, label a fresh set.
 """
 from __future__ import annotations
 
@@ -40,11 +42,16 @@ def angles_file() -> dict:
 
 def read_labels(path: Path) -> dict[str, str]:
     """{fixture: angle id} from a labels file; ValueError for an id that isn't allowed or isn't code's, or a
-    fixture that doesn't exist."""
+    fixture that doesn't exist. The "angles" list may be the ids, or angles_file()'s {id, meaning} objects as sent."""
     raw = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise ValueError("labels must be a JSON object")
     allowed = raw.get("angles")
     if not isinstance(allowed, list) or not allowed:
         raise ValueError('labels need an "angles" list of the allowed ids')
+    allowed = [a.get("id") if isinstance(a, dict) else a for a in allowed]
+    if not all(isinstance(a, str) for a in allowed):
+        raise ValueError('"angles" must list angle ids (or {"id", "meaning"} objects)')
     unknown = sorted(set(allowed) - set(facts.ANGLES))
     if unknown:
         raise ValueError(f"angle ids code doesn't know: {unknown}")
@@ -69,6 +76,11 @@ def evaluate(labels: dict[str, str] | None = None) -> list[dict]:
     return rows
 
 
+def passed(rows: list[dict]) -> bool:
+    """Z5's verdict: every final labelled and code matching at least PASS_BAR of them."""
+    return all(r["label"] is not None for r in rows) and sum(r["match"] for r in rows) >= PASS_BAR
+
+
 def report(rows: list[dict], show_lines: bool = False) -> str:
     out = [f"{'final':10} {'code':20} {'label':20} match"]
     for r in rows:
@@ -81,7 +93,7 @@ def report(rows: list[dict], show_lines: bool = False) -> str:
     if labelled:
         hits = sum(r["match"] for r in labelled)
         verdict = ("incomplete: not every final is labelled" if len(labelled) < len(rows) else
-                   "PASS" if hits >= PASS_BAR else "FAIL")
+                   "PASS" if passed(rows) else "FAIL")
         out.append(f"\ncode matched {hits}/{len(labelled)} labelled finals (Z5 bar: {PASS_BAR} of {len(rows)}): "
                    f"{verdict}")
     return "\n".join(out)

@@ -204,12 +204,14 @@ def _edge_lines(game: dict, short: dict) -> list[str]:
 
 
 # ---------------------------------------------------------------- recap outline (M3, 2026-10-02)
-# Behind writer.RECAP_OUTLINE (off). Code picks the recap's lead angle and the FACTS lines that tell it, so the writer
-# no longer has to find the story or work out which way each comparison points. The outline is the angle's id, a
-# frame sentence (team names and FACTS' quarter labels: no score, count or cause) and 4-6 lines copied exactly from
-# recap_facts, in the order the recap should take them. Nothing in it is new, so it can't add a wrong fact; the risk is
-# an angle that is true but secondary, which no checker sees (FACT_CHECK lets framing pass). Gated on Z5 (a person
-# picks the lead blind on the 16 fixture finals: python -m app.ai.angle_eval) and T3 (python -m app.ai.outline_eval).
+# Not in production: only T3's outline arms add it to a prompt. Code picks the recap's lead angle and the FACTS lines
+# that tell it, so the writer no longer has to find the story or work out which way each comparison points. The
+# outline is the angle's id, a frame sentence (team names and FACTS' quarter labels: no score, count or cause) and 4-6
+# lines copied exactly from recap_facts, in the order the recap should take them. Nothing in it is new, so it can't
+# add a wrong fact; the risk is an angle that is true but secondary, which no checker sees (FACT_CHECK lets framing
+# pass). Gated on Z5 (a person picks the lead blind on the 16 fixture finals: python -m app.ai.angle_eval; 11/16 on
+# Oct 2, FAIL) and T3 (python -m app.ai.outline_eval, which refuses to run until Z5 passes). Don't retune the angle
+# rules on those same 16 finals (that fits them in-sample): after any change, Z5 needs a fresh labelled set.
 #
 # The angle is the first of these that holds (W the winner, L the loser, a break the end of a quarter; a tie has
 # neither, so only overtime, seesaw or close_finish fits it):
@@ -356,7 +358,8 @@ def recap_outline(game: dict, sheet: dict | None = None) -> dict | None:
 # 2026-10-02): the score, who was favored, the lead, points per quarter, the team stats the prompt names, and the
 # passers' lines (the only place a live box score counts interceptions: "Two picks already"). Left out: time of
 # possession, penalties, the rushing and receiving leaders, the over/under (betting words are banned in the line) and
-# who has the ball. The writer, claims_ok and the fact-checker all get this same sheet.
+# who has the ball. The writer and the fact-checker get this same sheet; claims_ok also gets every leader on the box
+# score (writer.write_one_liner), so a player handed a team total is still refused in code.
 LIVE_STATS = ("totalYards", "netPassingYards", "rushingYards", "turnovers", "thirdDownEff")
 LIVE_LEADERS = ("passingYards",)
 

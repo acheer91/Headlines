@@ -83,13 +83,16 @@ class DbQuota:
                                {"req": requests, "prefix": pool.endswith(":"), "pool": pool}).fetchone()
         return float(row["spent"]), max(float(row["frees_in"] or 0), 0.0)
 
-    def used(self, handle: object, tokens: int, cached: int | None = None) -> None:
-        """tokens: what the call counts against the day (Groq's total_tokens, cached included). cached: logged only
-        until the log-only week (T1) shows Groq doesn't count them (M1); the budgets never read it."""
+    def used(self, handle: object, tokens: int, cached: int | None = None, remaining: int | None = None,
+             reset: float | None = None) -> None:
+        """tokens: what the call counts against the day (Groq's total_tokens, cached included). cached, remaining and
+        reset (Groq's cached prompt tokens and rate-limit headers): logged only until the log-only week (T1) shows
+        Groq doesn't count cached tokens (M1); the budgets never read them."""
         if handle is not None:
             with db.connect() as conn:
-                conn.execute("UPDATE ai_calls SET used = %s, cached_tokens = %s WHERE id = %s",
-                             (tokens, cached, handle))
+                conn.execute("""UPDATE ai_calls SET used = %s, cached_tokens = %s, remaining_tokens = %s,
+                                                    reset_tokens_secs = %s WHERE id = %s""",
+                             (tokens, cached, remaining, reset, handle))
 
 
 def install() -> None:

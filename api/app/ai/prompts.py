@@ -170,8 +170,8 @@ Also (each of these was a real error):
 {facts}
 """
 
-# Added to WRITE_RECAP only while writer.RECAP_OUTLINE is on (M3, the T3 eval): code's pick of the lead and the FACTS
-# lines that tell it (facts.recap_outline). It sits with the game's own parts, after the text every game shares (M2).
+# Added to WRITE_RECAP only by T3's outline arms (M3, writer.recap_prompt(outline=True)): code's pick of the lead and
+# the FACTS lines that tell it (facts.recap_outline). It sits with the game's own parts, after the shared text (M2).
 OUTLINE_NOTE = """OUTLINE (picked by code from FACTS; every key moment is a FACTS line, copied exactly):
 Angle: {frame}
 Key moments, in order:

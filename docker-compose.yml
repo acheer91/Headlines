@@ -39,6 +39,13 @@ services:
         condition: service_healthy
     ports:
       - "127.0.0.1:8000:8000"   # localhost only; the phone reaches it through `tailscale serve`
+    # Healthy once it answers: uvicorn serves only after startup has run the migrations, so the worker (which waits
+    # for this) never writes to a table a pending migration is about to change (010 adds ai_calls.kind, Oct 2).
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"]
+      interval: 5s
+      start_period: 30s
+      retries: 30
     restart: unless-stopped
 
   # ---------- Phase 3: Temporal (self-hosted, state in this Postgres: databases temporal + temporal_visibility) ----------
@@ -117,7 +124,7 @@ services:
       temporal:
         condition: service_healthy
       api:
-        condition: service_started   # the api applies migrations at startup
+        condition: service_healthy   # the api applies migrations at startup; healthy = they have run
     restart: unless-stopped
 
 volumes:

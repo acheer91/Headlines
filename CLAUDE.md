@@ -113,7 +113,7 @@ Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `ph
   Headlines count failed rows for the same fingerprint since the last ready set. A "manual" job ignores the cap and
   the pre-write list (runbook below); a search that returns different links is a new fingerprint, so the cap holds
   best for a stable article set; the api's cap is basis-only, so an open-only game stays on its fallback for the day.
-  Held: spend-aware batch (E2, no token numbers yet) and storing the unchecked draft (migration 010, only if Qwen's
+  Held: spend-aware batch (E2, no token numbers yet) and storing the unchecked draft (migration 011, only if Qwen's
   production rejection rate says it pays).
 - **The `ai-recap` patch has never run anywhere**, so it was changed in place on 2026-10-01 (the `recap_due` step) and
   the four post-patch histories in `tests/fixtures/histories/` re-recorded (`SAVE_HISTORIES=1`). After the first
@@ -141,6 +141,16 @@ Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `ph
   OpenRouter models as one pool), then per model and day the calls, tokens, peak 60 s and unreported calls; texts by outcome; the rejection rate and top reasons; who wrote and checked.
   `ai_calls` is kept 14 days (`quota.KEEP`; it was 2) so a week of real numbers exists. First-deploy steps and the
   first-week reading guide: `docs/phase4-deploy-checklist.md`.
+- **Prep layer (2026-10-02, branch `phase-4-prep-layer`; code only, no local model):** M1 logs each call's
+  `ai_calls.kind` (`<text>:<step>`, `client.call_kind`), Groq's cached prompt tokens and its per-minute rate-limit
+  headers (migration 010, log only: budgets still count every token until T1, the log-only week, passes; the usage
+  report's T1 and M2 sections read them). M2 puts the recap prompt's shared text first (examples after the rules; the
+  report compares recap rewrites per first draft with 0.586). M4 trims the one-liner's FACTS to its prompt's hooks
+  (`facts.LIVE_STATS`/`LIVE_LEADERS`; claims_ok still knows every leader). M3 (code's recap outline,
+  `facts.recap_outline`, and a low-reasoning recap writer) has no production switch: Z5 (`python -m app.ai.angle_eval
+  --labels ...`) matched 11/16 on Oct 2, FAIL, so T3 (`python -m app.ai.outline_eval`, built, never run) refuses to
+  run until a labels file passes 14/16. M9 (headline candidates by rule) is not built: Z3 failed. The compose worker
+  waits for the api to be healthy (migrations applied).
 - **Tests:** `tests/test_ai_*.py` (no live model calls), `test_workflows.py` (every simulated game runs a fake `ai`
   worker: a waiting AI task stops time-skipping), `test_replay.py` (old histories replay with the patches), `test_ai_replay.py` / `test_ai_review_sheet.py` (need git history; skipped without it).
 

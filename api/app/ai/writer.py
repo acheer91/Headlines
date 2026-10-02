@@ -17,7 +17,6 @@ Stage 1 works on plain dicts (the /api/games/{id} payload); Stage 2 adds the ai_
 from __future__ import annotations
 
 import json
-import os
 import re
 import time
 from typing import Callable
@@ -181,11 +180,9 @@ def copied(text: str, articles: list[dict], n: int = COPY_WORDS) -> str | None:
     return None
 
 
-def _json(prompt: str, light: bool = False, reasoning: str | None = None) -> dict:
-    # reasoning only when set, so every other call is exactly what it was.
-    effort = {"reasoning": reasoning} if reasoning else {}
+def _json(prompt: str, light: bool = False) -> dict:
     try:
-        out = json.loads(client.write(prompt, json_out=True, light=light, **effort))
+        out = json.loads(client.write(prompt, json_out=True, light=light))
     except (ValueError, client.BadReply):
         raise CheckFailed("reply was not JSON") from None
     if not isinstance(out, dict):
@@ -193,16 +190,14 @@ def _json(prompt: str, light: bool = False, reasoning: str | None = None) -> dic
     return out
 
 
-def _step(prompt: str, check: Callable[[dict], None], stats: dict, light: bool = False,
-          reasoning: str | None = None) -> dict:
+def _step(prompt: str, check: Callable[[dict], None], stats: dict, light: bool = False) -> dict:
     """One writer JSON call plus its check, rerun once if the check fails, told what was wrong. light: a short
-    structured reply (client.write's low-reasoning mode). reasoning: the writer's effort for both calls (None: the
-    client's own). RateLimited/AIError propagate."""
+    structured reply (client.write's low-reasoning mode). RateLimited/AIError propagate."""
     ask = prompt
     for attempt in (1, 2):
         stats["calls"] += 1
         try:
-            out = _json(ask, light, reasoning)
+            out = _json(ask, light)
             try:
                 check(out)
             except (AttributeError, KeyError, TypeError):    # JSON of the wrong shape, e.g. an edge that's a string
@@ -743,22 +738,9 @@ def recap_length(game: dict) -> tuple[str, str]:
     return "standard", "standard"
 
 
-# M3 (2026-10-02), both off until T3 (python -m app.ai.outline_eval) says otherwise. RECAP_OUTLINE=1 adds code's
-# outline (facts.recap_outline) to the recap prompt; RECAP_REASONING=low or medium is the recap writer's reasoning
-# effort ("low" made factual slips before: client.REASONING). Unset, the prompt and the request are exactly what they
-# were (the client's GROQ_REASONING, medium). A bad value stops the process at start, like AI_WRITERS.
-RECAP_OUTLINE = os.environ.get("RECAP_OUTLINE", "") == "1"
-RECAP_EFFORTS = ("low", "medium")
-
-
-def _effort(value: str | None) -> str | None:
-    v = (value or "").strip().lower()
-    if v and v not in RECAP_EFFORTS:
-        raise ValueError(f"RECAP_REASONING={value!r}: low or medium")
-    return v or None
-
-
-RECAP_REASONING = _effort(os.environ.get("RECAP_REASONING"))
+# M3 (2026-10-02): code's recap outline (facts.recap_outline) and a low-reasoning recap writer exist only in T3's arms
+# (python -m app.ai.outline_eval passes recap_prompt(outline=True) and client.write(reasoning=) itself). No production
+# switch until Z5 and T3 both pass: a recap's prompt and request are exactly what they were (GROQ_REASONING, medium).
 
 
 def _recap_size(game: dict) -> tuple[str, str, int, int | None, int | None]:
@@ -778,13 +760,12 @@ def outline_text(plan: dict | None) -> str:
                                        lines="\n".join(f"{i}. {line}" for i, line in enumerate(plan["lines"], 1)))
 
 
-def recap_prompt(game: dict, sheet: dict | None = None, outline: bool | None = None) -> str:
+def recap_prompt(game: dict, sheet: dict | None = None, outline: bool = False) -> str:
     """The recap writer's prompt. The style guide sits in the fixed text up top, the examples after it with the game's
-    own parts (M2), and the outline with those. outline: add facts.recap_outline (None: RECAP_OUTLINE; outline_eval
-    sets it per arm)."""
+    own parts (M2), and the outline with those. outline: add facts.recap_outline (T3's outline arms only)."""
     sheet = sheet or facts.recap_facts(game)
     _, _, recap_w, team_w, _ = _recap_size(game)
-    plan = facts.recap_outline(game, sheet) if (RECAP_OUTLINE if outline is None else outline) else None
+    plan = facts.recap_outline(game, sheet) if outline else None
     return prompts.WRITE_RECAP.format(facts=json.dumps(sheet["facts"], ensure_ascii=False), voice=prompts.VOICE,
                                       guardrails=prompts.GUARDRAILS,
                                       home=game["home"]["name"], away=game["away"]["name"], recap_words=recap_w,
@@ -835,7 +816,7 @@ def write_recap(game: dict) -> dict:
             recap_code_check(x, game, sheet)
             _fact_check([x.get("recap"), x.get("home"), x.get("away")], fj, stats)
 
-        out = _step(recap_prompt(game, sheet), check_write, stats, reasoning=RECAP_REASONING)
+        out = _step(recap_prompt(game, sheet), check_write, stats)
         # Bet results are the graded text itself, added by code: the model once called a push a win (2026-09-29).
         return {"status": "ready", "body": {"recap": out["recap"], "bets": bets_line(game),
                                             "home": out["home"], "away": out["away"]},
@@ -866,14 +847,17 @@ def write_one_liner(game: dict) -> dict:
     """One checked sentence on the live game (Adam, Oct 1: back after the CTO cut it). Failure: the app shows the
     box-score template (summary.one_liner), never unchecked text."""
     def go(stats):
-        # One sheet, trimmed to the prompt's hooks (M4): the writer, claims_ok and the fact-checker see the same facts.
+        # One sheet, trimmed to the prompt's hooks (M4): the writer and the fact-checker see the same facts. claims_ok
+        # knows every leader on the box score, trimmed or not: "Swift has 128 rushing yards" (the team's total, in
+        # FACTS) is still a team total given to a player, and more players can only add refusals.
         sheet = facts.live_facts(game)
         fj = json.dumps(sheet["facts"], ensure_ascii=False)
+        claims_sheet = dict(sheet, players=facts.players(game))
 
         def check(x):
             line = x.get("line")
             _texts_ok([line], fj)
-            claims_ok([line], game, sheet, final=False)
+            claims_ok([line], game, claims_sheet, final=False)
             if isinstance(line, str) and len(line.split()) > ONE_LINER_MAX_WORDS:
                 raise CheckFailed(f"one-liner is {len(line.split())} words")
             copy = copied(line, [{"text": ex} for ex in prompts.ONE_LINER_EXAMPLES], EXAMPLE_COPY_WORDS)
