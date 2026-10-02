@@ -203,8 +203,11 @@ def run(arms: list[str], games: dict[str, dict], out: Path, ledger: Path, z5: st
     drafts_path = out / "phase4-t3-drafts.json"
     drafts = load_drafts(drafts_path)
     spent, stopped = 0, None
-    commit = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"], capture_output=True,
-                            text=True).stdout.strip() or "?"
+    try:
+        commit = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"], capture_output=True,
+                                text=True).stdout.strip() or "?"
+    except OSError:  # the deploy image has no git
+        commit = "?"
     try:
         for arm in arms:
             for name, game in games.items():
