@@ -12,7 +12,9 @@ import time
 from .. import db
 from . import client
 
-KEEP = "2 days"      # ai_calls rows older than this are pruned: they feed the per-minute sum and the 24 h budgets
+# ai_calls rows older than this are pruned. The per-minute sum and the 24 h budgets need only a day; the rest is the
+# history `python -m app.ai.usage` reports (a week of real token numbers is what the held decisions wait for).
+KEEP = "14 days"
 
 
 class DbQuota:
