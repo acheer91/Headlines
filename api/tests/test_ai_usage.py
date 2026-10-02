@@ -16,10 +16,11 @@ NOON = f"((date_trunc('day', now() AT TIME ZONE {TZ}) - interval '12 hours') AT 
 MIDNIGHT = f"((date_trunc('day', now() AT TIME ZONE {TZ}) - interval '1 day') AT TIME ZONE {TZ})"
 
 
-def call(model, reserved, used, ago="1 hour", at=None):
+def call(model, reserved, used, ago="1 hour", at=None, kind=None, cached=None):
     """A model call `ago` before now, or at the SQL time `at`."""
     when = at or f"now() - interval '{ago}'"
-    _sql(f"INSERT INTO ai_calls (model, reserved, used, at) VALUES (%s, %s, %s, {when})", model, reserved, used)
+    _sql(f"INSERT INTO ai_calls (model, reserved, used, at, kind, cached_tokens) VALUES (%s, %s, %s, {when}, %s, %s)",
+         model, reserved, used, kind, cached)
 
 
 def text(kind, status, *, game=None, err=None, rejections=0, attempts=1, writer=WRITER, checker=CHECKER,
@@ -84,6 +85,24 @@ def test_rejection_rate_counts_a_refresh_that_kept_its_earlier_text():
 
 def test_a_table_cell_cannot_break_the_markdown():
     assert "a\\|b c" in usage._table(["h"], [["a|b\nc"]])
+
+
+def test_text_kind_of_a_call():
+    assert usage.text_kind("recap:rewrite") == "recap" and usage.text_kind("preview:search") == "preview"
+    assert usage.text_kind("check") is None and usage.text_kind(None) is None       # outside a text / before 010
+
+
+def test_by_text_kind_adds_every_step_and_keeps_requests_apart():
+    kinds = [{"kind": "recap:write", "model": WRITER, "calls": 2, "tokens": 9000, "cached": 0},
+             {"kind": "recap:rewrite", "model": WRITER, "calls": 1, "tokens": 4500, "cached": 3000},
+             {"kind": "recap:check", "model": CHECKER, "calls": 3, "tokens": 4000, "cached": 100},
+             {"kind": "recap:check", "model": OR_A, "calls": 2, "tokens": 2, "cached": 0},
+             {"kind": None, "model": WRITER, "calls": 1, "tokens": 700, "cached": 0}]
+    rows = {r["kind"]: r for r in usage.by_text_kind(kinds, {"recap": 2, "headlines": 1})}
+    assert rows["recap"] == {"kind": "recap", "calls": 6, "tokens": 17500, "cached": 3100, "requests": 2, "written": 2}
+    assert rows["headlines"]["tokens"] == 0 and rows["headlines"]["written"] == 1
+    assert rows[None] == {"kind": None, "calls": 1, "tokens": 700, "cached": 0, "requests": 0, "written": None}
+    assert [r["kind"] for r in usage.by_text_kind(kinds, {})] == ["recap", None]            # outside a text last
 
 
 # ---------------------------------------------------------------- over the database
@@ -236,3 +255,70 @@ def test_calls_are_kept_long_enough_to_report_a_week(client):  # noqa: F811
     quota.DbQuota().reserve([WRITER], 100, 8000, wait=False)
     ages = sorted(r[0] for r in _sql("SELECT round(extract(epoch FROM now() - at) / 86400) FROM ai_calls"))
     assert ages == [0, 6]
+
+
+# ---------------------------------------------------------------- M1 (2026-10-02): kind and cached tokens, log only
+
+@pytestmark_db
+def test_db_quota_logs_kind_and_cached_tokens_without_crediting_them(client):  # noqa: F811
+    from app.ai.quota import DbQuota
+    q = DbQuota()
+    a = q.reserve([WRITER], 5000, 8000, wait=False, kind="recap:rewrite")
+    q.used(a[1], 6458, 4608)
+    b = q.reserve([CHECKER], 2000, 8000, wait=False, kind="recap:check")
+    q.used(b[1], 1500)                                                  # Groq sent no prompt_tokens_details
+    assert _sql("SELECT kind, used, cached_tokens FROM ai_calls ORDER BY id") == [
+        ("recap:rewrite", 6458, 4608), ("recap:check", 1500, None)]
+    assert q.spent_today(WRITER, False)[0] == 6458                      # the day still counts the cached tokens
+    assert q.reserve([WRITER], 3001, 8000, wait=False) is None          # and the minute still holds all 5,000
+
+
+@pytestmark_db
+def test_a_groq_reply_is_logged_through_the_shared_quota(client, monkeypatch):  # noqa: F811
+    from app.ai import client as ai_client
+    from app.ai.quota import DbQuota
+    monkeypatch.setattr(ai_client, "quota", DbQuota())
+    monkeypatch.setattr(ai_client, "WRITERS", [WRITER])
+    monkeypatch.setattr(ai_client, "CHECKERS", [CHECKER])
+    replies = iter([{"total_tokens": 6458, "prompt_tokens_details": {"cached_tokens": 4608}}, {"total_tokens": 900}])
+    monkeypatch.setattr(ai_client, "_groq_post",
+                        lambda body: {"choices": [{"message": {"content": "{}"}}], "usage": next(replies)})
+    ai_client.begin("recap")
+    try:
+        ai_client.write("x")
+        ai_client.check("c")
+    finally:
+        ai_client.forget_last()
+    assert _sql("SELECT model, kind, used, cached_tokens FROM ai_calls ORDER BY id") == [
+        (WRITER, "recap:write", 6458, 4608), (CHECKER, "recap:check", 900, None)]
+
+
+@pytestmark_db
+def test_cached_tokens_and_per_kind_totals_in_the_report(client, capsys, monkeypatch):  # noqa: F811
+    ids = _ids(client)
+    call(WRITER, 5000, 4000, kind="recap:write", cached=0)
+    call(WRITER, 5000, 4500, kind="recap:rewrite", cached=3000)
+    call(CHECKER, 2000, 1500, kind="recap:check")
+    call(OR_A, 1, 1, kind="recap:check")
+    call(WRITER, 3000, None, kind="preview:extract")                    # unreported
+    call("openai/gpt-oss-20b", 2000, 1600, kind="preview:search", cached=0)
+    call(WRITER, 1000, 1000)                                            # made before migration 010: no kind
+    text("recap", "ready", game=ids["DAL"])
+    d = usage.collect(7)
+    assert by_model(d["calls"], "cached") == {WRITER: 3000, CHECKER: 0, OR_A: 0, "openai/gpt-oss-20b": 0}
+    out = usage.render(d)
+    # the budget still counts the cached tokens: 4,000 + 4,500 + 3,000 (reserved, unreported) + 1,000
+    assert "| openai/gpt-oss-120b | 4 | 12,500 tokens | 200,000 | 6% | 3,000 |" in out
+    assert "| recap:write | openai/gpt-oss-120b | 1 | 4,000 | 0 | 0 | 0 (0%) |" in out
+    assert "| recap:rewrite | openai/gpt-oss-120b | 1 | 4,500 | 0 | 3,000 | 1 (100%) |" in out
+    assert f"| recap:check | {OR_A} | 1 | n/a (counted in requests) | - | - | - |" in out
+    assert "| preview:extract | openai/gpt-oss-120b | 1 | 3,000 | 1 | 0 | 0 (0%) |" in out
+    assert "| (not recorded) | openai/gpt-oss-120b | 1 | 1,000 | 0 | 0 | 0 (0%) |" in out
+    assert "| recap | 3 | 10,000 | 3,000 | 1 | 1 | 10,000 |" in out       # write + rewrite + Qwen's check, 1 recap
+    assert "| preview | 2 | 4,600 | 0 | 0 | 0 | - |" in out               # nothing written: no per-text figure
+    assert "| (no text, or not recorded) | 1 | 1,000 | 0 | 0 | - | - |" in out
+    monkeypatch.setattr("sys.argv", ["usage", "--json"])
+    usage.main()
+    data = json.loads(capsys.readouterr().out)
+    assert data["finished_kinds"] == {"recap": 1} and {r["kind"] for r in data["kinds"]} == {
+        "recap:write", "recap:rewrite", "recap:check", "preview:extract", "preview:search", None}

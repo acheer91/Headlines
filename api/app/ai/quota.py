@@ -18,7 +18,8 @@ KEEP = "14 days"
 
 
 class DbQuota:
-    def reserve(self, models: list[str], cost: int, limit: int, wait: bool) -> tuple[str, int] | None:
+    def reserve(self, models: list[str], cost: int, limit: int, wait: bool,
+                kind: str | None = None) -> tuple[str, int] | None:
         while True:
             soonest = None           # seconds until the first usable model's oldest reservation leaves its minute
             any_usable = False
@@ -35,8 +36,8 @@ class DbQuota:
                                extract(epoch FROM (min(at) + interval '60 seconds' - now())) AS frees_in
                         FROM ai_calls WHERE model = %s AND at > now() - interval '60 seconds'""", (m,)).fetchone()
                     if row["n"] == 0 or row["held"] + cost <= limit:
-                        rid = conn.execute("INSERT INTO ai_calls (model, reserved) VALUES (%s, %s) RETURNING id",
-                                           (m, cost)).fetchone()["id"]
+                        rid = conn.execute("""INSERT INTO ai_calls (model, reserved, kind) VALUES (%s, %s, %s)
+                                              RETURNING id""", (m, cost, kind)).fetchone()["id"]
                         if rid % 200 == 0:
                             conn.execute(f"DELETE FROM ai_calls WHERE at < now() - interval '{KEEP}'")
                         return m, rid
@@ -82,10 +83,13 @@ class DbQuota:
                                {"req": requests, "prefix": pool.endswith(":"), "pool": pool}).fetchone()
         return float(row["spent"]), max(float(row["frees_in"] or 0), 0.0)
 
-    def used(self, handle: object, tokens: int) -> None:
+    def used(self, handle: object, tokens: int, cached: int | None = None) -> None:
+        """tokens: what the call counts against the day (Groq's total_tokens, cached included). cached: logged only
+        until the log-only week (T1) shows Groq doesn't count them (M1); the budgets never read it."""
         if handle is not None:
             with db.connect() as conn:
-                conn.execute("UPDATE ai_calls SET used = %s WHERE id = %s", (tokens, handle))
+                conn.execute("UPDATE ai_calls SET used = %s, cached_tokens = %s WHERE id = %s",
+                             (tokens, cached, handle))
 
 
 def install() -> None:

@@ -12,8 +12,12 @@ Sources and their limits (say so when reading a number):
 - `ai_texts`: one row per game and kind (headlines: one per run), holding the LATEST outcome only: a rate-limit
   retry or a rewrite leaves no history, so rejection numbers are of texts as they stand, not of attempts. A
   preview whose refresh was rejected stays `ready` (its earlier good text keeps showing) and counts as rejected.
-- No kind on `ai_calls`, so tokens are per model and day, not per kind of text; "tokens per finished text" divides a
-  model's day by the texts a model wrote that day (`written_at`). A per-kind figure needs a `kind` column on `ai_calls`.
+- `ai_calls.kind` (migration 010) says what a call was for, '<text kind>:<step>' (`client.call_kind`: write, rewrite,
+  extract, re-extract, check, search); calls made before it have none ("not recorded"). "Tokens per written text" by
+  day divides a model's day by the texts written that day (all kinds); by kind, a kind's Groq tokens (every step and
+  model) over the texts of that kind written in the window.
+- `ai_calls.cached_tokens` (migration 010): the prompt tokens Groq served from its cache, as Groq reported them.
+  LOG ONLY: every budget, and every token figure here, still counts them (M1 waits for the log-only week, T1).
 - "Last N days" is a rolling cutoff shown as whole Pacific days, so the oldest day is partial.
 """
 from __future__ import annotations
@@ -70,9 +74,17 @@ def collect(days: int = 7) -> dict:
             SELECT (at AT TIME ZONE %(tz)s)::date AS day, model, count(*) AS calls,
                    coalesce(sum(coalesce(used, reserved)), 0)::bigint AS tokens,
                    count(*) FILTER (WHERE used IS NULL) AS unreported,
-                   coalesce(sum(reserved) FILTER (WHERE used IS NULL), 0)::bigint AS unreported_tokens
+                   coalesce(sum(reserved) FILTER (WHERE used IS NULL), 0)::bigint AS unreported_tokens,
+                   coalesce(sum(cached_tokens), 0)::bigint AS cached
             FROM ai_calls WHERE at > now() - make_interval(days => %(days)s)
             GROUP BY 1, 2 ORDER BY 1 DESC, 2""", p).fetchall()
+        kinds = conn.execute("""
+            SELECT kind, model, count(*) AS calls, coalesce(sum(coalesce(used, reserved)), 0)::bigint AS tokens,
+                   count(*) FILTER (WHERE used IS NULL) AS unreported,
+                   coalesce(sum(cached_tokens), 0)::bigint AS cached,
+                   count(*) FILTER (WHERE cached_tokens > 0) AS cache_hits
+            FROM ai_calls WHERE at > now() - make_interval(days => %(days)s)
+            GROUP BY 1, 2 ORDER BY 1 NULLS LAST, 2""", p).fetchall()
         peaks = {(r["day"], r["model"]): r["peak"] for r in conn.execute("""
             WITH w AS (
                 SELECT model, (at AT TIME ZONE %(tz)s)::date AS day,
@@ -81,7 +93,8 @@ def collect(days: int = 7) -> dict:
                 FROM ai_calls WHERE at > now() - make_interval(days => %(days)s))
             SELECT day, model, max(minute)::bigint AS peak FROM w GROUP BY 1, 2""", p).fetchall()}
         last24 = conn.execute("""
-            SELECT model, count(*) AS calls, coalesce(sum(coalesce(used, reserved)), 0)::bigint AS tokens
+            SELECT model, count(*) AS calls, coalesce(sum(coalesce(used, reserved)), 0)::bigint AS tokens,
+                   coalesce(sum(cached_tokens), 0)::bigint AS cached
             FROM ai_calls WHERE at > now() - interval '24 hours' GROUP BY model ORDER BY model""").fetchall()
         texts = conn.execute("""
             SELECT (updated_at AT TIME ZONE %(tz)s)::date AS day, kind, status, count(*) AS texts,
@@ -95,6 +108,10 @@ def collect(days: int = 7) -> dict:
             FROM ai_texts WHERE status = 'ready' AND body IS NOT NULL
               AND coalesce(written_at, updated_at) > now() - make_interval(days => %(days)s)
             GROUP BY 1 ORDER BY 1 DESC""", p).fetchall()
+        finished_kinds = {r["kind"]: r["texts"] for r in conn.execute("""
+            SELECT kind, count(*) AS texts FROM ai_texts WHERE status = 'ready' AND body IS NOT NULL
+              AND coalesce(written_at, updated_at) > now() - make_interval(days => %(days)s)
+            GROUP BY 1""", p).fetchall()}
         errors = [r["last_error"] for r in conn.execute("""
             SELECT last_error FROM ai_texts
             WHERE last_error IS NOT NULL AND updated_at > now() - make_interval(days => %(days)s)
@@ -108,6 +125,7 @@ def collect(days: int = 7) -> dict:
                                                               key=lambda kv: (-kv[1], kv[0]))[:12]]
     return {"days": days, "calls_since": covers["first"], "calls_rows": covers["n"], "keep": quota.KEEP,
             "calls": calls, "peaks": {f"{d}|{m}": v for (d, m), v in peaks.items()}, "last24": last24,
+            "kinds": kinds, "finished_kinds": finished_kinds,
             "texts": texts, "finished": finished, "reasons": reasons, "who": who}
 
 
@@ -131,6 +149,33 @@ def finished_by_day(finished: list[dict]) -> dict[date, int]:
     """Texts a model wrote and the app shows, by the day they were written (written_at: updated_at also moves when
     a refresh claims or fails)."""
     return {r["day"]: r["texts"] for r in finished}
+
+
+NO_KIND = "(not recorded)"      # a call made before migration 010
+
+
+def text_kind(kind: str | None) -> str | None:
+    """The kind of text a call was for ('recap' for 'recap:rewrite'); None outside a text (check_eval's 'check') or
+    for a call made before kinds were logged."""
+    return kind.split(":", 1)[0] if kind and ":" in kind else None
+
+
+def by_text_kind(kinds: list[dict], written: dict[str, int]) -> list[dict]:
+    """Per kind of text: token-counted (Groq) calls, their tokens and cached tokens over every step and model, the
+    request-counted pools' requests, and the texts of that kind written (None for the row of calls outside a text)."""
+    out: dict = {}
+    for k in [text_kind(r["kind"]) for r in kinds] + list(written):
+        out.setdefault(k, {"kind": k, "calls": 0, "tokens": 0, "cached": 0, "requests": 0,
+                           "written": written.get(k, 0) if k else None})
+    for r in kinds:
+        row = out[text_kind(r["kind"])]
+        if budget(r["model"])[0] == "tokens":
+            row["calls"] += r["calls"]
+            row["tokens"] += r["tokens"]
+            row["cached"] += r["cached"]
+        else:
+            row["requests"] += r["calls"]
+    return sorted(out.values(), key=lambda r: (r["kind"] is None, r["kind"] or ""))
 
 
 def rejection_rate(texts: list[dict]) -> tuple[int, int]:
@@ -160,14 +205,16 @@ def render(d: dict) -> str:
         unit, limit = budget(r["model"])
         spent = r["calls"] if unit == "requests" else r["tokens"]
         if r["model"].startswith(POOL):
-            rows.append([r["model"], r["calls"], f"{spent:,} requests", "(one budget for every or: model, below)", "-"])
+            rows.append([r["model"], r["calls"], f"{spent:,} requests", "(one budget for every or: model, below)", "-",
+                         "-"])
         else:
-            rows.append([r["model"], r["calls"], f"{spent:,} {unit}", f"{limit:,}", _pct(spent, limit)])
+            rows.append([r["model"], r["calls"], f"{spent:,} {unit}", f"{limit:,}", _pct(spent, limit),
+                         f"{r['cached']:,}" if unit == "tokens" else "-"])
     if pool:
         used = sum(r["calls"] for r in pool)
         rows.append([f"{POOL}* (all OpenRouter models)", used, f"{used:,} requests", f"{client.OPENROUTER_RPD:,}",
-                     _pct(used, client.OPENROUTER_RPD)])
-    out.append(_table(["model", "calls", "spent", "daily budget", "used"], rows))
+                     _pct(used, client.OPENROUTER_RPD), "-"])
+    out.append(_table(["model", "calls", "spent", "daily budget", "used", "of which cached (not credited)"], rows))
 
     out.append("\n## Model calls by day\n")
     rows = []
@@ -178,12 +225,41 @@ def render(d: dict) -> str:
         per_text = f"{r['tokens'] // done[r['day']]:,}" if unit == "tokens" and done.get(r["day"]) else "-"
         rows.append([r["day"], r["model"], r["calls"], counted,
                      f"{r['unreported']} ({r['unreported_tokens']:,} tokens)" if unit == "tokens" else "-",
-                     f"{peak:,}" if peak and unit == "tokens" else "-", per_text])
+                     f"{peak:,}" if peak and unit == "tokens" else "-", per_text,
+                     f"{r['cached']:,}" if unit == "tokens" else "-"])
     out.append(_table(["day", "model", "calls", "tokens counted", "unreported calls", "peak 60 s reserved",
-                       "tokens per written text*"], rows))
+                       "tokens per written text*", "cached tokens"], rows))
     out.append(f"\n\\* the model's tokens that day over the texts written that day (by `written_at`), all kinds; Groq's "
                f"minute limit is {client.GROQ_TPM:,} tokens. An unreported call failed or never reported its usage and "
                f"stays counted at its reservation.\n")
+
+    out.append("\n## Model calls by kind\n")
+    rows = []
+    for r in d["kinds"]:
+        tokens = budget(r["model"])[0] == "tokens"
+        rows.append([r["kind"] or NO_KIND, r["model"], r["calls"],
+                     f"{r['tokens']:,}" if tokens else "n/a (counted in requests)",
+                     r["unreported"] if tokens else "-", f"{r['cached']:,}" if tokens else "-",
+                     f"{r['cache_hits']} ({_pct(r['cache_hits'], r['calls'])})" if tokens else "-"])
+    out.append(_table(["kind", "model", "calls", "tokens counted", "unreported calls", "cached tokens",
+                       "calls with a cache hit"], rows))
+    out.append("\nA kind is `<text>:<step>`. write / extract: a first draft; rewrite / re-extract: the same prompt again "
+               "with why the draft was rejected; check: the fact check; search: a preview's article search. Cached "
+               "tokens are the prompt tokens Groq says it served from its cache. They are logged only: every token "
+               "figure in this report and every budget still counts them, until the log-only week (T1) shows whether "
+               "Groq counts them.\n")
+
+    out.append("\n## Tokens per written text, by kind\n")
+    rows = []
+    for r in by_text_kind(d["kinds"], d["finished_kinds"]):
+        rows.append([r["kind"] or "(no text, or not recorded)", r["calls"], f"{r['tokens']:,}", f"{r['cached']:,}",
+                     r["requests"], "-" if r["written"] is None else r["written"],
+                     f"{r['tokens'] // r['written']:,}" if r["written"] and r["calls"] else "-"])
+    out.append(_table(["kind of text", "token-counted calls", "tokens counted", "cached tokens",
+                       "OpenRouter / Gemini requests", "texts written", "tokens per written text"], rows))
+    out.append("\nEvery step and model of a kind (write, rewrites, extract, check, search) over the texts of that kind "
+               "written in the window (by `written_at`). Failed and rejected attempts count too: this is what a shown "
+               "text costs.\n")
 
     out.append("\n## Texts by day, kind and outcome (latest outcome of each text, by last update)\n")
     out.append(_table(["day", "kind", "status", "texts", "claims (lifetime)", "rejected at least once",
