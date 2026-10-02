@@ -1,0 +1,51 @@
+Z5 pre-registration: recap lead-angle rules (facts.recap_outline)
+Date: 2026-10-02
+Branch: phase-4-prep-layer
+Commit: 92491ad1f691c1110e3e8bc820a6adef6e01f040
+File: api/app/ai/facts.py
+sha256: 554727d65a0a0f0726a697d35afbaff49adc1132f044f0a6d4ac64813e8387a4
+
+Rule order (the first that holds is the angle; W = winner, L = loser, a break = the end of a quarter):
+  1. overtime            the linescore has more than 4 periods
+  2. comeback            W trailed by 10 (COMEBACK_POINTS) or more at a break before the last
+  3. late_lead_change    W didn't lead at the break before the last (trailing or tied after Q3)
+  4. seesaw              the lead changed hands at 2 or more breaks
+  5. blowout             W won by 17 (BLOWOUT_POINTS) or more
+  6. close_finish        decided by 3 (CLOSE_POINTS) or less, or a tie
+  7. outgained_but_lost  L had 75 (OUTGAINED_YARDS) or more total yards than W
+  8. turnovers           one team had 3 (TURNOVER_GAP) or more giveaways than the other
+  9. front_runner        W led at every break
+ 10. routine_win         none of the above
+
+Change from the rules Z5 first tested (Oct 2, 11/16, FAIL): blowout and close_finish moved ahead of
+outgained_but_lost and turnovers; the "any yardage edge in a loss by 17 or more" outgained_but_lost branch removed
+(Adam, Oct 2: NE @ JAX "was absolutely a blowout"). No threshold changed; comeback / late_lead_change unchanged.
+On the Oct 2 labels (sha256 9cb1683a6ab489ef1b70879b61e81d585c62a75dfa472fa8219e6adeaa4bbe28) this scores 15/16:
+IN-SAMPLE, not a pass.
+
+Test: this weekend's finals, the "week 5" of the Oct 2 notes = ESPN's 2026 regular-season WEEK 4 (Oct 1-5; the
+16 fixture finals of Sep 24-28 are ESPN's week 3, though the notes call them week 4). After Monday night's game
+(ATL @ NO, Oct 5, 8:15 PM ET):
+  python -m app.ai.angle_fixtures --season 2026 --week 4 --out <dir>
+then a blind labeller (one who has never seen facts.py, angle_eval output or an outline) labels from
+<dir>/labels_sheet.md alone, and the labels JSON and its sha256 are recorded before scoring with
+  python -m app.ai.angle_eval --fixtures <dir> --labels <labels.json>
+Pass bar: code matches the label on at least 85% of the finals, rounded up (13 of 15, 12 of 14, 14 of 16).
+facts.py must still hash to the sha256 above when the test is scored.
+Note: PIT @ CLE (Thu Oct 1, CLE 27-24) was already final when this was committed; the rules were not fitted to it
+(no one had labelled it or run code on it), so it is in the test set.
+
+Addendum (Oct 2, after review, before any week-4 label exists; procedure only: the rule order, thresholds and the
+facts.py sha256 above are unchanged, and facts.py was not edited):
+- Week: the "week-5" in commit 92491ad's message is the test week above, ESPN's regular-season week 4 (Oct 1-5),
+  not ESPN's week 5 (Oct 8-12).
+- Labeller: Adam, or an agent that has never seen facts.py, angle_eval output or an outline (never the session that
+  changed the rules), started outside C:/Users/axos2/Desktop/Headliners with no file tools and the text of
+  labels_sheet.md pasted into its prompt. The repo's CLAUDE.md and the project memory name the rule order, and an
+  agent started inside the project loads or can read them.
+- Build: angle_fixtures refuses to write the week while any game is not final (canceled or postponed games excepted).
+  A set built with --partial (manifest "partial") is not this pre-registered week; report it as such.
+- Scoring: angle_eval --fixtures refuses a set whose manifest's facts.py sha256 is not facts.py's now, a set under
+  tests/, or one holding any of the 16 finals the rules were tuned on; it prints facts.py's sha256, which must be
+  the one above.
+- T3 opens only on labels that pass on that fresh set: outline_eval --run --labels <labels.json> --z5-fixtures <dir>.
