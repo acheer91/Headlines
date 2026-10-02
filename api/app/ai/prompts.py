@@ -56,7 +56,7 @@ ARTICLES:
 
 WRITE_PREVIEW = """You write the pre-game preview for a personal scores app. Return JSON only:
 {{
-  "preview": "about 120 words: what this game is about and what to watch",
+  "preview": "about 110 words: what this game is about and what to watch",
   "edges": {{"home": [{{"text": "one sentence", "article": <id>}}], "away": [{{"text": "...", "article": <id>}}]}}
 }}
 
@@ -198,6 +198,40 @@ FACTS:
 
 TEXT:
 {text}
+"""
+
+# ---------------------------------------------------------------- live one-liner (C2)
+
+# Adam's examples (Oct 1), the ones our live box score can back up. Others he gave need drive or play-by-play data
+# we don't have ("three straight punts", "abandoning the run", "backup quarterback", "two explosive plays").
+ONE_LINER_EXAMPLES = [
+    "One-score game. Somehow, only one team feels like it's in trouble.",
+    "Close on the scoreboard. Not particularly close at the line of scrimmage.",
+    "Two picks already. We're approaching 'just don't lose us the game' territory.",
+    "The favorite is still trailing. This has graduated from cute to concerning.",
+    "Ranked team, road game, down at halftime. Upset-watch conditions are excellent.",
+]
+
+ONE_LINER = """Write the line that sits under a live score in a scores app: two short sentences, under 20 words in
+all, that tell a fan at a glance what is happening and what it feels like. Return JSON only: {{"line": "..."}}
+
+The score and the margin are shown right above your line: never restate them, and don't copy a FACTS line.
+First sentence: the one fact that tells this game's story right now, in a few words. Look first for: the team
+favored before kickoff now trailing; a big gap in total, passing or rushing yards; turnovers; third downs; one
+team's points in a quarter; a road team ahead. Every number must appear in FACTS exactly as written; words for
+small counts are fine ("two picks", "one turnover").
+Second sentence: a dry, knowing read of that same fact. Wry, never mean, never hype. It adds no new fact: no
+number, name, play, streak or cause that FACTS doesn't give, nothing about the crowd or anyone's feelings, and no
+prediction of how the game ends. No betting words (spread, cover, over/under, bet).
+
+FACTS knows the score only at quarter breaks: say nothing about who scored first, last or when inside a quarter.
+The quarter marked "(in progress)" isn't over.
+
+The voice, from other games (their facts are not yours; write your own words):
+{examples}
+
+FACTS:
+{facts}
 """
 
 # ---------------------------------------------------------------- headlines (Screen A)

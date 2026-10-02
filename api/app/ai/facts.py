@@ -207,7 +207,9 @@ def live_facts(game: dict) -> dict:
     n = _names(game)
     short = {s: n[s]["short"] or n[s]["name"] for s in ("home", "away")}
     h, a = game["home"].get("score"), game["away"].get("score")
-    facts = [f"Live, {game.get('status_detail') or 'in progress'}: {n['away']['name']} {a}, {n['home']['name']} {h}."]
+    facts = [f"Live, {game.get('status_detail') or 'in progress'}: {n['away']['name']} {a}, {n['home']['name']} {h}.",
+             f"Home team: {n['home']['name']}. Visiting team: {n['away']['name']}."]
+    facts += [f"Before kickoff, {line[0].lower()}{line[1:]}" for line in _line(game, n)]
     if h is not None and a is not None:
         facts.append("Tied." if h == a else
                      f"{n['home' if h > a else 'away']['name']} leads by {abs(h - a)} right now.")

@@ -28,8 +28,10 @@ bowl games are confirmed with the handoff's December checklist by Dec 12.
   Texas is `TEX`.
 
 ## Phase 4 — AI text (Stage 2 built 2026-09-29 on branch `phase-4-ai-text`; NOT deployed)
-Scope: previews (preview, edges, writers' picks), recaps and team summaries, Home headlines. The live one-liner is
-the box-score template (`summary.one_liner`), no AI (CTO, 2026-10-01).
+Scope: previews (preview, edges, writers' picks), recaps and team summaries, the live one-liner, Home headlines.
+The CTO cut the AI one-liner on Oct 1; **Adam put it back the same day** (his call outranks the CTO's): written on
+open, reused until the score changes or 15 minutes pass, never handed to the worker; any failure shows the box-score
+template (`summary.one_liner`). Previews are about 110 words (Adam, Oct 1: ~10% shorter than the PRD's 120).
 Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `phase4-results.md`; Stage 2 design:
 `docs/phase4-stage2-temporal-spec.md`. Deploy only after Adam approves samples and Phase 5b is signed off, Tue/Wed.
 - **Routing (CTO, 2026-10-01; `client.ROUTES`):** one row per kind (recap, preview, headlines): writer
@@ -117,8 +119,8 @@ Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `ph
   the four post-patch histories in `tests/fixtures/histories/` re-recorded (`SAVE_HISTORIES=1`). After the first
   deploy, any change here needs a new `workflow.patched` id.
 - **On open (api):** `GET /api/games/{id}/ai` returns current text at once, else writes it within 20 s (preview) or
-  10 s, **never waiting for quota** (`client.no_wait()`); `GET /api/headlines` for Screen A. A live game has no AI text
-  (`none`). **A page open that runs out of quota hands the text to the worker** (Oct 1, `main._hand_to_worker`: a
+  10 s, **never waiting for quota** (`client.no_wait()`); `GET /api/headlines` for Screen A. A live game gets the one-liner
+  (`one_liner`, 10 s). **A preview or recap page open that runs out of quota hands the text to the worker** (Oct 1, `main._hand_to_worker`: a
   `WriteTextWorkflow` with reason `open`, which the worker writes even off the pre-write list, waiting for the minute);
   the row's reason becomes `queued`, `/ai` says `queued` and the app "Writing the preview… pull again in a minute".
   A preview's extract and write don't fit one minute of 120b together (PIT @ CLE, Oct 1: 9,029 + 3,587 tokens), so an
@@ -129,9 +131,9 @@ Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `ph
   counted** with its tokenizer (`tiktoken` `o200k_harmony`, baked into the image via `TIKTOKEN_CACHE_DIR`) plus 100
   for Groq's chat template (measured Oct 1: 71 plain, 95 JSON); other models ~4 characters a token. The old estimate
   ran 20-35% low (an extract reserved 7,800 and used 9,029).
-- **Extraction steps run light** (`client.write(extract=True)`: the preview's article extract and the headlines'
-  news extract): low reasoning, reply allowance `AI_EXTRACT_MAX_OUT` (1,500; the one medium extract measured used its
-  whole 3,000). **Article text is cut to the paragraphs about the game** (`sources.relevant_text`: a team or a player
+- **Extraction steps and the one-liner run light** (`client.write(light=True)`: the preview's article extract, the
+  headlines' news extract, the live one-liner): low reasoning, reply allowance `AI_LIGHT_MAX_OUT` (1,500; the one
+  medium extract measured used its whole 3,000, a medium one-liner 4,391 in all). **Article text is cut to the paragraphs about the game** (`sources.relevant_text`: a team or a player
   from our injury report or leaders), at most 500 words an article (was 700 of the page as it came).
 - **Keys** (`GROQ_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`) live only in `.env`; no key, or removing it, is the off switch (every AI
   section shows fallback text). Prompts carry only public sports data (free tiers may use prompts for training).

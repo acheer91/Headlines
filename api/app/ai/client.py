@@ -61,6 +61,8 @@ ROUTES = {
     "recap": Route(_120B, None, _QWEN, _QWEN_OR),
     "preview": Route(_120B, None, _QWEN, _QWEN_OR),
     "headlines": Route(_120B, None, _QWEN, _QWEN_OR),
+    # Live one-liner: cut by the CTO (Oct 1), back on Adam's call the same day. Its fallback is the template.
+    "one_liner": Route(_120B, None, _QWEN, _QWEN_OR),
 }
 DEFAULT_KIND = "recap"      # for tools that call write()/check() outside a text (check_eval)
 
@@ -141,12 +143,12 @@ def last_writer() -> str:
     return getattr(_last, "writer", None) or model()
 
 
-def write(prompt: str, *, json_out: bool = False, extract: bool = False) -> str:
+def write(prompt: str, *, json_out: bool = False, light: bool = False) -> str:
     """One text from the kind's writer (or its named backup). Returns the reply (a JSON string when json_out).
-    extract: an extraction step (pulling claims out of articles or news), not prose: low reasoning and a smaller
-    reply allowance (EXTRACT_MAX_OUT), so it holds less of the writer's minute."""
-    text, used = _failover(route(_kind())[0], prompt, json_out, EXTRACT_MAX_OUT if extract else MAX_OUT,
-                           avoid=None, low_effort=extract)
+    light: a short structured reply, not prose (an extraction step pulling claims out of articles or news, or the
+    live one-liner): low reasoning and a smaller reply allowance (LIGHT_MAX_OUT), so it holds less of the minute."""
+    text, used = _failover(route(_kind())[0], prompt, json_out, LIGHT_MAX_OUT if light else MAX_OUT,
+                           avoid=None, low_effort=light)
     _last.writer = used
     return text
 
@@ -579,9 +581,10 @@ def _groq_post(body: dict) -> dict:
 
 MAX_OUT = 3000           # includes the model's reasoning tokens
 CHECK_MAX_OUT = 2000     # the fact-check reply is a short JSON list (plus the model's reasoning)
-# An extraction reply is a JSON list of claims, at low reasoning. The one measured extract (medium reasoning,
-# PIT @ CLE, Oct 1) spent its whole 3,000; 1,500 is a first setting, to tighten once low-reasoning extracts are measured.
-EXTRACT_MAX_OUT = int(os.environ.get("AI_EXTRACT_MAX_OUT", "1500"))
+# A light reply (an extract's JSON list of claims, a one-liner) at low reasoning. The one measured extract (medium
+# reasoning, PIT @ CLE, Oct 1) spent its whole 3,000 and a medium one-liner 4,391 in all; 1,500 is a first setting,
+# to tighten once low-reasoning replies are measured.
+LIGHT_MAX_OUT = int(os.environ.get("AI_LIGHT_MAX_OUT", "1500"))
 MARGIN = 200             # slack on top of the prompt count (an estimate, for models we can't count exactly)
 MIN_OUT = 600            # less room than this for a reply isn't worth a call
 REASONING = os.environ.get("GROQ_REASONING", "medium")   # "low" made factual slips (wrong team, wrong bet result)
@@ -593,7 +596,8 @@ def _groq_write(prompt: str, json_out: bool, name: str, max_out: int, checker: b
     body = {"model": name, "max_completion_tokens": max_out, "messages": [{"role": "user", "content": prompt}]}
     if name.startswith("openai/gpt-oss"):
         # Checking is comparison and extraction is copying claims out, not writing: low reasoning leaves the reply
-        # room for the JSON and holds less of the minute (Adam, Sep 29: low for extract, medium for write).
+        # room for the JSON and holds less of the minute (Adam, Sep 29: low for extract, medium for write). The
+        # live one-liner is light too: two short sentences, each written again in 15 minutes.
         body["reasoning_effort"] = "low" if checker or low_effort else REASONING
     else:
         body["reasoning_format"] = "hidden"     # Qwen: keep its thinking out of the JSON reply

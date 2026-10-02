@@ -7,7 +7,7 @@ game facts too, with the model extracting only from the articles. Checks, enforc
   * no betting advice words;
   * no run of COPY_WORDS words copied from an article;
   * edges and picks point at an article we actually passed in, and a pick's writer is named in that article;
-  * recaps: a player's numbers come from that player's line, "X favored / outgained" and home or
+  * recaps and one-liners: a player's numbers come from that player's line, "X favored / outgained" and home or
     road match the box score, and claims a box score can't support are refused (claims_ok);
   * a preview's point spread is our own line (line_ok).
 A failed check reruns that step once; a second failure returns status "failed" and the app shows fallback text.
@@ -180,9 +180,9 @@ def copied(text: str, articles: list[dict], n: int = COPY_WORDS) -> str | None:
     return None
 
 
-def _json(prompt: str, extract: bool = False) -> dict:
+def _json(prompt: str, light: bool = False) -> dict:
     try:
-        out = json.loads(client.write(prompt, json_out=True, extract=extract))
+        out = json.loads(client.write(prompt, json_out=True, light=light))
     except (ValueError, client.BadReply):
         raise CheckFailed("reply was not JSON") from None
     if not isinstance(out, dict):
@@ -190,14 +190,14 @@ def _json(prompt: str, extract: bool = False) -> dict:
     return out
 
 
-def _step(prompt: str, check: Callable[[dict], None], stats: dict, extract: bool = False) -> dict:
-    """One writer JSON call plus its check, rerun once if the check fails, told what was wrong. extract: an
-    extraction step (client.write's low-reasoning mode). RateLimited/AIError propagate."""
+def _step(prompt: str, check: Callable[[dict], None], stats: dict, light: bool = False) -> dict:
+    """One writer JSON call plus its check, rerun once if the check fails, told what was wrong. light: a short
+    structured reply (client.write's low-reasoning mode). RateLimited/AIError propagate."""
     ask = prompt
     for attempt in (1, 2):
         stats["calls"] += 1
         try:
-            out = _json(ask, extract)
+            out = _json(ask, light)
             try:
                 check(out)
             except (AttributeError, KeyError, TypeError):    # JSON of the wrong shape, e.g. an edge that's a string
@@ -583,7 +583,7 @@ def write_preview(game: dict, articles: list[dict], extract: dict | None = None)
         if saved is None:
             extract = _step(prompts.EXTRACT_PREVIEW.format(game=g, articles=arts, home=game["home"]["name"],
                                                            away=game["away"]["name"]), check_extract, stats,
-                            extract=True)
+                            light=True)
         else:
             # Saved by URL: map onto today's numbering. The same articles can come back in another order, and
             # positions would then point an edge at the wrong article (audit, 2026-09-29).
@@ -805,6 +805,39 @@ def recap_fallback(game: dict) -> str:
                                 bets_line(game)) if x)
 
 
+# ---------------------------------------------------------------- live one-liner
+
+ONE_LINER_MAX_WORDS = 30       # the prompt asks for two sentences under 20
+
+
+def write_one_liner(game: dict) -> dict:
+    """One checked sentence on the live game (Adam, Oct 1: back after the CTO cut it). Failure: the app shows the
+    box-score template (summary.one_liner), never unchecked text."""
+    def go(stats):
+        sheet = facts.live_facts(game)
+        fj = json.dumps(sheet["facts"], ensure_ascii=False)
+
+        def check(x):
+            line = x.get("line")
+            _texts_ok([line], fj)
+            claims_ok([line], game, sheet, final=False)
+            if isinstance(line, str) and len(line.split()) > ONE_LINER_MAX_WORDS:
+                raise CheckFailed(f"one-liner is {len(line.split())} words")
+            copy = copied(line, [{"text": ex} for ex in prompts.ONE_LINER_EXAMPLES], EXAMPLE_COPY_WORDS)
+            if copy:
+                raise CheckFailed(f"reused an example: {copy!r}; write your own line")
+            bet = bet_talk([line])
+            if bet:
+                raise CheckFailed(f"bet talk in the line: {bet!r}")
+            _fact_check([line], fj, stats)
+
+        out = _step(prompts.ONE_LINER.format(facts=fj, examples="\n".join(f"- {ex}" for ex in prompts.ONE_LINER_EXAMPLES)),
+                    check, stats, light=True)
+        return {"status": "ready", "body": {"line": out["line"]}}
+
+    return _run("one_liner", go)
+
+
 # ---------------------------------------------------------------- headlines
 
 def write_headlines(news: list[dict], finals: list[str]) -> dict:
@@ -819,7 +852,7 @@ def write_headlines(news: list[dict], finals: list[str]) -> dict:
             if not numbers_ok(json.dumps(x, ensure_ascii=False), inputs):
                 raise CheckFailed("extract has numbers not in the inputs")
 
-        facts = _step(prompts.EXTRACT_HEADLINES.format(news=nj, finals=fin), check_extract, stats, extract=True)
+        facts = _step(prompts.EXTRACT_HEADLINES.format(news=nj, finals=fin), check_extract, stats, light=True)
         fj = json.dumps(facts, ensure_ascii=False)
 
         def check_write(x):

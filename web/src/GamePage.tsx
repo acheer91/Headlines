@@ -126,8 +126,9 @@ export function GamePage() {
 
 function Detail({ g, ai, aiLoading }: { g: GameDetail; ai: AiText | null; aiLoading: boolean }) {
   const noData = g.summary_available ? "ESPN didn't send this" : "Not available yet";
-  // Live: the box-score template (CTO, 2026-10-01: no AI one-liner).
-  const oneLiner = g.one_liner;
+  // Live: the AI one-liner when it's ready (checked), else the box-score template (the PRD's fallback).
+  const aiLine = ai?.kind === "one_liner" && ai.status === "ready" && ai.body && "line" in ai.body ? ai.body.line : null;
+  const oneLiner = aiLine ?? g.one_liner;
   return (
     <main className="list">
       <Matchup g={g} />

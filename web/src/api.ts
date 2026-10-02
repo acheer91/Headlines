@@ -144,13 +144,14 @@ export type Pick = { writer: string; outlet: string; pick: string; url: string }
 export type Source = { title: string; url: string; outlet: string; published: string };
 
 export type AiText = {
-  kind: "preview" | "recap" | null;
+  kind: "preview" | "recap" | "one_liner" | null;
   /** ready | no_sources ("No fresh previews") | writing or queued (being written: pull again) | failed (show
    * fallback text) | missing | none */
   status: "ready" | "no_sources" | "failed" | "writing" | "queued" | "missing" | "none";
   body:
     | { preview: string; edges: { home: Edge[]; away: Edge[] }; picks: Pick[] }
     | { recap: string; bets: string; home: string; away: string }
+    | { line: string }
     | null;
   sources: Source[] | null;
   updated_at: string | null;

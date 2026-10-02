@@ -315,8 +315,10 @@ def test_routes_name_one_writer_and_a_checker_from_another_family(monkeypatch):
     assert client.route("recap") == (["openai/gpt-oss-120b"], ["qwen/qwen3.8-27b", "or:qwen/qwen3.8-27b:free"])
     client.begin("preview")
     assert client.model() == "openai/gpt-oss-120b"
+    client.begin("one_liner")                       # back on Adam's call (Oct 1)
+    assert client.model() == "openai/gpt-oss-120b"
     with pytest.raises(ValueError):
-        client.begin("one_liner")                   # no AI one-liner any more
+        client.begin("live")                        # a kind with no route
 
 
 def test_at_most_one_backup_writer(monkeypatch):
@@ -558,7 +560,7 @@ def test_extract_calls_use_low_reasoning_and_a_smaller_reply(fresh, monkeypatch)
         bodies.append(body)
         return {"choices": [{"message": {"content": "{}"}}], "usage": {"total_tokens": 5}}
     monkeypatch.setattr(client, "_groq_post", post)
-    client.write("x", json_out=True, extract=True)
+    client.write("x", json_out=True, light=True)
     client.write("x", json_out=True)
-    assert (bodies[0]["reasoning_effort"], bodies[0]["max_completion_tokens"]) == ("low", client.EXTRACT_MAX_OUT)
+    assert (bodies[0]["reasoning_effort"], bodies[0]["max_completion_tokens"]) == ("low", client.LIGHT_MAX_OUT)
     assert (bodies[1]["reasoning_effort"], bodies[1]["max_completion_tokens"]) == (client.REASONING, client.MAX_OUT)

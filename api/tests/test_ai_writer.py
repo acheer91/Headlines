@@ -20,7 +20,7 @@ def fake(replies):
     it = iter(replies)
     calls = []
 
-    def write(prompt, json_out=False, extract=False):
+    def write(prompt, json_out=False, light=False):
         calls.append(prompt)
         return json.dumps(next(it))
     return write, calls
@@ -106,7 +106,7 @@ def test_no_fifth_quarter(model):
 def test_invalid_json_is_rewritten(model, monkeypatch):
     replies = iter(["bad", {"recap": f"Bears won. {WORDS}", "home": "x", "away": "y"}])
 
-    def write(prompt, json_out=False, extract=False):
+    def write(prompt, json_out=False, light=False):
         r = next(replies)
         if r == "bad":
             raise client.BadReply("groq: reply was not valid JSON")
@@ -153,7 +153,7 @@ def test_wrong_shape_is_a_failed_check(model):
 
 
 def test_rate_limit_gives_failed(monkeypatch):
-    def limited(prompt, json_out=False, extract=False):
+    def limited(prompt, json_out=False, light=False):
         raise client.RateLimited("groq 429")
     monkeypatch.setattr(client, "write", limited)
     res = writer.write_recap(GAME)
@@ -191,6 +191,27 @@ def test_edge_with_unknown_article_fails(model):
     bad = dict(PREVIEW_FACTS, edges={"home": [{"fact": "x", "article": 7}], "away": []})
     model([bad, bad])
     assert writer.write_preview(dict(GAME, state="pre"), [ARTICLE])["status"] == "failed"
+
+
+def test_one_liner_from_live_facts(model):
+    live = dict(GAME, state="in", status_detail="Q3 4:12")
+    calls = model([{"line": "Chicago leads by 20 in the third."}])
+    res = writer.write_one_liner(live)
+    assert res["status"] == "ready" and "Live, Q3 4:12" in calls[0]
+
+
+def test_one_liner_too_long(model):
+    long = {"line": " ".join(["word"] * 45)}
+    model([long, long])
+    assert writer.write_one_liner(dict(GAME, state="in"))["status"] == "failed"
+
+
+def test_live_one_liner_may_say_tied_inside_a_quarter(model):
+    g = {"league": "nfl", "state": "in", "status_detail": "3rd 12:00", "home": {"name": "Chicago Bears", "short": "Bears",
+         "score": 14}, "away": {"name": "Philadelphia Eagles", "short": "Eagles", "score": 14},
+         "header": {"home": {"linescores": [7, 7, 0]}, "away": {"linescores": [7, 7, 0]}}}
+    model([{"line": "The Eagles responded in the second quarter and it is tied 14-14."}])
+    assert writer.write_one_liner(g)["status"] == "ready"
 
 
 def test_no_checker_outside_the_family_fails_closed_without_a_retry(model, monkeypatch):
@@ -258,7 +279,7 @@ def test_extract_carries_its_articles_and_survives_a_rate_limit_on_the_write(mod
     """A rate limit after the extract call hands the extract back, so the retry doesn't pay for it again."""
     replies = iter([PREVIEW_FACTS])
 
-    def write(prompt, json_out=False, extract=False):
+    def write(prompt, json_out=False, light=False):
         try:
             return json.dumps(next(replies))
         except StopIteration:
@@ -272,7 +293,7 @@ def test_extract_carries_its_articles_and_survives_a_rate_limit_on_the_write(mod
 
 def test_failures_say_whether_the_setup_or_the_text_was_at_fault(monkeypatch):
     def failing(exc):
-        def write(prompt, json_out=False, extract=False):
+        def write(prompt, json_out=False, light=False):
             raise exc
         monkeypatch.setattr(client, "write", write)
         return writer.write_recap(GAME)
@@ -613,8 +634,8 @@ def test_only_the_extraction_steps_ask_for_extract_mode(monkeypatch):
                     {"items": [{"fact": "Bears won 27-7", "news": 1}]},
                     {"items": [{"text": f"Headline {c}", "news": 1} for c in "ABCDEF"]}])
 
-    def write(prompt, json_out=False, extract=False):
-        flags.append(extract)
+    def write(prompt, json_out=False, light=False):
+        flags.append(light)
         return json.dumps(next(replies))
     monkeypatch.setattr(client, "write", write)
     assert writer.write_preview(dict(GAME, state="pre"), [ARTICLE])["status"] == "ready"

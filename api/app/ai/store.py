@@ -17,6 +17,7 @@ from psycopg.types.json import Jsonb
 # a worker writer can wait minutes for quota while holding its claim.
 WRITING_TIMEOUT = timedelta(minutes=16)
 FAILED_QUIET = timedelta(minutes=30)    # a page open doesn't retry a text that failed this recently (same basis)
+ONE_LINER_TTL = timedelta(minutes=15)   # Adam, 2026-09-29: reused until the score changes or 15 minutes pass
 QUEUED = "queued"                       # reason on a failed row a page open handed to the worker (main._hand_to_worker)
 # A text that failed this many times for reasons retrying won't fix (check failed twice, a non-retryable error) is
 # not written again for the same inputs (Adam, 2026-10-01): it waits for new ones. Rate limits and 5xx never count.
@@ -41,7 +42,9 @@ def current(row: dict | None, basis: str, fingerprint: str | None = None) -> boo
     """Ready (or checked and sourceless) and written from what the game looks like now."""
     if not row or row["status"] not in ("ready", "no_sources") or row["basis"] != basis:
         return False
-    return fingerprint is None or row["fingerprint"] == fingerprint
+    if fingerprint is not None and row["fingerprint"] != fingerprint:
+        return False
+    return row["kind"] != "one_liner" or _age(row) < ONE_LINER_TTL
 
 
 def counts_as_rejection(result: dict) -> bool:
@@ -96,10 +99,11 @@ def claim(conn, game_id: int, kind: str, basis: str, fingerprint: str | None = N
             WHERE ai_texts.status = 'failed'
                OR (ai_texts.status IN ('ready', 'no_sources') AND (
                       ai_texts.basis IS DISTINCT FROM EXCLUDED.claim_basis
-                   OR ai_texts.fingerprint IS DISTINCT FROM EXCLUDED.claim_fingerprint))
+                   OR ai_texts.fingerprint IS DISTINCT FROM EXCLUDED.claim_fingerprint
+                   OR (ai_texts.kind = 'one_liner' AND ai_texts.updated_at < now() - %(ttl)s)))
                OR (ai_texts.status = 'writing' AND ai_texts.updated_at < now() - %(stuck)s)
         RETURNING id, attempts""", {"g": game_id, "k": kind, "b": basis, "f": fingerprint, "r": reason,
-                                    "stuck": WRITING_TIMEOUT}).fetchone()
+                                    "ttl": ONE_LINER_TTL, "stuck": WRITING_TIMEOUT}).fetchone()
     conn.commit()
     return Claim(row["id"], row["attempts"]) if row else None
 

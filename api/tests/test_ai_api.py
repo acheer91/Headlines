@@ -17,7 +17,8 @@ ARTICLE = {"url": "https://www.espn.com/nfl/story/_/id/1/x", "outlet": "ESPN", "
 
 def ready(kind, **extra):
     body = {"preview": {"preview": "p", "edges": {"home": [], "away": []}, "picks": []},
-            "recap": {"recap": "r", "bets": "", "home": "h", "away": "a"}}[kind]
+            "recap": {"recap": "r", "bets": "", "home": "h", "away": "a"},
+            "one_liner": {"line": "l"}}[kind]
     return {"status": "ready", "body": body, "model": "fake", "checker": "fake-check", "seconds": 0.1, **extra}
 
 
@@ -25,7 +26,7 @@ def ready(kind, **extra):
 def fake(client, monkeypatch):  # noqa: F811
     """Count writer calls per kind; articles from `state['articles']`."""
     from app.ai import sources, writer
-    state = {"calls": {"preview": [], "recap": 0}, "articles": [ARTICLE], "result": None}
+    state = {"calls": {"preview": [], "recap": 0, "one_liner": 0}, "articles": [ARTICLE], "result": None}
 
     def preview(page, articles, extract=None):
         state["calls"]["preview"].append(extract)
@@ -39,8 +40,13 @@ def fake(client, monkeypatch):  # noqa: F811
         state["calls"]["recap"] += 1
         return state["result"] or ready("recap")
 
+    def one_liner(page):
+        state["calls"]["one_liner"] += 1
+        return state["result"] or ready("one_liner")
+
     monkeypatch.setattr(writer, "write_preview", preview)
     monkeypatch.setattr(writer, "write_recap", recap)
+    monkeypatch.setattr(writer, "write_one_liner", one_liner)
     monkeypatch.setattr(sources, "find_articles", lambda page, news, **kw: (list(state["articles"]), []))
     state["ids"] = _ids(client)
     return state
@@ -58,9 +64,24 @@ def test_recap_written_on_open_then_instant(client, fake):  # noqa: F811
 def test_kind_follows_the_game_state(client, fake):  # noqa: F811
     ids = fake["ids"]
     assert client.get(f"/api/games/{ids['BUF']}/ai").json()["kind"] == "preview"
-    live = client.get(f"/api/games/{ids['KC']}/ai").json()       # live: the box-score template, no AI (CTO, Oct 1)
-    assert live["kind"] is None and live["status"] == "none"
-    assert _sql("SELECT count(*) FROM ai_texts WHERE game_id = %s", ids["KC"]) == [(0,)]
+    assert client.get(f"/api/games/{ids['KC']}/ai").json()["kind"] == "one_liner"     # back on Adam's call (Oct 1)
+
+
+def test_one_liner_reused_for_15_minutes_then_rewritten(client, fake):  # noqa: F811
+    gid = fake["ids"]["KC"]
+    client.get(f"/api/games/{gid}/ai")
+    client.get(f"/api/games/{gid}/ai")
+    assert fake["calls"]["one_liner"] == 1
+    _sql("UPDATE ai_texts SET updated_at = now() - interval '16 minutes' WHERE game_id = %s", gid)
+    client.get(f"/api/games/{gid}/ai")
+    assert fake["calls"]["one_liner"] == 2
+
+
+def test_a_rate_limited_one_liner_is_not_handed_to_the_worker(client, fake, monkeypatch):  # noqa: F811
+    from app import main
+    monkeypatch.setattr(main, "_hand_to_worker", lambda kind, row: pytest.fail("handed a one-liner to the worker"))
+    fake["result"] = RATE_LIMITED
+    assert client.get(f"/api/games/{fake['ids']['KC']}/ai").json()["status"] == "failed"   # the app: the template
 
 
 def test_preview_without_fresh_articles_is_no_sources(client, fake):  # noqa: F811
@@ -124,7 +145,7 @@ def test_no_keys_means_fallback_not_a_crash(client, monkeypatch):  # noqa: F811
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
     monkeypatch.setattr(sources, "find_articles", lambda page, news, **kw: ([ARTICLE], []))
     ids = _ids(client)
-    for team in ("DAL", "BUF"):                  # KC is live: no AI text at all
+    for team in ("DAL", "BUF", "KC"):
         out = client.get(f"/api/games/{ids[team]}/ai")
         assert out.status_code == 200 and out.json()["status"] == "failed"
 

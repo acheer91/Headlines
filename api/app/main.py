@@ -201,7 +201,8 @@ def game(game_id: int):
 # never waits for free-tier quota (client.no_wait): with no room it hands the text to the worker, which does wait
 # (_hand_to_worker), and the app says it is being written. A preview's extract and write are two calls that don't
 # fit one minute of the writer's quota together, so an opened preview usually finishes there.
-AI_WAIT = {"preview": 20.0, "recap": 10.0}
+AI_WAIT = {"preview": 20.0, "recap": 10.0, "one_liner": 10.0}
+HAND_OFF = {"preview", "recap"}     # a one-liner isn't handed to the worker: by then the score has moved on
 _ai_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="ai-open")
 TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS")     # unset: no hand-off (the app never depends on Temporal)
 TEMPORAL_NAMESPACE = os.environ.get("TEMPORAL_NAMESPACE", "default")
@@ -249,7 +250,8 @@ def _hand_to_worker(kind: str, game_row: dict) -> bool:
 def _write_on_open(kind: str, game_row: dict) -> dict:
     with ai_client.no_wait():
         out = ai_jobs.write_for_game(kind, game_row["id"], "open", base_url=ESPN_BASE)
-    if out["status"] == "failed" and out.get("retry_after") and _hand_to_worker(kind, game_row):
+    if (out["status"] == "failed" and out.get("retry_after") and kind in HAND_OFF
+            and _hand_to_worker(kind, game_row)):
         if out.get("id"):
             with db.connect() as conn:
                 ai_store.mark_queued(conn, out["id"])
@@ -259,8 +261,8 @@ def _write_on_open(kind: str, game_row: dict) -> dict:
 
 @app.get("/api/games/{game_id}/ai")
 def game_ai(game_id: int):
-    """The AI text that fits the game now (handoff 2.6): preview (pre), recap (played final); none live (the
-    one-liner is the box-score template) or in a league without AI text (AI_LEAGUES).
+    """The AI text that fits the game now (handoff 2.6): preview (pre), one-liner (live; the app falls back to the
+    box-score template), recap (played final); none in a league without AI text (AI_LEAGUES).
     status: ready | no_sources ("No fresh previews") | writing or queued (being written: the next pull may have it)
     | failed (the app shows fallback text) | missing.
     Current text comes back at once, and so does a text that failed for the same inputs in the last 30 minutes
