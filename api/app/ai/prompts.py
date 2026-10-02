@@ -124,17 +124,13 @@ def recap_examples(home: str, away: str) -> str:
 
 # ---------------------------------------------------------------- recap (D): recap and team summaries
 # The fact sheet is built by code (facts.recap_facts): no model extract step, so nothing can be misread.
+# The text that is the same for every game comes first ({style} is RECAP_STYLE or empty), then the game's own parts:
+# the examples (all three unless the game is one of theirs), the reply format with the team names, FACTS. Groq can
+# then reuse the cached prefix from one recap to the next (M2, 2026-10-02; the wording is unchanged, only the order).
 
-WRITE_RECAP = """You write the post-game recap for a personal scores app. Return JSON only:
-{{
-  "recap": "about {recap_words} words on how the game went. Don't mention bets, lines or the spread: the app adds them",
-  "home": "{team_len}, on {home}'s day",
-  "away": "{team_len}, on {away}'s day"
-}}
-{length_note}
-{style}
+WRITE_RECAP = """You write the post-game recap for a personal scores app.
 
-FACTS is a list of plain, exact statements about the final. Each one is true exactly as written; restate them,
+{style}FACTS is a list of plain, exact statements about the final. Each one is true exactly as written; restate them,
 don't reinterpret them. Scoring and who led are given per quarter: say which quarter something happened in, or
 who led when, only as FACTS states it. The score is known only at quarter breaks, so never say a team took or
 held the lead inside a quarter, or what happened first or "before" something else within a quarter.
@@ -163,6 +159,13 @@ Also (each of these was a real error):
 
 {guardrails}
 
+{examples}Return JSON only:
+{{
+  "recap": "about {recap_words} words on how the game went. Don't mention bets, lines or the spread: the app adds them",
+  "home": "{team_len}, on {home}'s day",
+  "away": "{team_len}, on {away}'s day"
+}}
+{length_note}
 FACTS:
 {facts}
 """

@@ -1,5 +1,6 @@
 """Writer checks with a fake model: no live AI calls in tests."""
 import json
+import os
 
 import pytest
 
@@ -626,6 +627,26 @@ def test_recap_voice_can_be_switched_off(model, monkeypatch):
     calls = model([{"recap": f"Bears won. {WORDS}", "home": "x", "away": "y"}])
     assert writer.write_recap(GAME)["status"] == "ready"
     assert "Example 1:" not in calls[0] and "tension in FACTS" not in calls[0]
+
+
+@pytest.mark.parametrize("voice", [True, False])
+def test_the_recap_prompt_starts_with_the_text_every_game_shares(model, monkeypatch, voice):
+    # M2 (2026-10-02): the text that is the same for every game comes first and the game's own parts (examples, team
+    # names, FACTS) last, so Groq can reuse the cached prefix from one recap to the next. Same words, new order.
+    from app.ai import prompts
+    monkeypatch.setattr(writer, "RECAP_VOICE", voice)
+    other = {**GAME, "home": {**GAME["home"], "name": "Dallas Cowboys", "short": "Cowboys"},
+             "away": {**GAME["away"], "name": "Baltimore Ravens", "short": "Ravens"}}
+    calls = model([{}] * 4)                                         # the wrong shape: two calls a game, then failed
+    writer.write_recap(GAME)
+    writer.write_recap(other)
+    shared = os.path.commonprefix([calls[0], calls[2]])
+    for fixed in (prompts.VOICE, prompts.GUARDRAILS, "Also (each of these was a real error)", "FACTS is a list"):
+        assert fixed in shared
+    assert (prompts.RECAP_STYLE in shared) is voice and ("Examples, from other games" in shared) is voice
+    for own in ("Chicago Bears", "Dallas Cowboys", "Example 1:\nNew England", "FACTS:\n["):
+        assert own not in shared
+    assert calls[0].index("Return JSON only:") > calls[0].index(prompts.GUARDRAILS)
 
 
 def test_only_the_extraction_steps_ask_for_extract_mode(monkeypatch):

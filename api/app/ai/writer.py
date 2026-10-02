@@ -773,13 +773,15 @@ def write_recap(game: dict) -> dict:
                 raise CheckFailed(f"bet talk in the prose: {bet!r}")
             _fact_check(texts, fj, stats)
 
+        # The style guide sits in the fixed text up top, the examples after it with the game's own parts (M2).
         out = _step(prompts.WRITE_RECAP.format(facts=fj, voice=prompts.VOICE, guardrails=prompts.GUARDRAILS,
                                                home=game["home"]["name"], away=game["away"]["name"],
                                                recap_words=recap_w,
-                                               style=(prompts.RECAP_STYLE + "\n\nExamples, from other games (their "
-                                                      "facts are not yours):\n\n"
-                                                      + prompts.recap_examples(game["home"]["name"], game["away"]["name"])
-                                                      if RECAP_VOICE else ""),
+                                               style=prompts.RECAP_STYLE + "\n\n" if RECAP_VOICE else "",
+                                               examples=("Examples, from other games (their facts are not yours):\n\n"
+                                                         + prompts.recap_examples(game["home"]["name"],
+                                                                                  game["away"]["name"]) + "\n\n"
+                                                         if RECAP_VOICE else ""),
                                                team_len=f"2-3 sentences, about {team_w} words" if team_w
                                                else "2-3 sentences",
                                                length_note=prompts.ONE_MINUTE_NOTE if team_w else ""),
