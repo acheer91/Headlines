@@ -131,6 +131,12 @@ button { font: inherit; color: inherit; }
 .ai-text:last-child { margin-bottom: 0; }
 .sources { margin: 6px 0 0; }
 .edges + .edges { margin-top: 10px; }
-.edges ul, .picks, .headlines { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
-.headlines { padding: 12px 14px 12px 30px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; }
+.edges ul, .picks { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+/* Screen A: one card, one row per item (Adam, 2026-10-02: the plain bullet list read bland). */
+.headlines { margin: 0; padding: 2px 0; list-style: none; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; }
+.headlines li { display: flex; gap: 10px; align-items: baseline; padding: 11px 14px; border-bottom: 1px solid var(--border); line-height: 1.45; }
+.headlines li:last-child { border-bottom: none; }
 .headlines a { color: inherit; }
+.headlines .chip { flex: none; font-size: 11px; font-weight: 600; letter-spacing: .02em; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px; }
+.headlines .chip-final { color: var(--live); border-color: currentColor; }
+.headline-final { font-weight: 600; font-variant-numeric: tabular-nums; }

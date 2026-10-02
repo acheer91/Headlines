@@ -19,6 +19,10 @@ const TABS = [
 function TabBar() {
   return (
     <nav className="tabs">
+      {/* Screen A is a peer of the sports: always one tap away (Adam, 2026-10-02: there was no way back to it). */}
+      <NavLink to="/" end className={({ isActive }) => (isActive ? "tab active" : "tab")}>
+        Home
+      </NavLink>
       {TABS.map((t) =>
         t.enabled ? (
           <NavLink key={t.id} to={`/scores/${t.id}`} className={({ isActive }) => (isActive ? "tab active" : "tab")}>

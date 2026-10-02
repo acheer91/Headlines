@@ -27,7 +27,7 @@ import logging
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .. import db, espn, favorites, games
+from .. import db, espn, favorites, games, ncaaf
 from . import client, facts, scope, sources, store, writer
 
 log = logging.getLogger(__name__)
@@ -161,23 +161,36 @@ def headlines_fingerprint(news: list[dict], lines: list[str]) -> str:
     return hashlib.sha1(json.dumps(data, sort_keys=True).encode()).hexdigest()[:16]
 
 
+def featured_final(row: dict, favs: dict[str, list[str]]) -> bool:
+    """Which finals the headlines may list: NCAAF follows the board filter (a Saturday stores every FBS final,
+    ~60 games; the feed should see the board's, favorites included), every other league passes."""
+    if row["league"] != "ncaaf":
+        return True
+    return ncaaf.is_featured_row(row, set(favs.get("ncaaf", [])))
+
+
 def write_headlines(leagues: list[str], reason: str, preflight: bool = False) -> dict:
-    """The Home headlines. Nothing new since the last ready set (same news, same finals) means nothing to write:
-    a run with the same inputs would only spend the writer's tokens on the same feed. A manual run always writes."""
-    leagues = [lg for lg in leagues if scope.ai_league(lg)]
+    """The Home headlines (HEADLINE_LEAGUES: wider than the per-game texts' AI_LEAGUES). Nothing new since the
+    last ready set (same news, same finals) means nothing to write: a run with the same inputs would only spend
+    the writer's tokens on the same feed. A manual run always writes."""
+    leagues = [lg for lg in leagues if scope.headline_league(lg)]
     if not leagues:
         return {"status": "skipped", "id": None}
     with db.connect() as conn:
         news = store.news(conn, leagues, days=2, limit=30)
         finals = conn.execute("""
-            SELECT g.league, a.name AS away, g.away_score, h.name AS home, g.home_score FROM games g
+            SELECT g.league, a.name AS away, g.away_score, h.name AS home, g.home_score,
+                   g.home_conf, g.away_conf, g.home_rank, g.away_rank,
+                   h.espn_id AS home_espn_id, a.espn_id AS away_espn_id, h.abbr AS home_abbr, a.abbr AS away_abbr
+            FROM games g
             JOIN teams h ON h.id = g.home_team_id JOIN teams a ON a.id = g.away_team_id
             WHERE g.state = 'post' AND g.completed IS TRUE AND g.league = ANY(%s)
               AND g.start_time > now() - interval '2 days'
-            ORDER BY g.start_time""", (leagues,)).fetchall()
+            ORDER BY g.start_time, g.espn_id""", (leagues,)).fetchall()
         last = store.latest_headlines(conn)
+    favs = favorites.load()
     lines = [f"{r['league'].upper()}: {r['away']} {r['away_score']}, {r['home']} {r['home_score']} (final)"
-             for r in finals]
+             for r in finals if featured_final(r, favs)]
     if not news and not lines:
         return {"status": "skipped", "id": None}
     fp = headlines_fingerprint(news, lines)

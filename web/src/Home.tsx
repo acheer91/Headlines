@@ -7,6 +7,12 @@ import { usePull } from "./usePull";
 
 const looksLikeHeadlines = (v: unknown) => !!v && Array.isArray((v as NonNullable<Headlines>).items);
 
+// A final score line (the writer keeps the code-built "... (final)" shape): shown as a score row with a Final
+// chip instead of the suffix. A news item gets a league chip read from its ESPN link; no link, no chip.
+const FINAL_SUFFIX = /\s*\(final\)\.?\s*$/i;
+const leagueOf = (url: string | null) =>
+  url?.includes("/nfl/") ? "NFL" : url?.includes("/college-football/") ? "CFB" : null;
+
 /** Screen A (Phase 4, kept minimal): the latest AI headline set, 5-8 lines, written twice a day by the worker.
  * Before the first set exists, home is the NFL board, as it was. */
 export function Home() {
@@ -50,15 +56,21 @@ export function Home() {
         {h ? (
           <>
             <ul className="headlines">
-              {h.items.map((item) => (
-                <li key={item.text}>
-                  {item.url ? (
-                    <a href={item.url} target="_blank" rel="noreferrer">{item.text}</a>
-                  ) : (
-                    item.text
-                  )}
-                </li>
-              ))}
+              {h.items.map((item) => {
+                const final = FINAL_SUFFIX.test(item.text);
+                const chip = final ? "Final" : leagueOf(item.url);
+                const text = final ? item.text.replace(FINAL_SUFFIX, "") : item.text;
+                return (
+                  <li key={item.text} className={final ? "headline-final" : undefined}>
+                    {chip && <span className={`chip${final ? " chip-final" : ""}`}>{chip}</span>}
+                    {item.url ? (
+                      <a href={item.url} target="_blank" rel="noreferrer">{text}</a>
+                    ) : (
+                      text
+                    )}
+                  </li>
+                );
+              })}
             </ul>
             <p className="muted center small">Updated {updatedAt(h.updated_at)}</p>
           </>

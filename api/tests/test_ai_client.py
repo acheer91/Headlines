@@ -171,6 +171,27 @@ def test_ai_leagues_default_to_nfl_only():
     assert scope.is_prewritten({"league": "nfl", "home_abbr": "BUF", "away_abbr": "NE"}, FAVS)
 
 
+def test_headline_leagues_default_to_ai_leagues():
+    # Unset, the home feed follows AI_LEAGUES; compose sets HEADLINE_LEAGUES=nfl,ncaaf (Adam, 2026-10-02).
+    assert scope.HEADLINE_LEAGUES == scope.AI_LEAGUES
+    assert scope.headline_league("nfl") and not scope.headline_league("ncaaf")
+
+
+def test_headline_finals_follow_the_ncaaf_board_filter():
+    # A college Saturday stores every FBS final (~60); the home feed sees only the board's games.
+    from app.ai import jobs
+    sec = {"league": "ncaaf", "home_espn_id": "61", "away_espn_id": "99", "home_abbr": "UGA", "away_abbr": "MRSH",
+           "home_conf": 8, "away_conf": 37, "home_rank": None, "away_rank": None}
+    mid_major = dict(sec, home_conf=37, home_abbr="JMU")
+    favorite = dict(mid_major, away_abbr="TEX")
+    ranked = dict(mid_major, away_rank=24)
+    assert jobs.featured_final(sec, FAVS)
+    assert not jobs.featured_final(mid_major, FAVS)
+    assert jobs.featured_final(favorite, FAVS)
+    assert jobs.featured_final(ranked, FAVS)
+    assert jobs.featured_final({"league": "nfl"}, FAVS)        # only NCAAF is board-filtered
+
+
 # ---------- OpenRouter free models ("or:<id>"), Oct 1 ----------
 
 def _or_reply(content):

@@ -49,7 +49,10 @@ Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `ph
   (`OPENROUTER_RPD`; more keys add nothing; $10 of credits would make it 1,000, CTO: not now). A model that has spent
   its budget is cooled down and skipped before it is asked. Bake-off (Sep 29): Qwen as a writer invents claims.
 - **AI leagues:** `AI_LEAGUES` (default and compose: `nfl`), separate from `ENABLED_LEAGUES`. Other leagues get no AI
-  text: not written ahead, not on open (`/ai` says `none`, the app hides the preview block), not in headlines.
+  text: not written ahead, not on open (`/ai` says `none`, the app hides the preview block). **Headlines have their
+  own wider list** (Adam, 2026-10-02): `HEADLINE_LEAGUES` (compose: `nfl,ncaaf`; unset it follows `AI_LEAGUES`), and
+  NCAAF finals in the feed follow the board filter (`jobs.featured_final`), not the full FBS slate. The Home screen
+  also got a `Home` tab (first tab, `main.tsx`) and chip-styled rows (`Final` / league chips) the same day.
 - **Recap length: back to ~120 words** (2026-10-01, until Adam confirms 200-230 was his call): the recap paragraph is
   about 120 words (code accepts 60-200), each team 2-3 sentences. The one-minute-read tiers (standard ~200 words,
   featured ~230 for a favorite, ranked vs ranked, two winning NFL teams, overtime, a margin of 3 or less, or 2+ lead

@@ -23,6 +23,7 @@ services:
       DATABASE_URL: postgresql://scores:${POSTGRES_PASSWORD:-scores}@db:5432/scores
       ENABLED_LEAGUES: nfl,ncaaf
       AI_LEAGUES: nfl             # AI text only for these (CTO, 2026-10-01: NFL first; college after real token numbers)
+      HEADLINE_LEAGUES: nfl,ncaaf # the Home headlines alone also cover college news (Adam, 2026-10-02)
       CACHE_SECONDS: ${CACHE_SECONDS:-30}
       ESPN_BASE: ${ESPN_BASE:-https://site.api.espn.com/apis/site/v2/sports}
       # Phase 4 AI text. Keys come only from the server's .env; with no key every AI section shows its fallback
@@ -109,6 +110,7 @@ services:
       DATABASE_URL: postgresql://scores:${POSTGRES_PASSWORD:-scores}@db:5432/scores
       ENABLED_LEAGUES: nfl,ncaaf
       AI_LEAGUES: nfl             # AI text only for these (CTO, 2026-10-01: NFL first; college after real token numbers)
+      HEADLINE_LEAGUES: nfl,ncaaf # the Home headlines alone also cover college news (Adam, 2026-10-02)
       ESPN_BASE: ${WORKER_ESPN_BASE:-https://site.api.espn.com/apis/site/v2/sports}   # step 3.7 points it at a bad host
       TEMPORAL_ADDRESS: temporal:7233
       # Phase 4 AI text: same keys and shared quota as the api (see there).

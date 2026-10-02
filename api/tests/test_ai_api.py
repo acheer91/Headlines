@@ -92,6 +92,7 @@ def test_preview_without_fresh_articles_is_no_sources(client, fake):  # noqa: F8
 def test_league_without_ai_text_writes_nothing(client, fake, monkeypatch):  # noqa: F811
     from app.ai import jobs, scope
     monkeypatch.setattr(scope, "AI_LEAGUES", {"ncaaf"})               # NFL off: the fixture's games are NFL
+    monkeypatch.setattr(scope, "HEADLINE_LEAGUES", {"ncaaf"})         # headlines' own list (2026-10-02) off too
     out = client.get(f"/api/games/{fake['ids']['DAL']}/ai").json()
     assert out["kind"] is None and out["status"] == "none"
     assert jobs.write_for_game("recap", fake["ids"]["DAL"], "final")["status"] == "skipped"
