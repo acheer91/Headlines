@@ -566,6 +566,26 @@ def test_extract_calls_use_low_reasoning_and_a_smaller_reply(fresh, monkeypatch)
     assert (bodies[1]["reasoning_effort"], bodies[1]["max_completion_tokens"]) == (client.REASONING, client.MAX_OUT)
 
 
+def test_a_write_can_name_its_reasoning_effort(fresh, monkeypatch):
+    # M3 (RECAP_REASONING): the recap writer's effort for this call. The reply allowance stays the writer's, a light
+    # call stays low, and a call that names none gets REASONING as before.
+    monkeypatch.setattr(client, "WRITERS", ["openai/gpt-oss-120b"])
+    monkeypatch.setattr(client, "GROQ_TPM", 100_000)          # four calls in one minute, without waiting for it
+    bodies = []
+
+    def post(body):
+        bodies.append(body)
+        return {"choices": [{"message": {"content": "{}"}}], "usage": {"total_tokens": 5}}
+    monkeypatch.setattr(client, "_groq_post", post)
+    client.write("x", json_out=True, reasoning="low")
+    client.write("x", json_out=True, reasoning="medium")
+    client.write("x", json_out=True, light=True, reasoning="medium")
+    client.write("x", json_out=True)
+    assert [(b["reasoning_effort"], b["max_completion_tokens"]) for b in bodies] == [
+        ("low", client.MAX_OUT), ("medium", client.MAX_OUT), ("low", client.LIGHT_MAX_OUT),
+        (client.REASONING, client.MAX_OUT)]
+
+
 # ---------- M1 (2026-10-02): Groq's cached prompt tokens and each call's kind, logged only ----------
 
 def _groq_reply(usage):

@@ -677,6 +677,71 @@ def test_the_recap_prompt_starts_with_the_text_every_game_shares(model, monkeypa
     assert calls[0].index("Return JSON only:") > calls[0].index(prompts.GUARDRAILS)
 
 
+# ---------- M3 (2026-10-02): the code-built recap outline and the recap's reasoning effort, both off by default -----
+
+def _fixture(name):
+    from tests.test_ai_facts import load
+    return load(name)
+
+
+def test_the_outline_flag_is_off_and_the_default_prompt_is_unchanged():
+    # Off by default, and off means the prompt is exactly today's (the 16 finals' request bodies were diffed byte
+    # for byte before and after M3). On, the only change is the outline block, placed just before FACTS.
+    from app.ai import facts
+    assert writer.RECAP_OUTLINE is False and writer.RECAP_REASONING is None
+    for name in ("final_lar_den", "final_ne_jax", "final_phi_chi"):
+        g = _fixture(name)
+        off, on = writer.recap_prompt(g), writer.recap_prompt(g, outline=True)
+        assert off == writer.recap_prompt(g, outline=False) and "OUTLINE" not in off
+        block = writer.outline_text(facts.recap_outline(g))
+        assert block and on == off.replace("\nFACTS:\n", "\n" + block + "FACTS:\n", 1)
+
+
+def test_with_the_flag_on_the_recap_prompt_carries_the_outline_after_the_shared_text(model, monkeypatch):
+    from app.ai import facts, prompts
+    monkeypatch.setattr(writer, "RECAP_OUTLINE", True)
+    calls = model([{}] * 4)                                         # the wrong shape: two calls a game, then failed
+    games = [_fixture("final_lar_den"), _fixture("final_sea_wsh")]
+    for g in games:
+        writer.write_recap(g)
+    plan = facts.recap_outline(games[0])
+    assert "Angle: Broncos trailed by double digits at a quarter break and won." in calls[0]
+    assert all(f"{i}. {line}" in calls[0] for i, line in enumerate(plan["lines"], 1))
+    assert calls[0].index("OUTLINE") > calls[0].index("Return JSON only:") and calls[0].index("FACTS:\n[") > \
+        calls[0].index("OUTLINE")
+    shared = os.path.commonprefix([calls[0], calls[2]])
+    assert prompts.GUARDRAILS in shared and "OUTLINE" not in shared       # the cached prefix is unchanged (M2)
+    assert calls[1].startswith(calls[0])                                 # the rewrite keeps the outline
+
+
+def test_the_recap_writer_can_run_at_another_reasoning_effort(monkeypatch):
+    efforts = []
+    replies = iter([{"recap": "Bears won 27-7. " + WORDS, "home": "x"},          # the wrong shape: rewritten
+                    {"recap": "Bears won 27-7. " + WORDS, "home": "Bears good.", "away": "Eagles not."}])
+
+    def write(prompt, json_out=False, light=False, **kw):
+        efforts.append(kw.get("reasoning", "unset"))
+        return json.dumps(next(replies))
+    monkeypatch.setattr(client, "write", write)
+    monkeypatch.setattr(writer, "RECAP_REASONING", "low")
+    assert writer.write_recap(GAME)["status"] == "ready"
+    assert efforts == ["low", "low"]                                      # the first draft and the rewrite
+    efforts.clear()
+    replies = iter([{"recap": "Bears won 27-7. " + WORDS, "home": "Bears good.", "away": "Eagles not."}])
+    monkeypatch.setattr(writer, "RECAP_REASONING", None)
+    assert writer.write_recap(GAME)["status"] == "ready" and efforts == ["unset"]    # default: the client's own
+
+
+@pytest.mark.parametrize("value,effort", [(None, None), ("", None), ("low", "low"), (" Medium ", "medium")])
+def test_recap_reasoning_takes_low_or_medium(value, effort):
+    assert writer._effort(value) == effort
+
+
+def test_recap_reasoning_refuses_anything_else():
+    with pytest.raises(ValueError, match="low or medium"):
+        writer._effort("high")
+
+
 def test_only_the_extraction_steps_ask_for_extract_mode(monkeypatch):
     flags = []
     replies = iter([PREVIEW_FACTS, {"preview": WORDS, "edges": {"home": [], "away": []}},

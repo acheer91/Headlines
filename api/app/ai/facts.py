@@ -10,6 +10,7 @@ extracts only from the articles.
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -200,6 +201,155 @@ def _edge_lines(game: dict, short: dict) -> list[str]:
     if h is not None and a is not None and h != a:
         out.append(f"Total yards edge: {short['home' if h > a else 'away']}, by {abs(h - a)}.")
     return out
+
+
+# ---------------------------------------------------------------- recap outline (M3, 2026-10-02)
+# Behind writer.RECAP_OUTLINE (off). Code picks the recap's lead angle and the FACTS lines that tell it, so the writer
+# no longer has to find the story or work out which way each comparison points. The outline is the angle's id, a
+# frame sentence (team names and FACTS' quarter labels: no score, count or cause) and 4-6 lines copied exactly from
+# recap_facts, in the order the recap should take them. Nothing in it is new, so it can't add a wrong fact; the risk is
+# an angle that is true but secondary, which no checker sees (FACT_CHECK lets framing pass). Gated on Z5 (a person
+# picks the lead blind on the 16 fixture finals: python -m app.ai.angle_eval) and T3 (python -m app.ai.outline_eval).
+#
+# The angle is the first of these that holds (W the winner, L the loser, a break the end of a quarter; a tie has
+# neither, so only overtime, seesaw or close_finish fits it):
+#   overtime            the linescore has more than 4 periods
+#   comeback            W trailed by COMEBACK_POINTS or more at a break before the last
+#   late_lead_change    W didn't lead at the break before the last (trailing or tied after Q3)
+#   seesaw              the lead changed hands at 2 or more breaks (lead_changes)
+#   outgained_but_lost  L had OUTGAINED_YARDS more total yards, or any yardage edge in a loss by BLOWOUT_POINTS
+#                       (Adam's NE @ JAX sample leads "New England outgained Jacksonville 317–315 and lost by 29")
+#   blowout             W won by BLOWOUT_POINTS or more
+#   turnovers           one team had TURNOVER_GAP more giveaways than the other ("three giveaways against none")
+#   close_finish        decided by CLOSE_POINTS or less, or a tie
+#   front_runner        W led at every break
+#   routine_win         none of the above
+# Not angles: a defensive or special-teams score (the box score has no scoring plays), an upset (the recap's sheet
+# has no line; bets are written by code) and streaks or records going in (FACTS has only the record after the game).
+COMEBACK_POINTS = 10        # the comeback frame says "double digits": change both together
+OUTGAINED_YARDS = 75        # the 16 week-4 finals: losers' edges of 2 to 225
+BLOWOUT_POINTS = 17         # three scores
+TURNOVER_GAP = 3
+CLOSE_POINTS = 3
+OUTLINE_MIN, OUTLINE_MAX = 4, 6
+# Each angle and what it means, in the order above. Z5's labeller gets these meanings, never the rules.
+ANGLES = {
+    "overtime": "The game went to overtime.",
+    "comeback": "The winner came back from a big deficit.",
+    "late_lead_change": "The winner was behind or tied going into the fourth quarter.",
+    "seesaw": "The lead went back and forth.",
+    "outgained_but_lost": "The losing team gained more yards.",
+    "blowout": "A lopsided win.",
+    "turnovers": "The giveaway count is the story.",
+    "close_finish": "A close game, decided by a few points.",
+    "front_runner": "The winner led from the first quarter on.",
+    "routine_win": "Nothing stands out: a plain result.",
+}
+LEADER_TD = re.compile(r"(\d+) TD\b")
+LEADER_YDS = re.compile(r"(\d+) YDS\b")
+
+
+def _first(lines: list[str], start: str) -> str | None:
+    return next((f for f in lines if f.startswith(start)), None)
+
+
+def _break_line(lines: list[str], i: int | None) -> str | None:
+    """The sheet's score line for the break after period i ('Halftime score: ...')."""
+    if i is None or i < 0:
+        return None
+    return _first(lines, f"{'Halftime' if i == 1 else 'End of ' + _period(i)} score:")
+
+
+def _points_line(lines: list[str], i: int | None) -> str | None:
+    return None if i is None or i < 0 else _first(lines, f"Points scored in {_period(i)}:")
+
+
+def _top_leader(lines: list[str], short: str) -> str | None:
+    """A team's leader line with the most touchdowns, then yards; the sheet's first on a tie."""
+    mine = [f for f in lines if f.startswith(short + " ") and " leader (this game): " in f]
+    count = lambda f: tuple(int(m[1]) if m else 0 for m in (LEADER_TD.search(f), LEADER_YDS.search(f)))
+    return max(mine, key=count, default=None)
+
+
+def recap_outline(game: dict, sheet: dict | None = None) -> dict | None:
+    """{"angle", "frame", "lines"} for a final: the first angle above that holds, and 4-6 lines copied exactly from
+    recap_facts (the angle's own lines first, then the result, each team's top leader, the giveaways when they
+    differ, the yards and possession edges, the halftime score). None when the sheet can't give 4 lines."""
+    sheet = sheet or recap_facts(game)
+    lines = sheet["facts"]
+    h, a = game["home"].get("score"), game["away"].get("score")
+    if h is None or a is None:
+        return None
+    n = sheet["teams"]
+    short = {s: n[s]["short"] or n[s]["name"] for s in ("home", "away")}
+    w = None if h == a else ("home" if h > a else "away")
+    lo = {"home": "away", "away": "home"}.get(w)
+    margin = abs(h - a)
+    al, hl = _linescores(game)
+    pts = {"away": al, "home": hl}
+    brks = _breaks(al, hl)
+    last = len(al) - 1
+    st = stats(game)
+    yards = {s: _int((st.get("totalYards") or {}).get(s)) for s in ("home", "away")}
+    gives = {s: _int((st.get("turnovers") or {}).get(s)) for s in ("home", "away")}
+    won_by = _first(lines, f"{n[w]['name']} won by ") if w else None
+    took = [f for f in lines if w and f.startswith(f"Lead change: {short[w]} ")]
+
+    def swing(start: int) -> int | None:
+        """The period from `start` on that W won by the most (the first on a tie)."""
+        best = None
+        for i in range(start, len(al)):
+            if best is None or pts[w][i] - pts[lo][i] > pts[w][best] - pts[lo][best]:
+                best = i
+        return best
+
+    # W's deficit at each break before the last: (points behind, break).
+    behind = [((at - ht) if w == "home" else (ht - at), i) for i, at, ht, _, _ in brks[:-1]] if w else []
+    worst = max(behind, key=lambda d: (d[0], -d[1]), default=(0, None))
+    if len(al) > 4:
+        pick = ("overtime", "The game went to overtime.",
+                [_break_line(lines, 3)] + [_points_line(lines, i) for i in range(4, len(al))] + [won_by])
+    elif worst[0] >= COMEBACK_POINTS:
+        pick = ("comeback", f"{short[w]} trailed by double digits at a quarter break and won.",
+                [_break_line(lines, worst[1]), _points_line(lines, swing(worst[1] + 1))] + took + [won_by])
+    elif w and len(brks) >= 2 and brks[-2][3] != w:
+        pick = ("late_lead_change", f"{short[w]} did not lead at the {_break(last - 1)} and won.",
+                [_break_line(lines, last - 1), _points_line(lines, last)]
+                + [f for f in took if f.endswith(f"and {_break(last)} scores.")] + [won_by])
+    elif lead_changes(game) >= 2:
+        pick = ("seesaw", "The lead changed hands more than once between quarter breaks.",
+                [_first(lines, "Times the lead changed hands")] + [f for f in lines if f.startswith("Lead change: ")]
+                + [won_by])
+    elif w and None not in yards.values() and yards[lo] > yards[w] and (
+            yards[lo] - yards[w] >= OUTGAINED_YARDS or margin >= BLOWOUT_POINTS):
+        pick = ("outgained_but_lost", f"{short[lo]} gained more total yards and lost.",
+                [_first(lines, "Total yards edge:"), _first(lines, "total yards:"), won_by])
+    elif w and margin >= BLOWOUT_POINTS:
+        pick = ("blowout", f"{short[w]} won by a lopsided margin.",
+                [won_by, _break_line(lines, 1), _points_line(lines, swing(0))])
+    elif w and None not in gives.values() and abs(gives["home"] - gives["away"]) >= TURNOVER_GAP:
+        t = "home" if gives["home"] > gives["away"] else "away"
+        pick = ("turnovers", f"{short[t]} had more giveaways and {'still won' if t == w else 'lost'}.",
+                [_first(lines, "Giveaways "), won_by])
+    elif margin <= CLOSE_POINTS:
+        pick = ("close_finish", f"{short[w]} won a close game." if w else "The game ended in a tie.",
+                [won_by or _first(lines, "Final score:"), _break_line(lines, last - 1), _points_line(lines, last)])
+    elif brks and all(lead == w for *_, lead, _ in brks):
+        pick = ("front_runner", f"{short[w]} led at every quarter break.",
+                [_break_line(lines, i) for i in range(last)] + [won_by])
+    else:
+        pick = ("routine_win", f"{short[w]} won, and no swing stands out: open with the result.",
+                [won_by, _break_line(lines, 1)])
+    angle, frame, own = pick
+    sides = (w, lo) if w else ("away", "home")
+    fill = [won_by] + [_top_leader(lines, short[s]) for s in sides] + [
+        _first(lines, "Giveaways ") if None not in gives.values() and gives["home"] != gives["away"] else None,
+        _first(lines, "Total yards edge:"), _first(lines, "Time of possession edge:"), _break_line(lines, 1)]
+    out = []
+    for f in own + fill:
+        if f and f not in out and len(out) < OUTLINE_MAX:
+            out.append(f)
+    return {"angle": angle, "frame": frame, "lines": out} if len(out) >= OUTLINE_MIN else None
 
 
 # The live one-liner's sheet holds only what its prompt (prompts.ONE_LINER) and Adam's examples can use (M4,

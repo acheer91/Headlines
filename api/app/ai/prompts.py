@@ -166,8 +166,19 @@ Also (each of these was a real error):
   "away": "{team_len}, on {away}'s day"
 }}
 {length_note}
-FACTS:
+{outline}FACTS:
 {facts}
+"""
+
+# Added to WRITE_RECAP only while writer.RECAP_OUTLINE is on (M3, the T3 eval): code's pick of the lead and the FACTS
+# lines that tell it (facts.recap_outline). It sits with the game's own parts, after the text every game shares (M2).
+OUTLINE_NOTE = """OUTLINE (picked by code from FACTS; every key moment is a FACTS line, copied exactly):
+Angle: {frame}
+Key moments, in order:
+{lines}
+Open with the angle and take the key moments in this order; other FACTS lines can add detail. Every rule above
+still applies.
+
 """
 
 # Added to WRITE_RECAP only while writer.ONE_MINUTE_READ is on.

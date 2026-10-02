@@ -144,12 +144,15 @@ def last_writer() -> str:
     return getattr(_last, "writer", None) or model()
 
 
-def write(prompt: str, *, json_out: bool = False, light: bool = False) -> str:
+def write(prompt: str, *, json_out: bool = False, light: bool = False, reasoning: str | None = None) -> str:
     """One text from the kind's writer (or its named backup). Returns the reply (a JSON string when json_out).
     light: a short structured reply, not prose (an extraction step pulling claims out of articles or news, or the
-    live one-liner): low reasoning and a smaller reply allowance (LIGHT_MAX_OUT), so it holds less of the minute."""
+    live one-liner): low reasoning and a smaller reply allowance (LIGHT_MAX_OUT), so it holds less of the minute.
+    reasoning: a gpt-oss writer's effort for this call instead of REASONING (the recap's RECAP_REASONING, M3); the
+    reply allowance stays MAX_OUT."""
     text, used = _failover(route(_kind())[0], prompt, json_out, LIGHT_MAX_OUT if light else MAX_OUT,
-                           avoid=None, low_effort=light, kind=call_kind(_write_step(prompt, light)))
+                           avoid=None, low_effort=light, kind=call_kind(_write_step(prompt, light)),
+                           reasoning=reasoning)
     _last.writer = used
     return text
 
@@ -444,7 +447,8 @@ def _sizing(name: str, prompt: str, max_out: int) -> tuple[int, int]:
 
 
 def _failover(models: list[str], prompt: str, json_out: bool, max_out: int, avoid: str | None,
-              checker: bool = False, low_effort: bool = False, kind: str | None = None) -> tuple[str, str]:
+              checker: bool = False, low_effort: bool = False, kind: str | None = None,
+              reasoning: str | None = None) -> tuple[str, str]:
     order = [m for m in models if avoid is None or family(m) != family(avoid)]
     if not order:
         # Never fall back to the writer's own family (it once fell back to the whole list here).
@@ -491,7 +495,8 @@ def _failover(models: list[str], prompt: str, json_out: bool, max_out: int, avoi
             elif _is_gemini(name):
                 text, used = _gemini_call(prompt, json_out, name), 1
             else:
-                text, used, cached = _groq_write(prompt, json_out, name, max_out, checker, low_effort=low_effort)
+                text, used, cached = _groq_write(prompt, json_out, name, max_out, checker, low_effort=low_effort,
+                                                 reasoning=reasoning)
             quota.used(handle, used, cached)
             if name != order[0]:
                 log.warning("ai failover: %s %s -> %s (%s)", "checker" if checker else "writer", order[0], name,
@@ -635,14 +640,14 @@ def _groq_usage(d: dict) -> tuple[int, int | None]:
 
 
 def _groq_write(prompt: str, json_out: bool, name: str, max_out: int, checker: bool,
-                low_effort: bool = False) -> tuple[str, int, int | None]:
-    """(reply, total tokens, cached prompt tokens or None)."""
+                low_effort: bool = False, reasoning: str | None = None) -> tuple[str, int, int | None]:
+    """(reply, total tokens, cached prompt tokens or None). reasoning: this write's effort instead of REASONING."""
     body = {"model": name, "max_completion_tokens": max_out, "messages": [{"role": "user", "content": prompt}]}
     if name.startswith("openai/gpt-oss"):
         # Checking is comparison and extraction is copying claims out, not writing: low reasoning leaves the reply
         # room for the JSON and holds less of the minute (Adam, Sep 29: low for extract, medium for write). The
         # live one-liner is light too: two short sentences, each written again in 15 minutes.
-        body["reasoning_effort"] = "low" if checker or low_effort else REASONING
+        body["reasoning_effort"] = "low" if checker or low_effort else (reasoning or REASONING)
     else:
         body["reasoning_format"] = "hidden"     # Qwen: keep its thinking out of the JSON reply
     if checker:
