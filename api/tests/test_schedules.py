@@ -73,6 +73,28 @@ async def test_a_schedule_already_gone_is_not_an_error(nfl_only):
     assert client.deleted == []
 
 
+async def test_show_names_a_schedule_the_server_does_not_have_yet(nfl_only):
+    class NoSchedules:
+        def get_schedule_handle(self, sid):
+            class Handle:
+                async def describe(self):
+                    raise RPCError("not found", RPCStatusCode.NOT_FOUND, b"")
+            return Handle()
+    out = await schedules.show(NoSchedules())
+    assert out == [{"id": sid, "missing": True} for sid in schedules.SCHEDULES]     # the first deploy: no crash
+
+
+async def test_show_still_raises_on_any_other_error(nfl_only):
+    class Down:
+        def get_schedule_handle(self, sid):
+            class Handle:
+                async def describe(self):
+                    raise RPCError("unavailable", RPCStatusCode.UNAVAILABLE, b"")
+            return Handle()
+    with pytest.raises(RPCError):
+        await schedules.show(Down())
+
+
 async def test_nothing_is_deleted_when_nothing_is_stale(nfl_only):
     client = FakeClient(list(schedules.SCHEDULES))
     await schedules.ensure(client)

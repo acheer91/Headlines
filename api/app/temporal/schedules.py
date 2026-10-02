@@ -96,7 +96,13 @@ async def show(client: Client) -> list[dict]:
     """A stable description of each schedule (no timestamps or run counts), for diffing."""
     out = []
     for sid in SCHEDULES:
-        d = await client.get_schedule_handle(sid).describe()
+        try:
+            d = await client.get_schedule_handle(sid).describe()
+        except RPCError as exc:
+            if exc.status != RPCStatusCode.NOT_FOUND:
+                raise
+            out.append({"id": sid, "missing": True})       # not created yet: the first run of the command makes it
+            continue
         s = d.schedule
         out.append({
             "id": sid,
