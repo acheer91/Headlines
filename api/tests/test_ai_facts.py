@@ -115,13 +115,21 @@ def test_recap_players_and_stats_for_the_code_check():
 # ---------- M3 (2026-10-02): the recap outline, built by code ----------
 
 FINALS = sorted(p.stem for p in FIX.glob("final_*.json"))
-# Code's angle for each week-4 final (the rules in facts.py, run 2026-10-02). Z5 compares these with a person's picks.
+# Code's angle for each week-4 final (the rules in facts.py, margin first since Oct 2). Z5 compared the first rules
+# with a person's blind picks (11/16); car_cle, hou_ind and sea_wsh (close_finish) and ne_jax (blowout) moved to the
+# label with the margin rules first. lac_buf (comeback; labelled late_lead_change) is a known miss, left alone.
 WEEK4_ANGLES = {"final_ari_sf": "front_runner", "final_atl_gb": "blowout", "final_bal_dal": "close_finish",
-                "final_car_cle": "outgained_but_lost", "final_cin_pit": "close_finish", "final_hou_ind": "turnovers",
+                "final_car_cle": "close_finish", "final_cin_pit": "close_finish", "final_hou_ind": "close_finish",
                 "final_kc_mia": "routine_win", "final_lac_buf": "comeback", "final_lar_den": "comeback",
                 "final_lv_no": "late_lead_change", "final_min_tb": "front_runner",
-                "final_ne_jax": "outgained_but_lost", "final_nyj_det": "routine_win", "final_phi_chi": "blowout",
-                "final_sea_wsh": "outgained_but_lost", "final_ten_nyg": "front_runner"}
+                "final_ne_jax": "blowout", "final_nyj_det": "routine_win", "final_phi_chi": "blowout",
+                "final_sea_wsh": "close_finish", "final_ten_nyg": "front_runner"}
+
+
+def _stat(g, key, away, home):
+    row = next(r for r in g["team_stats"]["rows"] if r["key"] == key)
+    row["away"], row["home"] = str(away), str(home)
+    return g
 
 
 def _overtime(g):
@@ -144,12 +152,24 @@ def _seesaw(g):
     return g
 
 
-SYNTHETIC = {"overtime": _overtime, "close_finish": _tie, "seesaw": _seesaw}
+def _outgained(g):
+    """kc_mia (Chiefs 24, Dolphins 10) with the Dolphins outgaining the Chiefs 420 to 334."""
+    return _stat(g, "totalYards", 334, 420)
+
+
+def _turnovers(g):
+    """kc_mia with the Chiefs giving it away 4 times to the Dolphins' once."""
+    return _stat(g, "turnovers", 4, 1)
+
+
+SYNTHETIC = {"overtime": ("final_phi_chi", _overtime), "close_finish": ("final_phi_chi", _tie),
+             "seesaw": ("final_phi_chi", _seesaw), "outgained_but_lost": ("final_kc_mia", _outgained),
+             "turnovers": ("final_kc_mia", _turnovers)}
 
 
 def _all_games():
     yield from ((name, load(name)) for name in FINALS)
-    yield from ((f"final_phi_chi as {angle}", make(load("final_phi_chi"))) for angle, make in SYNTHETIC.items())
+    yield from ((f"{base} as {angle}", make(load(base))) for angle, (base, make) in SYNTHETIC.items())
 
 
 def test_every_outline_line_is_a_fact_line_copied_exactly():
@@ -188,6 +208,29 @@ def test_week4_angles():
     assert {name: facts.recap_outline(load(name))["angle"] for name in FINALS} == WEEK4_ANGLES
 
 
+def test_the_margin_comes_before_yards_and_giveaways():
+    # Adam, Oct 2: NE @ JAX "was absolutely a blowout". The Patriots outgained the Jaguars 317 to 315 and lost by 29;
+    # the old "any yardage edge in a loss by 17 or more" branch called it outgained_but_lost. It is gone.
+    plan = facts.recap_outline(load("final_ne_jax"))
+    assert (plan["angle"], plan["frame"]) == ("blowout", "Jaguars won by a lopsided margin.")
+    assert plan["lines"][0] == "Jacksonville Jaguars won by 29 points; 41 points were scored in all."
+    # A 3-point game is close_finish even when the loser outgained the winner by 101 (car_cle) or 179 (sea_wsh),
+    # or the winner gave it away 3 times to none (hou_ind).
+    for name, frame in (("final_car_cle", "Browns won a close game."), ("final_sea_wsh", "Commanders won a close game."),
+                        ("final_hou_ind", "Colts won a close game.")):
+        assert facts.recap_outline(load(name))["frame"] == frame, name
+    # A blowout stays a blowout when the loser outgains the winner by more than OUTGAINED_YARDS.
+    g = _stat(load("final_phi_chi"), "totalYards", 375 + facts.OUTGAINED_YARDS + 10, 375)
+    assert facts.recap_outline(g)["angle"] == "blowout"
+    # Between the margins, the stat angles still fire: a 14-point loss with 86 more yards, or 3 more giveaways.
+    assert facts.recap_outline(_outgained(load("final_kc_mia")))["angle"] == "outgained_but_lost"
+    assert facts.recap_outline(_turnovers(load("final_kc_mia")))["angle"] == "turnovers"
+    # ... but not a yardage edge under OUTGAINED_YARDS (kc_mia as played: the Dolphins outgained the Chiefs by 5).
+    assert facts.recap_outline(load("final_kc_mia"))["angle"] == "routine_win"
+    g = _stat(load("final_kc_mia"), "totalYards", 334, 334 + facts.OUTGAINED_YARDS - 1)
+    assert facts.recap_outline(g)["angle"] == "routine_win"
+
+
 def test_the_angles_own_lines_come_first():
     plan = facts.recap_outline(load("final_lar_den"))
     assert plan["frame"] == "Broncos trailed by double digits at a quarter break and won."
@@ -195,9 +238,13 @@ def test_the_angles_own_lines_come_first():
                                  "Points scored in Q3: Rams 0, Broncos 16.",                 # the swing quarter
                                  "Lead change: Broncos took the lead between the end of Q3 and end of Q4 scores.",
                                  "Denver Broncos won by 4 points; 56 points were scored in all."]
-    plan = facts.recap_outline(load("final_hou_ind"))
-    assert plan["frame"] == "Colts had more giveaways and still won."
-    assert plan["lines"][0].startswith("Giveaways (turnovers each team committed): Texans 0, Colts 3.")
+    plan = facts.recap_outline(_turnovers(load("final_kc_mia")))
+    assert plan["frame"] == "Chiefs had more giveaways and still won."
+    assert plan["lines"][0].startswith("Giveaways (turnovers each team committed): Chiefs 4, Dolphins 1.")
+    plan = facts.recap_outline(_outgained(load("final_kc_mia")))
+    assert plan["frame"] == "Dolphins gained more total yards and lost."
+    assert plan["lines"][:3] == ["Total yards edge: Dolphins, by 86.", "total yards: Chiefs 334, Dolphins 420.",
+                                 "Kansas City Chiefs won by 14 points; 34 points were scored in all."]
     # A team's top leader: the most touchdowns, then yards (Robinson's 2 TD over Penix's 256 yards and London's 194).
     assert "Falcons Rushing leader (this game): Bijan Robinson, RB: 29 CAR, 194 YDS, 2 TD." in \
         facts.recap_outline(load("final_atl_gb"))["lines"]

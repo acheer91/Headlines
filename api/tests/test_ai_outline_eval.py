@@ -36,7 +36,7 @@ def test_the_labeller_gets_ids_and_meanings_only(tmp_path):
 def test_labels_are_matched_and_counted(tmp_path, capsys):
     labels = {"angles": list(facts.ANGLES)} | {g: facts.recap_outline(f)["angle"]
                                                 for g, f in angle_eval.finals().items()}
-    labels["phi_chi"], labels["final_sea_wsh"] = "turnovers", "outgained_but_lost"   # one miss; the prefix is fine
+    labels["phi_chi"], labels["final_sea_wsh"] = "turnovers", labels.pop("sea_wsh")   # one miss; the prefix is fine
     path = tmp_path / "labels.json"
     path.write_text(json.dumps(labels), encoding="utf-8")
     rows = angle_eval.evaluate(angle_eval.read_labels(path))

@@ -209,9 +209,14 @@ def _edge_lines(game: dict, short: dict) -> list[str]:
 # outline is the angle's id, a frame sentence (team names and FACTS' quarter labels: no score, count or cause) and 4-6
 # lines copied exactly from recap_facts, in the order the recap should take them. Nothing in it is new, so it can't
 # add a wrong fact; the risk is an angle that is true but secondary, which no checker sees (FACT_CHECK lets framing
-# pass). Gated on Z5 (a person picks the lead blind on the 16 fixture finals: python -m app.ai.angle_eval; 11/16 on
-# Oct 2, FAIL) and T3 (python -m app.ai.outline_eval, which refuses to run until Z5 passes). Don't retune the angle
-# rules on those same 16 finals (that fits them in-sample): after any change, Z5 needs a fresh labelled set.
+# pass). Gated on Z5 (a person picks the lead blind: python -m app.ai.angle_eval) and T3 (python -m
+# app.ai.outline_eval, which refuses to run until Z5 passes). The first Z5 run on the 16 week-4 fixture finals
+# matched 11/16 (Oct 2, FAIL): in 4 of the 5 misses the labeller led with the final margin where code led with yards
+# or giveaways, and Adam ruled NE @ JAX "absolutely a blowout" (Oct 2). So the margin is checked first (blowout and
+# close_finish before outgained_but_lost and turnovers) and the "any yardage edge in a loss by BLOWOUT_POINTS" branch
+# is gone. That scores 15/16 on the same labels, which is in-sample and proves nothing: this order is pre-registered
+# for a blind label of week 5's finals (python -m app.ai.angle_fixtures, then angle_eval --fixtures). Don't retune the
+# angle rules on labels already seen (lac_buf's comeback-vs-late_lead_change miss stays): label a fresh set.
 #
 # The angle is the first of these that holds (W the winner, L the loser, a break the end of a quarter; a tie has
 # neither, so only overtime, seesaw or close_finish fits it):
@@ -219,11 +224,10 @@ def _edge_lines(game: dict, short: dict) -> list[str]:
 #   comeback            W trailed by COMEBACK_POINTS or more at a break before the last
 #   late_lead_change    W didn't lead at the break before the last (trailing or tied after Q3)
 #   seesaw              the lead changed hands at 2 or more breaks (lead_changes)
-#   outgained_but_lost  L had OUTGAINED_YARDS more total yards, or any yardage edge in a loss by BLOWOUT_POINTS
-#                       (Adam's NE @ JAX sample leads "New England outgained Jacksonville 317–315 and lost by 29")
 #   blowout             W won by BLOWOUT_POINTS or more
-#   turnovers           one team had TURNOVER_GAP more giveaways than the other ("three giveaways against none")
 #   close_finish        decided by CLOSE_POINTS or less, or a tie
+#   outgained_but_lost  L had OUTGAINED_YARDS more total yards
+#   turnovers           one team had TURNOVER_GAP more giveaways than the other ("three giveaways against none")
 #   front_runner        W led at every break
 #   routine_win         none of the above
 # Not angles: a defensive or special-teams score (the box score has no scoring plays), an upset (the recap's sheet
@@ -240,10 +244,10 @@ ANGLES = {
     "comeback": "The winner came back from a big deficit.",
     "late_lead_change": "The winner was behind or tied going into the fourth quarter.",
     "seesaw": "The lead went back and forth.",
-    "outgained_but_lost": "The losing team gained more yards.",
     "blowout": "A lopsided win.",
-    "turnovers": "The giveaway count is the story.",
     "close_finish": "A close game, decided by a few points.",
+    "outgained_but_lost": "The losing team gained more yards.",
+    "turnovers": "The giveaway count is the story.",
     "front_runner": "The winner led from the first quarter on.",
     "routine_win": "Nothing stands out: a plain result.",
 }
@@ -322,20 +326,19 @@ def recap_outline(game: dict, sheet: dict | None = None) -> dict | None:
         pick = ("seesaw", "The lead changed hands more than once between quarter breaks.",
                 [_first(lines, "Times the lead changed hands")] + [f for f in lines if f.startswith("Lead change: ")]
                 + [won_by])
-    elif w and None not in yards.values() and yards[lo] > yards[w] and (
-            yards[lo] - yards[w] >= OUTGAINED_YARDS or margin >= BLOWOUT_POINTS):
-        pick = ("outgained_but_lost", f"{short[lo]} gained more total yards and lost.",
-                [_first(lines, "Total yards edge:"), _first(lines, "total yards:"), won_by])
     elif w and margin >= BLOWOUT_POINTS:
         pick = ("blowout", f"{short[w]} won by a lopsided margin.",
                 [won_by, _break_line(lines, 1), _points_line(lines, swing(0))])
+    elif margin <= CLOSE_POINTS:
+        pick = ("close_finish", f"{short[w]} won a close game." if w else "The game ended in a tie.",
+                [won_by or _first(lines, "Final score:"), _break_line(lines, last - 1), _points_line(lines, last)])
+    elif w and None not in yards.values() and yards[lo] - yards[w] >= OUTGAINED_YARDS:
+        pick = ("outgained_but_lost", f"{short[lo]} gained more total yards and lost.",
+                [_first(lines, "Total yards edge:"), _first(lines, "total yards:"), won_by])
     elif w and None not in gives.values() and abs(gives["home"] - gives["away"]) >= TURNOVER_GAP:
         t = "home" if gives["home"] > gives["away"] else "away"
         pick = ("turnovers", f"{short[t]} had more giveaways and {'still won' if t == w else 'lost'}.",
                 [_first(lines, "Giveaways "), won_by])
-    elif margin <= CLOSE_POINTS:
-        pick = ("close_finish", f"{short[w]} won a close game." if w else "The game ended in a tie.",
-                [won_by or _first(lines, "Final score:"), _break_line(lines, last - 1), _points_line(lines, last)])
     elif brks and all(lead == w for *_, lead, _ in brks):
         pick = ("front_runner", f"{short[w]} led at every quarter break.",
                 [_break_line(lines, i) for i in range(last)] + [won_by])
