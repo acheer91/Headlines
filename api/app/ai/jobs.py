@@ -33,6 +33,8 @@ from . import client, facts, scope, sources, store, writer
 log = logging.getLogger(__name__)
 PACIFIC = ZoneInfo("America/Los_Angeles")
 STATE_FOR = {"preview": "pre", "recap": "post", "one_liner": "in"}
+HEADLINE_POOL = 150      # stories read from the table for the headlines: every outlet's last two days
+HEADLINE_NEWS = 30       # stories the extract sees (Phase 4: the writer's minute holds ~30 headlines and snippets)
 
 
 def _page(game_id: int, base_url: str) -> dict | None:
@@ -107,7 +109,7 @@ def write_for_game(kind: str, game_id: int, reason: str, base_url: str = espn.BA
     articles, fp = [], None
     if kind == "preview":
         with db.connect() as conn:
-            news = store.news(conn, [page["league"]])
+            news = store.news(conn, [page["league"]], espn_only=True)   # previews: ESPN first, as before
         try:
             articles, _trail = sources.find_articles(page, news)
         except client.AIError as exc:
@@ -161,6 +163,28 @@ def headlines_fingerprint(news: list[dict], lines: list[str]) -> str:
     return hashlib.sha1(json.dumps(data, sort_keys=True).encode()).hexdigest()[:16]
 
 
+def is_video(url: str | None) -> bool:
+    """A video clip page (ESPN's Paul Finebaum Show clips, AP's video pages): no article to read, so never the link
+    under a headline."""
+    return "/video/" in (url or "").lower()
+
+
+def balanced(news: list[dict], n: int) -> list[dict]:
+    """The n stories the headlines are written from: newest first within each (league, outlet), taken in turn across
+    them. A plain newest-first cut would be whichever outlet posts most (Yahoo's feed alone is 50 items a day), and
+    the extract is sized to ~30 stories. Deterministic: the headlines fingerprint reads the result."""
+    groups: dict[tuple, list[dict]] = {}
+    for item in news:                                        # already newest first
+        groups.setdefault((item.get("league"), sources.outlet(item.get("url") or "")), []).append(item)
+    order = sorted(groups, key=lambda k: (groups[k][0]["published_at"], str(k)), reverse=True)
+    out: list[dict] = []
+    for rank in range(max((len(g) for g in groups.values()), default=0)):
+        for key in order:
+            if rank < len(groups[key]) and len(out) < n:
+                out.append(groups[key][rank])
+    return sorted(out, key=lambda i: (i["published_at"], i["url"] or ""), reverse=True)
+
+
 def featured_final(row: dict, favs: dict[str, list[str]]) -> bool:
     """Which finals the headlines may list: NCAAF follows the board filter (a Saturday stores every FBS final,
     ~60 games; the feed should see the board's, favorites included), every other league passes."""
@@ -177,7 +201,8 @@ def write_headlines(leagues: list[str], reason: str, preflight: bool = False) ->
     if not leagues:
         return {"status": "skipped", "id": None}
     with db.connect() as conn:
-        news = store.news(conn, leagues, days=2, limit=30)
+        news = balanced([n for n in store.news(conn, leagues, days=2, limit=HEADLINE_POOL) if not is_video(n["url"])],
+                        HEADLINE_NEWS)
         finals = conn.execute("""
             SELECT g.league, a.name AS away, g.away_score, h.name AS home, g.home_score,
                    g.home_conf, g.away_conf, g.home_rank, g.away_rank,

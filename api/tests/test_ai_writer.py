@@ -738,7 +738,7 @@ def test_only_the_extraction_steps_ask_for_extract_mode(monkeypatch):
     flags = []
     replies = iter([PREVIEW_FACTS, {"preview": WORDS, "edges": {"home": [], "away": []}},
                     {"items": [{"fact": "Bears won 27-7", "news": 1}]},
-                    {"items": [{"text": f"Headline {c}", "news": 1} for c in "ABCDEF"]}])
+                    {"items": [{"text": f"Headline {c}", "news": None} for c in "ABCDEF"]}])
 
     def write(prompt, json_out=False, light=False):
         flags.append(light)
@@ -750,3 +750,83 @@ def test_only_the_extraction_steps_ask_for_extract_mode(monkeypatch):
              "description": "", "url": "https://www.espn.com/nfl/story/_/id/2/y"}]
     assert writer.write_headlines(news, ["NFL: Eagles 7, Bears 27 (final)"])["status"] == "ready"
     assert flags == [True, False, True, False]          # preview: extract, write; headlines: extract, write
+
+
+# ---------- headlines from every outlet, in the golden set's style (Oct 2) ----------
+
+from datetime import datetime, timezone  # noqa: E402
+from app.ai import prompts  # noqa: E402
+
+HL_NEWS = [
+    {"league": "nfl", "published_at": datetime(2026, 10, 2, 22, 30, tzinfo=timezone.utc), "headline": "Patriots make decision on starting right guard vs. Bills",
+     "description": "Ben Brown is slated to fill the vacant spot", "url": "https://sports.yahoo.com/articles/patriots-guard-1.html"},
+    {"league": "nfl", "published_at": datetime(2026, 10, 2, 20, 58, tzinfo=timezone.utc), "headline": "Dasha Smith is leaving NFL",
+     "description": None, "url": "https://www.nytimes.com/athletic/7653792/2026/10/02/dasha-smith-nfl-executive/"},
+    {"league": "ncaaf", "published_at": datetime(2026, 10, 2, 19, 0, tzinfo=timezone.utc), "headline": "Florida put on upset alert before Mizzou",
+     "description": "", "url": "https://www.cbssports.com/college-football/news/florida-mizzou/"},
+]
+HL_FACTS = {"items": [{"fact": "Patriots name a starting right guard against the Bills", "news": 1, "final": False},
+                      {"fact": "Dasha Smith is leaving the NFL", "news": 2, "final": False},
+                      {"fact": "Florida is on upset alert before Missouri", "news": 3, "final": False},
+                      {"fact": "Eagles 7, Bears 27", "news": None, "final": True}]}
+
+
+def hl_items(*texts, ids=(1, 2, 3, None, None, None)):
+    return {"items": [{"text": t, "news": ids[i], "final": ids[i] is None} for i, t in enumerate(texts)]}
+
+
+GOOD = ("Patriots Settle Their Right Guard Question, and Bill Belichick Is Not Even Here", "Dasha Smith Leaves the NFL, and the League Office Shrugs",
+        "Florida Is on Upset Alert, and Gator Fans Are Counting Things", "Bears Beat the Eagles 27-7, and Chicago Is Entitled to a Smirk",
+        "Eagles Get Smoked in Chicago, and the Panic Is Real")
+
+
+def test_headlines_come_back_with_the_story_outlet_league_and_final_flag(model):
+    calls = model([HL_FACTS, hl_items(*GOOD)])
+    res = writer.write_headlines(HL_NEWS, ["NFL: Eagles 7, Bears 27 (final)"])
+    assert res["status"] == "ready", res
+    items = res["body"]["items"]
+    assert items[0] == {"text": GOOD[0], "url": HL_NEWS[0]["url"], "league": "nfl", "outlet": "Yahoo Sports", "final": False}
+    assert (items[1]["outlet"], items[2]["outlet"], items[2]["league"]) == ("The Athletic", "CBS Sports", "ncaaf")
+    assert items[3] == {"text": GOOD[3], "url": None, "league": None, "outlet": None, "final": True}
+    # The extract sees every outlet, tagged, and the PM tiers for the leagues in play; the writer sees the golden style.
+    assert "| Yahoo Sports (tier 3) | Patriots make decision" in calls[0] and "| The Athletic (tier 3) | Dasha Smith" in calls[0]
+    assert (prompts.outlet_tier("The Ringer"), prompts.outlet_tier("ESPN"), prompts.outlet_tier("AP")) == (1, 2, 3)
+    assert "a nudge, not a rule" in calls[0] and "a take is a headline too" in calls[0]
+    assert "a starting quarterback's injury" in calls[0] and "College football. Top" in calls[0] and "NBA. Top" not in calls[0]
+    assert "Title Case" in calls[1] and prompts.HEADLINE_EXAMPLES[0] in calls[1]
+
+
+def test_a_headline_may_not_lift_words_from_a_story_or_an_example(model):
+    reuse_story = ("Patriots Make Decision on Starting Right Guard vs. Bills, and I Need a Moment",) + GOOD[1:]
+    reuse_example = ("The Broncos Stun the Chiefs in Arrowhead, and Everyone Notices",) + GOOD[1:]
+    for bad, why in ((reuse_story, "copied from an article"), (reuse_example, "reused an example")):
+        model([HL_FACTS, hl_items(*bad), hl_items(*bad)])                 # rewritten once, the same again: refused
+        res = writer.write_headlines(HL_NEWS, ["NFL: Eagles 7, Bears 27 (final)"])
+        assert res["status"] == "failed" and why in res["reason"]
+
+
+def test_headline_rules_are_checked_in_code(model):
+    # (text list, expected rejection) — each is rejected on the first draft, fixed on the rewrite.
+    cases = [
+        (GOOD[:4] + ("A " + "very " * 25 + "long headline",), "words"),
+        (("Bills Cover as Favorites, and I Need a Moment",) + GOOD[1:], "bet talk"),
+        (GOOD[:4] + ("Eagles Lose 99-7, and Philadelphia Needs a Moment",), "numbers not in the facts"),
+    ]
+    for texts, why in cases:
+        calls = model([HL_FACTS, hl_items(*texts), hl_items(*GOOD)])
+        res = writer.write_headlines(HL_NEWS, ["NFL: Eagles 7, Bears 27 (final)"])
+        assert res["status"] == "ready"
+        if why:
+            assert why in calls[2] and "rejected" in calls[2]
+
+
+def test_two_lines_for_one_story_are_rejected(model):
+    calls = model([HL_FACTS, hl_items(*GOOD, ids=(1, 1, 3, None, None)), hl_items(*GOOD)])
+    assert writer.write_headlines(HL_NEWS, ["NFL: Eagles 7, Bears 27 (final)"])["status"] == "ready"
+    assert "two lines for one story" in calls[2]
+
+
+def test_an_item_that_names_a_story_is_never_a_final(model):
+    model([HL_FACTS, {"items": [{"text": t, "news": i + 1 if i < 3 else None, "final": True} for i, t in enumerate(GOOD)]}])
+    items = writer.write_headlines(HL_NEWS, ["NFL: Eagles 7, Bears 27 (final)"])["body"]["items"]
+    assert [i["final"] for i in items] == [False, False, False, True, True]

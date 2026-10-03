@@ -836,3 +836,36 @@ def test_hand_to_worker_starts_the_text_workflow_and_survives_temporal_down(monk
     assert main._hand_to_worker("preview", row) is False                   # the page keeps its fallback
     monkeypatch.setattr(main, "TEMPORAL_ADDRESS", None)
     assert main._hand_to_worker("preview", row) is False
+
+
+def test_headlines_read_every_outlets_stored_news_and_the_league_goes_to_the_writer(client, fake, monkeypatch):  # noqa: F811
+    from app.ai import jobs, writer
+    seen = {}
+
+    def write(news, finals):
+        seen["news"] = news
+        return {"status": "ready", "body": {"items": [{"text": "x", "url": news[0]["url"], "league": news[0]["league"],
+                                                        "outlet": "Yahoo Sports", "final": False}]}}
+    monkeypatch.setattr(writer, "write_headlines", write)
+    ins = "INSERT INTO news_items (league, espn_id, headline, url, published_at) VALUES (%s)"
+    for league, key, url, ago in (("nfl", "1", "https://www.espn.com/nfl/story/_/id/1/a", 3),
+                                  ("nfl", "x:aa", "https://sports.yahoo.com/articles/b-1.html", 1),
+                                  ("nfl", "x:bb", "https://www.cbssports.com/nfl/news/c/", 2),
+                                  ("nfl", "x:cc", "https://sports.yahoo.com/articles/old-1.html", 80)):
+        _sql(ins % f"'{league}', '{key}', 'h {key}', '{url}', now() - interval '{ago} hours'")
+    assert jobs.write_headlines(["nfl"], "schedule")["status"] == "ready"
+    assert [n["headline"] for n in seen["news"]] == ["h x:aa", "h x:bb", "h 1"]              # newest first, two days only
+    assert {n["league"] for n in seen["news"]} == {"nfl"}
+    out = client.get("/api/headlines").json()
+    assert out["items"][0]["league"] == "nfl" and out["items"][0]["outlet"] == "Yahoo Sports"
+
+
+def test_previews_still_read_only_espn_news_first(client, fake):  # noqa: F811
+    from app import db
+    from app.ai import store
+    _sql("INSERT INTO news_items (league, espn_id, headline, url, published_at) VALUES "
+         "('nfl', '77', 'h espn', 'https://www.espn.com/nfl/story/_/id/77/a', now()), "
+         "('nfl', 'x:ab', 'h yahoo', 'https://sports.yahoo.com/articles/b-1.html', now())")
+    with db.connect() as conn:
+        assert [r["headline"] for r in store.news(conn, ["nfl"], espn_only=True)] == ["h espn"]
+        assert sorted(r["headline"] for r in store.news(conn, ["nfl"])) == ["h espn", "h yahoo"]

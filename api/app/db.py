@@ -389,6 +389,13 @@ def completed_game_stats(conn: psycopg.Connection, league: str, season: int, sea
 
 # ---------- Phase 3: news ----------
 
+def team_nicknames(conn: psycopg.Connection, league: str) -> list[str]:
+    """Short team names ("Bills", "Ohio State") the headlines' outlet filter reads a story for."""
+    rows = conn.execute("""SELECT DISTINCT short_name FROM teams WHERE league = %s AND length(short_name) >= 4""",
+                        (league,)).fetchall()
+    return sorted(r["short_name"] for r in rows)
+
+
 def insert_news(conn: psycopg.Connection, league: str, items: list[dict]) -> int:
     """Store news items not seen before (dedupe on ESPN's article id). Returns how many were new."""
     added = 0
