@@ -135,6 +135,9 @@ function Detail({ g, ai, aiLoading }: { g: GameDetail; ai: AiText | null; aiLoad
       {g.screen === "C2" && oneLiner && <p className="oneliner">{oneLiner}</p>}
       {g.screen !== "C1" && <Linescore g={g} />}
 
+      {/* Adam, Oct 3: the preview and edges lead the pre-game page, above the line and the stats. */}
+      {g.screen === "C1" && <PreviewSections g={g} ai={ai} loading={aiLoading} />}
+
       {g.screen === "C1" && (
         <Section title="Line">
           {g.line ? <LineRow g={g} /> : <p className="muted empty">No line yet</p>}
@@ -155,7 +158,6 @@ function Detail({ g, ai, aiLoading }: { g: GameDetail; ai: AiText | null; aiLoad
         </Section>
       )}
 
-      {g.screen === "C1" && <PreviewSections g={g} ai={ai} loading={aiLoading} />}
       {g.screen === "D" && g.completed !== false && <RecapSections g={g} ai={ai} loading={aiLoading} />}
     </main>
   );
