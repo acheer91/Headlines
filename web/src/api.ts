@@ -162,5 +162,7 @@ export type AiText = {
 /** The AI text that fits the game now. The server may write it on the spot (up to ~20 s for a preview). */
 export const getAi = (id: number) => get<AiText>(`/api/games/${id}/ai`);
 
-export type Headlines = { items: { text: string; url: string | null }[]; updated_at: string } | null;
+// league / outlet / final come with the story an item was written from (any outlet); sets stored before Oct 2 lack them.
+export type HeadlineItem = { text: string; url: string | null; league?: string | null; outlet?: string | null; final?: boolean };
+export type Headlines = { items: HeadlineItem[]; updated_at: string } | null;
 export const getHeadlines = () => get<Headlines>("/api/headlines");

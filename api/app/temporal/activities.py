@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
-from .. import db, espn, favorites, games, ncaaf, summary
+from .. import db, espn, favorites, games, ncaaf, outlet_news, summary
 from ..ai import jobs as ai_jobs
 from ..ai import scope as ai_scope
 from .models import GameRef, GameState, TextJob
@@ -190,11 +190,24 @@ def grade_game(league: str, espn_id: str) -> list[int]:
 
 @activity.defn
 def fetch_news(league: str) -> int:
-    """Fetch ESPN news and store new items. Returns how many were added."""
+    """Fetch ESPN news and store new items; then the other outlets' (Yahoo, CBS, FOX, The Athletic, AP, SI, The
+    Ringer: app.outlet_news), best effort. ESPN failing raises, as it always did (Temporal retries); the other
+    outlets never do: whatever they added is a bonus. Returns how many items were added in all."""
     items = espn.parse_news(espn.fetch_news(league, base_url=ESPN_BASE))
     with db.connect() as conn:
         added = db.insert_news(conn, league, items)
+        nicknames = db.team_nicknames(conn, league)
     activity.logger.info("%s news: %d fetched, %d new", league, len(items), added)
+    try:
+        others = outlet_news.fetch_league(league, nicknames)
+        with db.connect() as conn:
+            extra = db.insert_news(conn, league, [
+                {"espn_id": o["key"], "headline": o["headline"], "description": o["description"], "url": o["url"],
+                 "published_at": o["published_at"]} for o in others])
+        activity.logger.info("%s outlet news: %d fetched, %d new", league, len(others), extra)
+        added += extra
+    except Exception:  # noqa: BLE001 — the outlets are a bonus; ESPN's news is already stored
+        activity.logger.exception("%s outlet news failed", league)
     return added
 
 

@@ -176,9 +176,12 @@ def latest_headlines(conn) -> dict | None:
                            ORDER BY created_at DESC LIMIT 1""").fetchone()
 
 
-def news(conn, leagues: list[str], days: int = 8, limit: int = 60) -> list[dict]:
-    """Stored ESPN news, newest first (previews: the ESPN-first articles; headlines: the input)."""
+def news(conn, leagues: list[str], days: int = 8, limit: int = 60, espn_only: bool = False) -> list[dict]:
+    """Stored news, newest first: ESPN's and the other outlets' (headlines: the input). `espn_only` is for previews,
+    which still read ESPN first and search only to fill gaps (the other outlets' rows start "x:", app.outlet_news).
+    The URL breaks a tie so the same rows always come back in the same order."""
     return conn.execute("""
-        SELECT headline, description, url, published_at FROM news_items
+        SELECT league, headline, description, url, published_at FROM news_items
         WHERE league = ANY(%s) AND published_at > now() - make_interval(days => %s)
-        ORDER BY published_at DESC LIMIT %s""", (leagues, days, limit)).fetchall()
+          AND (NOT %s OR espn_id NOT LIKE 'x:%%')
+        ORDER BY published_at DESC, url LIMIT %s""", (leagues, days, espn_only, limit)).fetchall()

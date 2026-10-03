@@ -144,6 +144,20 @@ Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `ph
   OpenRouter models as one pool), then per model and day the calls, tokens, peak 60 s and unreported calls; texts by outcome; the rejection rate and top reasons; who wrote and checked.
   `ai_calls` is kept 14 days (`quota.KEEP`; it was 2) so a week of real numbers exists. First-deploy steps and the
   first-week reading guide: `docs/phase4-deploy-checklist.md`.
+- **Headlines from every outlet, in the golden set's style (Adam, 2026-10-02; branch `phase-4-headline-outlets`, not
+  deployed):** `app/outlet_news.py` stores Yahoo, CBS, FOX, The Athletic (their own league RSS) and AP, SI, The Ringer
+  (Bing News RSS limited to the site: they have no feed a script can read) in `news_items` beside ESPN's, inside the
+  `fetch_news` activity (activity-only change, no workflow patch): keyless, no tokens, best effort (ESPN failing still
+  raises; an outlet failing is logged). Dedupe key (`espn_id` column) is `x:` + hash of the canonical URL. Betting
+  promos, off-sport and undated items are dropped; a Bing story must name the league or a team. `jobs.balanced`
+  takes 30 stories in turn across (league, outlet); outlet tiers (Adam: The Ringer, then ESPN, then the rest; `prompts.OUTLET_TIERS`) are a soft nudge to the extract for which story and which link, not a rule, and a column about the week's big story may make the list; previews still read ESPN's rows only (`store.news(espn_only=True)`).
+  The headline prompts now carry the PM's league tiers (`prompts.HEADLINE_TIERS`) and the golden-set style
+  (`HEADLINE_STYLE`, `HEADLINE_EXAMPLES`: Title Case, 8-20 words, a fan's reaction after "and", attitude never a new
+  claim). Code checks added: no 8-word copy from a story, no 6-word copy from an example, one line per story, no bet
+  words, at most 24 words. Items are `{text, url, league, outlet, final}`: the link is the stored URL of the story the
+  line was written from (never the model's), a final has none; Home shows a league chip from `league`, a Final chip
+  from `final`, and the outlet under the line. **Never run against a live model** (laptop keys pulled to Mon): first
+  `SAMPLES_ONLY=headlines python -m app.ai.samples`, read the lines against their links, before any deploy.
 - **Prep layer (2026-10-02, branch `phase-4-prep-layer`; code only, no local model):** M1 logs each call's
   `ai_calls.kind` (`<text>:<step>`, `client.call_kind`), Groq's cached prompt tokens and its per-minute rate-limit
   headers (migration 010, log only: budgets still count every token until T1, the log-only week, passes; the usage

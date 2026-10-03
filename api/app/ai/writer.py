@@ -21,7 +21,7 @@ import re
 import time
 from typing import Callable
 
-from . import client, facts, prompts
+from . import client, facts, prompts, sources
 from .sources import mentions, team_terms
 
 COPY_WORDS = 8
@@ -877,32 +877,64 @@ def write_one_liner(game: dict) -> dict:
 
 # ---------------------------------------------------------------- headlines
 
+HEADLINE_MAX_WORDS = 24        # the prompt asks for 8 to 20; the golden set's longest is 20
+
+
+def _news_outlet(n: dict) -> str:
+    return sources.outlet(n.get("url") or "") or "other"
+
+
 def write_headlines(news: list[dict], finals: list[str]) -> dict:
+    """news: stored news_items rows (any outlet: headline, description, url, published_at, league); finals: score
+    lines. Each item comes back as {text, url, league, outlet, final}: the story it was written from, if any."""
     def go(stats):
         ids = {i + 1: n for i, n in enumerate(news)}
-        nj = "\n".join(f"[{i}] {n['published_at']:%Y-%m-%d} | {n['headline']} | {n.get('description') or ''}"
-                       for i, n in ids.items())
+        nj = "\n".join(f"[{i}] {n.get('league') or ''} | {n['published_at']:%Y-%m-%d} | {_news_outlet(n)} (tier {prompts.outlet_tier(_news_outlet(n))}) | "
+                       f"{n['headline']} | {n.get('description') or ''}" for i, n in ids.items())
         fin = "\n".join(finals)
         inputs = nj + "\n" + fin
+        leagues = {n.get("league") for n in news} | {f.split(":")[0].lower() for f in finals}
+        # What the stories say, for the copy check: a headline must not lift a run of words from one.
+        source_text = [{"text": f"{n['headline']} {n.get('description') or ''}"} for n in news]
 
         def check_extract(x):
             if not numbers_ok(json.dumps(x, ensure_ascii=False), inputs):
                 raise CheckFailed("extract has numbers not in the inputs")
 
-        facts = _step(prompts.EXTRACT_HEADLINES.format(news=nj, finals=fin), check_extract, stats, light=True)
+        facts = _step(prompts.EXTRACT_HEADLINES.format(news=nj, finals=fin, tiers=prompts.headline_tiers(leagues)),
+                      check_extract, stats, light=True)
         fj = json.dumps(facts, ensure_ascii=False)
 
         def check_write(x):
             items = x.get("items") or []
             if not 5 <= len(items) <= 8:
                 raise CheckFailed(f"{len(items)} headlines")
-            _texts_ok([i.get("text") for i in items], fj)
-            _fact_check([i.get("text") for i in items], fj, stats)
+            texts = [i.get("text") for i in items]
+            _texts_ok(texts, fj, source_text)
+            used = [i.get("news") for i in items if i.get("news") in ids]
+            if len(used) != len(set(used)):
+                raise CheckFailed("two lines for one story: one line per story")
+            for t in texts:
+                if len(t.split()) > HEADLINE_MAX_WORDS:
+                    raise CheckFailed(f"a headline of {len(t.split())} words: keep each under 20")
+                copy = copied(t, [{"text": ex} for ex in prompts.HEADLINE_EXAMPLES], EXAMPLE_COPY_WORDS)
+                if copy:
+                    raise CheckFailed(f"reused an example: {copy!r}; write your own words")
+            bet = bet_talk(texts)
+            if bet:
+                raise CheckFailed(f"bet talk in a headline: {bet!r}")
+            _fact_check(texts, fj, stats)
 
-        out = _step(prompts.WRITE_HEADLINES.format(facts=fj, voice=prompts.VOICE, guardrails=prompts.GUARDRAILS),
+        style = prompts.HEADLINE_STYLE.format(examples="\n".join(f"- {ex}" for ex in prompts.HEADLINE_EXAMPLES))
+        out = _step(prompts.WRITE_HEADLINES.format(facts=fj, style=style, guardrails=prompts.GUARDRAILS),
                     check_write, stats)
-        items = [{"text": i["text"], "url": ids[i["news"]]["url"] if i.get("news") in ids else None}
-                 for i in out["items"]]
+        items = []
+        for i in out["items"]:
+            src = ids.get(i.get("news"))
+            items.append({"text": i["text"], "url": src["url"] if src else None,
+                          "league": src.get("league") if src else None,
+                          "outlet": _news_outlet(src) if src and src.get("url") else None,
+                          "final": src is None and i.get("final") is True})
         return {"status": "ready", "body": {"items": items}}
 
     return _run("headlines", go)
