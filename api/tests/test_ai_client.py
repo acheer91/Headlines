@@ -738,3 +738,13 @@ def test_the_rate_limit_headers_are_logged_with_the_call(fresh, monkeypatch):
         client.write("x")
     day = [e[4:] for e in client.quota._day["big"]]
     assert day == [[4608, 1542, 48.6], [4608, None, None], [4608, None, None]]      # cached, remaining, reset
+
+
+def test_beta_game_gets_ai_text_in_a_league_without_it(monkeypatch):
+    monkeypatch.setattr(scope, "AI_LEAGUES", {"nfl"})
+    monkeypatch.setattr(scope, "AI_GAMES", {"ncaaf:401856708"})
+    game = {"league": "ncaaf", "espn_id": "401856708", "home_abbr": "MIZ", "away_abbr": "FLA",
+            "home_rank": None, "away_rank": None}
+    assert scope.ai_game(game) and scope.is_prewritten(game, {})
+    other = game | {"espn_id": "1"}
+    assert not scope.ai_game(other) and not scope.is_prewritten(other, {})

@@ -274,7 +274,7 @@ def game_ai(game_id: int):
         if not game_row:
             raise HTTPException(404, "game not found")
         kind = ai_jobs.kind_for(game_row)
-        if kind is None or not ai_scope.ai_league(game_row["league"]):
+        if kind is None or not ai_scope.ai_game(game_row):
             return _ai_out(None, None) | {"status": "none"}
         stored = ai_store.get(conn, game_id, kind)
     basis = ai_jobs.row_basis(kind, game_row)

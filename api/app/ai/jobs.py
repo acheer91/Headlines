@@ -100,8 +100,10 @@ def write_for_game(kind: str, game_id: int, reason: str, base_url: str = espn.BA
     page = _page(game_id, base_url)
     if page is None:
         return {"status": "missing", "id": None}
+    with db.connect() as conn:
+        game_row = db.game_by_id(conn, game_id)
     if (page["state"] != STATE_FOR[kind] or (kind == "recap" and not page.get("completed"))
-            or not scope.ai_league(page["league"])):
+            or not scope.ai_game(game_row)):
         return {"status": "skipped", "id": None}
     b = basis(kind, page)
     articles, fp = [], None

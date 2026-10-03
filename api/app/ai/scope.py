@@ -22,8 +22,22 @@ HEADLINE_LEAGUES = ({x.strip() for x in os.environ.get("HEADLINE_LEAGUES", "").s
                     or AI_LEAGUES)
 
 
+# Single games that get every text (preview, one-liner, recap) although their league is not in AI_LEAGUES, written
+# ahead like a favorite's (Adam, 2026-10-03: a college beta). "league:espn_id", comma separated.
+AI_GAMES = {x.strip().lower() for x in os.environ.get("AI_GAMES", "").split(",") if x.strip()}
+
+
 def ai_league(league: str) -> bool:
     return league in AI_LEAGUES
+
+
+def beta_game(league: str, espn_id) -> bool:
+    return f"{league}:{espn_id}".lower() in AI_GAMES
+
+
+def ai_game(row: dict) -> bool:
+    """row: a games row. Does this game get AI text: its league is an AI league, or it is a beta game."""
+    return ai_league(row["league"]) or beta_game(row["league"], row.get("espn_id"))
 
 
 def headline_league(league: str) -> bool:
@@ -32,6 +46,8 @@ def headline_league(league: str) -> bool:
 
 def is_prewritten(row: dict, favs: dict[str, list[str]] | None = None) -> bool:
     """row: a games row (db._GAMES_SQL: league, home_abbr, away_abbr, home_rank, away_rank)."""
+    if beta_game(row["league"], row.get("espn_id")):
+        return True
     if not ai_league(row["league"]):
         return False
     favs = favorites.load() if favs is None else favs
