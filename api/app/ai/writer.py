@@ -92,7 +92,10 @@ UNSUPPORTED = re.compile(
 LIVE_UNSUPPORTED = re.compile(
     r"\b(winless|unbeaten|undefeated|(?:scored|struck) first|(?:winning|losing|win|loss)[\s\-‐-—]streak|franchise|all[\s\-‐-—]time|"
     r"in (?:team|franchise|league|nfl|college football|school) history|since (?:19|20)\d\d|worst (?:loss|start)|"
-    r"best (?:win|start))\b", re.I)
+    r"best (?:win|start)|"
+    # A player's experience or pedigree is not in FACTS (CAR-DET, Oct 4: "a rookie miscue" about a kicker, rejected twice).
+    r"rookies?|veterans?|sophomore|(?:first|second|third)[\s\-‐-—]year|undrafted|journeyman|draft(?:ed)? (?:pick|class)|"
+    r"first[\s\-‐-—]round(?:er)?)\b", re.I)
 HYPHEN = "[\\s\\-‐-—]"      # the model writes U+2011 non-breaking hyphens
 TEAM_WORDS = r"[A-Z][\w.'’]*(?:\s[A-Z0-9][\w.'’]*)*"
 CLAUSE = re.compile(r"[,;–—]|:(?!\d)|\b(?:and|while|as|but|with|whereas|despite|after|before)\b")

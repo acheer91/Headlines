@@ -518,3 +518,12 @@ def test_a_failure_keeps_the_page_quiet_only_for_the_same_inputs():
     assert not store.failed_recently(live, "7-3")                        # a live game moves on: 2 minutes, not 30
     assert store.failed_recently(dict(live, updated_at=datetime.now(timezone.utc) - timedelta(minutes=1)), "7-3")
     assert store.failed_recently(dict(failed, updated_at=datetime.now(timezone.utc) - timedelta(minutes=3)), "7-3")
+
+
+def test_a_players_experience_is_refused_before_the_model_check_spends_tokens():
+    for line in ("That is a rookie miscue.", "A veteran move by the backup.", "The second-year QB looks lost.",
+                 "An undrafted kicker just shanked it.", "Their first‑round pick is getting cooked."):
+        assert writer.LIVE_UNSUPPORTED.search(line), line
+    for line in ("Carolina keeps handing Detroit the ball.", "The kicker has had a rough night.",
+                 "Nothing about this offense feels settled."):
+        assert not writer.LIVE_UNSUPPORTED.search(line), line
