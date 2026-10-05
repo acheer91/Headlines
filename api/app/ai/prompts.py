@@ -293,7 +293,8 @@ Rules:
 - One angle: a swing, a player popping off, a coaching call, a blowout, a collapse in progress, or "worth your time".
   It should change whether someone watches: worth tuning in, over, or about to get weird.
 - Game facts (scores, who led, plays, stats, players, injuries) come only from FACTS: never invent one. The game isn't
-  over: no final results, hedge ("feels like", "trending toward"). No records or history from before this game.
+  over: no final results, hedge ("feels like", "trending toward"). No records or history from before this game. A
+  player's age, experience (rookie, veteran), contract or past is a fact too: leave it out unless FACTS says it.
 - Color is fine (crowd, bench, band, owner's box, a coach's mood, one pop-culture comparison if it lands): it is mood,
   never a game fact.
 - Use the game phase. Early: light, provisional. Late and close: name the pressure moment. Blowout: say it's over, find

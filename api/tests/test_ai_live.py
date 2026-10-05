@@ -505,12 +505,16 @@ def test_the_fingerprint_changes_for_a_turnover_or_a_swing_of_ten_not_a_drift():
 
 
 def test_a_failure_keeps_the_page_quiet_only_for_the_same_inputs():
-    from datetime import datetime, timezone
+    from datetime import datetime, timedelta, timezone
     from app.ai import store
-    failed = {"status": "failed", "claim_basis": "7-3", "claim_fingerprint": "t1|w60",
+    failed = {"kind": "recap", "status": "failed", "claim_basis": "7-3", "claim_fingerprint": "t1|w60",
               "updated_at": datetime.now(timezone.utc)}
     assert store.failed_recently(failed, "7-3")                          # as before: no fingerprint asked
     assert store.failed_recently(failed, "7-3", "t1|w60")
     assert not store.failed_recently(failed, "7-3", "t2|w60")            # a turnover since: try again
     assert not store.failed_recently(failed, "7-3", None)
     assert not store.failed_recently(failed, "10-3", "t1|w60")
+    live = dict(failed, kind="one_liner", updated_at=datetime.now(timezone.utc) - timedelta(minutes=3))
+    assert not store.failed_recently(live, "7-3")                        # a live game moves on: 2 minutes, not 30
+    assert store.failed_recently(dict(live, updated_at=datetime.now(timezone.utc) - timedelta(minutes=1)), "7-3")
+    assert store.failed_recently(dict(failed, updated_at=datetime.now(timezone.utc) - timedelta(minutes=3)), "7-3")

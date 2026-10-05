@@ -210,14 +210,18 @@ TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS")     # unset: no hand-off (
 TEMPORAL_NAMESPACE = os.environ.get("TEMPORAL_NAMESPACE", "default")
 
 
-def _ai_out(kind: str | None, row: dict | None) -> dict:
+def _ai_out(kind: str | None, row: dict | None, game_row: dict | None = None) -> dict:
     """The response for a stored row. While a preview is being refreshed its last good text is served as ready
-    (the 8 AM refresh must not blank a good midweek preview; audit, 2026-09-29)."""
+    (the 8 AM refresh must not blank a good midweek preview; audit, 2026-09-29). A live one-liner whose rewrite
+    failed or is under way keeps its last good line while it is honest (store.kept_line, needs the game's score)."""
     if not row:
         return {"kind": kind, "status": "missing", "body": None, "sources": None, "updated_at": None,
                 "written_at": None}
     shown = ai_store.showable(row)
     status = row["status"] if shown is None or row["status"] != "writing" else "ready"
+    if (shown is None and game_row
+            and ai_store.kept_line(row, game_row["away_score"], game_row["home_score"])):
+        shown, status = row, "ready"
     if status == "failed" and row["reason"] == ai_store.QUEUED:
         status = "queued"                       # handed to the worker after a page open ran out of quota
     return {"kind": kind, "status": status, "body": row["body"] if shown else None,
@@ -287,11 +291,11 @@ def game_ai(game_id: int):
     known = fp if fp is not None else ai_store.UNKNOWN
     if (ai_store.current(stored, basis, fp) or ai_store.failed_recently(stored, basis, known)
             or ai_store.rejected_out(stored, basis, known)):    # rejected REJECTION_CAP times for these inputs
-        return _ai_out(kind, stored)
+        return _ai_out(kind, stored, game_row)
     if ai_store.being_written(stored) and (ai_store.showable(stored) or kind == "one_liner"):
         # A preview mid-refresh: its last good text, at once. A one-liner the worker is writing (it may wait a minute
         # for quota): "writing" at once, not ten seconds of polling a claim that isn't ours.
-        return _ai_out(kind, stored)
+        return _ai_out(kind, stored, game_row)
     job = _ai_pool.submit(_write_on_open, kind, game_row)
     deadline = time.monotonic() + AI_WAIT[kind]
     try:
@@ -307,7 +311,7 @@ def game_ai(game_id: int):
             row = ai_store.get(conn, game_id, kind)
         settled = row is not None and (row["status"] != "writing" or ai_store.showable(row) is not None)
         if settled or (job.done() and row is None) or time.monotonic() >= deadline:
-            out = _ai_out(kind, row)
+            out = _ai_out(kind, row, game_row)
             if row is None and job.done() and not job.exception() and job.result().get("queued"):
                 out["status"] = "queued"        # handed off before a row existed (a preview's article search)
             return out

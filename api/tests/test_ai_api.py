@@ -960,5 +960,75 @@ def test_a_one_liner_the_worker_is_writing_is_answered_at_once(client, fake):  #
     _sql("UPDATE ai_texts SET status = 'writing', updated_at = now() WHERE game_id = %s", gid)
     t = time.monotonic()
     out = client.get(f"/api/games/{gid}/ai").json()
-    assert out["status"] == "writing" and out["body"] is None
+    assert out["status"] == "ready" and out["body"] == {"line": "l"}       # the last good line, while the worker writes
     assert time.monotonic() - t < 3 and fake["calls"]["one_liner"] == 1   # not ten seconds of polling the worker's claim
+    _sql("UPDATE ai_texts SET body = NULL WHERE game_id = %s", gid)
+    out = client.get(f"/api/games/{gid}/ai").json()                       # no line to keep: it is being written
+    assert out["status"] == "writing" and out["body"] is None
+
+
+# ---------- Oct 4, CAR-DET: a failed rewrite blanked a line, and the failure held the page quiet for 30 minutes ----------
+
+def _fail_the_rewrite(gid, minutes_ago=0):
+    _sql("UPDATE ai_texts SET status = 'failed', last_error = 'check failed twice: x', rejections = 1, "
+         "updated_at = now() - make_interval(mins => %s) WHERE game_id = %s", minutes_ago, gid)
+
+
+def test_a_failed_rewrite_keeps_the_last_good_line_while_the_same_side_leads(client, fake):  # noqa: F811
+    gid = fake["ids"]["KC"]
+    first = client.get(f"/api/games/{gid}/ai").json()
+    assert first["status"] == "ready"
+    basis = _sql("SELECT basis FROM ai_texts WHERE game_id = %s", gid)[0][0]
+    a, h = (int(x) for x in basis.split("-"))
+    _fail_the_rewrite(gid)
+    out = client.get(f"/api/games/{gid}/ai").json()                      # quiet window: no new write, row stays failed
+    assert _sql("SELECT status FROM ai_texts WHERE game_id = %s", gid) == [("failed",)]
+    assert out["status"] == "ready" and out["body"] == {"line": "l"}
+    # the lead flips: the old take would now be wrong, so nothing is shown
+    _sql("UPDATE games SET away_score = %s, home_score = %s WHERE id = %s", h + a + 7, 0, gid)
+    _sql("UPDATE ai_texts SET claim_basis = %s WHERE game_id = %s", f"{h + a + 7}-0", gid)
+    flipped = client.get(f"/api/games/{gid}/ai").json()
+    if a < h:       # the fixture's leader differs; either way the line shown must be the same-side rule's answer
+        assert flipped["body"] is None
+    assert fake["calls"]["one_liner"] == 1
+
+
+def test_a_kept_line_expires_after_45_minutes(client, fake):  # noqa: F811
+    from app.ai import store
+    gid = fake["ids"]["KC"]
+    client.get(f"/api/games/{gid}/ai")
+    _fail_the_rewrite(gid)
+    row = _sql("SELECT kind, status, body, basis, written_at FROM ai_texts WHERE game_id = %s", gid)[0]
+    r = dict(zip(("kind", "status", "body", "basis", "written_at"), row))
+    a, h = (int(x) for x in r["basis"].split("-"))
+    assert store.kept_line(r, a, h)
+    from datetime import datetime, timedelta, timezone
+    r["written_at"] = datetime.now(timezone.utc) - timedelta(minutes=46)
+    assert not store.kept_line(r, a, h)
+    r["written_at"] = datetime.now(timezone.utc)
+    assert not store.kept_line(r, h + a + 1, 0) or (a > h)             # flipped lead: dropped (unless it never flipped)
+    assert not store.kept_line(dict(r, body={"line": None}), a, h)
+    assert not store.kept_line(dict(r, status="ready"), a, h)           # a ready row is shown by showable, not this
+    assert not store.kept_line(dict(r, kind="recap"), a, h)
+    assert not store.kept_line(dict(r, basis="garbage"), a, h)
+
+
+def test_a_failed_one_liner_is_tried_again_after_two_minutes_not_thirty(client, fake):  # noqa: F811
+    gid = fake["ids"]["KC"]
+    client.get(f"/api/games/{gid}/ai")
+    assert fake["calls"]["one_liner"] == 1
+    _sql("UPDATE ai_texts SET status = 'failed', rejections = 1 WHERE game_id = %s", gid)
+    client.get(f"/api/games/{gid}/ai")
+    assert fake["calls"]["one_liner"] == 1                               # inside 2 minutes: quiet
+    _fail_the_rewrite(gid, minutes_ago=3)
+    assert client.get(f"/api/games/{gid}/ai").json()["status"] == "ready"
+    assert fake["calls"]["one_liner"] == 2
+
+
+def test_the_rejection_cap_still_stops_a_one_liner_after_three_failed_writes(client, fake):  # noqa: F811
+    gid = fake["ids"]["KC"]
+    fake["result"] = {"status": "failed", "reason": "check failed twice: x", "model": "fake"}
+    for _ in range(5):
+        client.get(f"/api/games/{gid}/ai")
+        _sql("UPDATE ai_texts SET updated_at = now() - interval '3 minutes' WHERE game_id = %s", gid)
+    assert fake["calls"]["one_liner"] == 3                               # the cap, spaced by the 2-minute quiet window
