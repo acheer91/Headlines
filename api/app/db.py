@@ -272,6 +272,30 @@ def get_summary_view(conn: psycopg.Connection, game_id: int) -> dict | None:
     ).fetchone()
 
 
+def get_summary_live(conn: psycopg.Connection, game_id: int) -> dict | None:
+    """The play-by-play the live one-liner reads and the game screens don't (summary.live_context): every drive,
+    the scoring plays and the win probability. Only the AI writer's page build reads it (games.page live=True), so
+    a pull of the game screen never pays for it."""
+    return conn.execute(
+        """SELECT jsonb_build_object('drives', payload->'drives', 'scoringPlays', payload->'scoringPlays',
+                                     'winprobability', payload->'winprobability') AS payload
+           FROM game_summaries WHERE game_id = %s""", (game_id,)
+    ).fetchone()
+
+
+def get_summary_mark(conn: psycopg.Connection, game_id: int) -> dict | None:
+    """Just what summary.live_mark reads: the box score's teams and the win probability's last point (a live
+    payload is hundreds of KB, mostly plays; the api checks this on every one-liner open)."""
+    return conn.execute(
+        """SELECT game_state,
+                  jsonb_build_object(
+                      'boxscore', jsonb_build_object('teams', payload->'boxscore'->'teams'),
+                      'winprobability', jsonb_build_array(payload->'winprobability'->-1)
+                  ) AS payload
+           FROM game_summaries WHERE game_id = %s""", (game_id,)
+    ).fetchone()
+
+
 def get_summary_lines(conn: psycopg.Connection, game_id: int) -> dict | None:
     """Just the summary blocks grading reads (header, pickcenter). A final's payload is ~600 KB,
     and every scoreboard refresh re-checks each final's grade, so don't pull the whole thing."""

@@ -16,6 +16,7 @@ page quiet for 30 minutes.
 
 The rejection cap counts a failure for one set of inputs: the game day or score and, for the worker, the fingerprint
 of the fact sheet and the kept articles. Another article set (a search that returned different links) is new inputs.
+A live one-liner's fingerprint is its turnovers and win probability (one_liner_fingerprint), for the api too.
 
 No database connection is held while a model writes (seconds, sometimes a minute of waiting for quota).
 """
@@ -24,10 +25,11 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from datetime import datetime, timedelta
+import re
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from .. import db, espn, favorites, games, ncaaf
+from .. import db, espn, favorites, games, ncaaf, summary
 from . import client, facts, scope, sources, store, writer
 
 log = logging.getLogger(__name__)
@@ -35,9 +37,9 @@ PACIFIC = ZoneInfo("America/Los_Angeles")
 STATE_FOR = {"preview": "pre", "recap": "post", "one_liner": "in"}
 
 
-def _page(game_id: int, base_url: str) -> dict | None:
+def _page(game_id: int, base_url: str, live: bool = False) -> dict | None:
     with db.connect() as conn:
-        return games.page(conn, game_id, base_url=base_url, favorites=favorites.load())
+        return games.page(conn, game_id, base_url=base_url, favorites=favorites.load(), live=live)
 
 
 def basis(kind: str, page: dict) -> str:
@@ -73,6 +75,45 @@ def fingerprint(page: dict, articles: list[dict]) -> str:
     return hashlib.sha1(json.dumps(data, sort_keys=True, default=str).encode()).hexdigest()[:16]
 
 
+LIVE_WIN_SWING = 10          # points of the home side's win probability that make a new line worth writing (Adam, Oct 4)
+LIVE_SWING_MIN_AGE = timedelta(minutes=4)    # ... but not within this long of the last claim (review, Oct 4)
+_MARK = re.compile(r"t(-|\d+)\|w(-|\d+)")
+
+
+def one_liner_fingerprint(before: dict | None, mark: dict | None) -> str | None:
+    """What a live one-liner is written under besides the score: "t<turnovers in all>|w<home win %>" from the
+    stored summary (summary.live_mark). The stored line is reused while nothing material happened (store.current,
+    the 30-minute TTL): a new turnover, or the win probability 10 points from where the last attempt left it, makes
+    this a different fingerprint, so a rewrite. While quiet it IS the last claim's, so a drifting percentage is not
+    new inputs (the rejection cap and the failed-quiet window key on it). None: ESPN sent neither."""
+    if not mark:
+        return None
+    now = f"t{'-' if mark['turnovers'] is None else mark['turnovers']}|w{'-' if mark['win'] is None else mark['win']}"
+    last = (before or {}).get("claim_fingerprint") or ""
+    then = _MARK.fullmatch(last)
+    if not then:
+        return now
+    old_t, old_w = (None if g == "-" else int(g) for g in then.groups())
+    # A number ESPN had not sent before counts as new, so the baseline gets set.
+    if mark["turnovers"] is not None and mark["turnovers"] != old_t:
+        return now
+    # A swing counts only once the last claim is a few minutes old: a late game's win probability can swing 10 points
+    # back and forth every play, and each swing would be a rewrite (a turnover is rare enough to go straight through).
+    updated = (before or {}).get("updated_at")
+    settled = updated is None or datetime.now(timezone.utc) - updated >= LIVE_SWING_MIN_AGE
+    if mark["win"] is not None and (old_w is None or (settled and abs(mark["win"] - old_w) >= LIVE_WIN_SWING)):
+        return now
+    return last
+
+
+def live_fingerprint(game_id: int, before: dict | None) -> str | None:
+    """one_liner_fingerprint from the stored summary (a page pull refreshed it just before). None when there is
+    none to read: the basis and the TTL decide, as before."""
+    with db.connect() as conn:
+        stored = db.get_summary_mark(conn, game_id)
+    return one_liner_fingerprint(before, summary.live_mark(stored["payload"])) if stored else None
+
+
 def _unavailable(what: str, wait: float) -> dict:
     log.info("ai %s: models limited for another %.0fs, nothing built", what, wait)
     return {"status": "failed", "id": None, "retry_after": wait}
@@ -97,7 +138,7 @@ def write_for_game(kind: str, game_id: int, reason: str, base_url: str = espn.BA
     if store.being_written(held):
         # Someone holds a live claim: don't rebuild the page or fetch articles only to find that out.
         return {"status": "busy", "id": held["id"]}
-    page = _page(game_id, base_url)
+    page = _page(game_id, base_url, live=kind == "one_liner")     # the one-liner reads the play-by-play too
     if page is None:
         return {"status": "missing", "id": None}
     with db.connect() as conn:
@@ -120,6 +161,8 @@ def write_for_game(kind: str, game_id: int, reason: str, base_url: str = espn.BA
         fp = fingerprint(page, articles)
     with db.connect() as conn:
         before = store.get(conn, game_id, kind)
+    if kind == "one_liner":
+        fp = live_fingerprint(game_id, before)
     if store.current(before, b, fp):
         return {"status": "current", "id": before["id"]}
     if reason != "manual" and store.rejected_out(before, b, fp):
@@ -143,7 +186,9 @@ def write_for_game(kind: str, game_id: int, reason: str, base_url: str = espn.BA
         elif kind == "recap":
             result = writer.write_recap(page)
         else:
-            result = writer.write_one_liner(page)
+            body = (before or {}).get("body")
+            result = writer.write_one_liner(page, body.get("line") if isinstance(body, dict) else None,
+                                            (before or {}).get("basis"))
     except Exception as exc:  # noqa: BLE001 — a bug must not leave the row stuck at 'writing'
         log.exception("ai %s game %s crashed", kind, game_id)
         result = {"status": "failed", "reason": f"crashed: {type(exc).__name__}"}

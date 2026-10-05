@@ -214,40 +214,106 @@ TEXT:
 {text}
 """
 
+# The live one-liner is a take, so its fact-check judges game facts only, not opinion or mood (Adam, Oct 4).
+LIVE_FACT_CHECK = """You are a strict fact-checker for the one line under a live score. Compare TEXT with FACTS.
+Return JSON only:
+{{"problems": [{{"quote": "the exact words from TEXT", "verdict": "wrong" or "unsupported",
+               "why": "under 25 words: the FACTS line it contradicts, or that FACTS doesn't say it"}}]}}
+
+Decide each claim before you write anything. List only claims that are wrong or unsupported; never list a claim
+and then explain that it is fine. No reasoning in the reply.
+
+A problem is a claim about the GAME that FACTS does not support:
+- a wrong or unsupported number, team, player, quarter, down, play, or who led / who scored / when;
+- a stat, injury, quote, record, streak or history FACTS never gives, or a mix-up of sides (home vs away, who has
+  the ball, who committed or forced a turnover);
+- a result stated as done ("won", "lost", "that's the game", "final") while the game is still being played.
+Not a problem, so never list them: opinion, mood, jokes, exaggeration and comparisons; pop-culture references;
+color about the crowd, the band, the bench, owners, boosters or a coach's feelings; a hedged read ("feels like",
+"trending toward", "this is over" as an opinion about a blowout); rhetorical questions.
+Return {{"problems": []}} when every game claim is supported.
+
+FACTS:
+{facts}
+
+TEXT:
+{text}
+"""
+
 # ---------------------------------------------------------------- live one-liner (C2)
 
-# Adam's examples (Oct 1), the ones our live box score can back up. Others he gave need drive or play-by-play data
-# we don't have ("three straight punts", "abandoning the run", "backup quarterback", "two explosive plays").
-# facts.live_facts keeps only the lines these examples and ONE_LINER's "Look first for" list use (M4, 2026-10-02):
-# a new hook here needs its stat added to facts.LIVE_STATS or LIVE_LEADERS.
+# Adam's golden set and style list (Oct 4; tests/fixtures/ai/one_liner_golden.json, one_liner_styles.txt): the NFL and
+# college lines, with [phase] tags. Left out: any that use betting words, the other leagues' (no AI text for them), and
+# the two that state the score ("0-0 in the first quarter", "down 3-0"): the prompt says never to, and code refuses it.
+# Voice anchors, not templates: a line that copies 6 words from one is refused (writer.EXAMPLE_COPY_WORDS).
 ONE_LINER_EXAMPLES = [
-    "One-score game. Somehow, only one team feels like it's in trouble.",
-    "Close on the scoreboard. Not particularly close at the line of scrimmage.",
-    "Two picks already. We're approaching 'just don't lose us the game' territory.",
-    "The favorite is still trailing. This has graduated from cute to concerning.",
-    "Ranked team, road game, down at halftime. Upset-watch conditions are excellent.",
+    "[early] Two offenses trying to outpunt each other is the NFL's version of a staring contest.",
+    "[early] The first quarter of this game is a crime scene with a marching band.",
+    "[early] The band warming up on the sideline is outplaying the offense, and we're only in the first quarter.",
+    "[middle] The Cowboys are winning, but they're winning like a guy parallel parking an SUV.",
+    "[middle] Both teams have punted four straight times, and the punter is the only one having fun.",
+    "[middle] Twenty-one unanswered points and the losing coach is still calling the same screen pass. Never change, never learn.",
+    "[middle] The backup is 8-for-9 and now every fan is quietly planning a quarterback controversy.",
+    "[middle] It's a defensive struggle, which is NFL for \"nobody in this building can throw.\"",
+    "[middle] The underdog is playing with the confidence of a team that has nothing to lose and a booster who just promised a car.",
+    "[middle] The play-calling has gone from aggressive to the coach running his own SAT prep.",
+    "[middle] Four turnovers in one quarter. Somewhere a defensive coordinator is eating a sandwich in peace.",
+    "[late] This is the exact moment every lead in the NFL stops being a lead and becomes an anxiety disorder.",
+    "[late] Chiefs up one with the ball and four minutes left, and you already know how this goes. You're just waiting for them to find a way.",
+    "[late] This is a decision your coach will be remembered for in either direction, forever, on podcasts.",
+    "[late] Garbage time is when I learn the names of seven guys I'll forget by Tuesday.",
+    "[late] Down 24 at half was a lot, but this crowd is making it sound like a revival.",
+    "[late] A ranked team is trailing a 3-win team at home in the fourth quarter and nobody on that sideline looks surprised, which is the scariest part.",
 ]
 
-ONE_LINER = """Write the line that sits under a live score in a scores app: two short sentences, under 20 words in
-all, that tell a fan at a glance what is happening and what it feels like. Return JSON only: {{"line": "..."}}
+ONE_LINER_MAX_CHARS = 225
 
-The score and the margin are shown right above your line: never restate them, and don't copy a FACTS line.
-First sentence: the one fact that tells this game's story right now, in a few words. Look first for: the team
-favored before kickoff now trailing; a big gap in total, passing or rushing yards; turnovers; third downs; one
-team's points in a quarter; a road team ahead. Every number must appear in FACTS exactly as written; words for
-small counts are fine ("two picks", "one turnover").
-Second sentence: a dry, knowing read of that same fact. Wry, never mean, never hype. It adds no new fact: no
-number, name, play, streak or cause that FACTS doesn't give, nothing about the crowd or anyone's feelings, and no
-prediction of how the game ends. No betting words (spread, cover, over/under, bet).
+EXAMPLES_SHOWN = 6          # the prompt carries six, not all of them: the examples are most of its fixed length
+EXAMPLES_SAME_PHASE = 4
 
-FACTS knows the score only at quarter breaks: say nothing about who scored first, last or when inside a quarter.
-The quarter marked "(in progress)" isn't over.
 
-The voice, from other games (their facts are not yours; write your own words):
+def one_liner_examples(phase: str | None) -> list[str]:
+    """The examples for a game in this phase: up to four tagged for it, then the others in list order. The same six
+    every time for a phase, so the prompt's front stays identical from game to game (Groq caches a repeated prefix)."""
+    tag = "late" if phase == "overtime" else phase or "middle"
+    same = [e for e in ONE_LINER_EXAMPLES if e.startswith(f"[{tag}]")][:EXAMPLES_SAME_PHASE]
+    return same + [e for e in ONE_LINER_EXAMPLES if e not in same][:EXAMPLES_SHOWN - len(same)]
+
+
+# Everything that never changes comes first and FACTS last, so Groq's prefix cache can hit; the last line for the
+# game, which differs per call, goes after FACTS.
+ONE_LINER = """You write the line under a live score: a take, one or two sentences, on how this game is going right now,
+in the voice of a Ringer-style podcast host: conversational, opinionated, self-aware, a fan first. Never write as a
+real person or quote anyone. Reply with JSON only: {{"line": "..."}}, or {{"line": null}} when there is nothing new
+worth saying.
+
+Rules:
+- At most {max_chars} characters. No hashtags, emojis, bullets or preamble.
+- Lead with the take. The score and margin are shown above your line: never state either, and don't copy a FACTS line.
+- One angle: a swing, a player popping off, a coaching call, a blowout, a collapse in progress, or "worth your time".
+  It should change whether someone watches: worth tuning in, over, or about to get weird.
+- Game facts (scores, who led, plays, stats, players, injuries) come only from FACTS: never invent one. The game isn't
+  over: no final results, hedge ("feels like", "trending toward"). No records or history from before this game.
+- Color is fine (crowd, bench, band, owner's box, a coach's mood, one pop-culture comparison if it lands): it is mood,
+  never a game fact.
+- Use the game phase. Early: light, provisional. Late and close: name the pressure moment. Blowout: say it's over, find
+  the one fun thread or send people elsewhere. Comeback: say so, but don't call it until it is earned.
+- Roast teams, coaches and plays, never people: nothing about bodies, backgrounds or off-field lives, no injury jokes (a
+  serious injury: drop the bit, be brief). No betting words (spread, over/under, bet, odds, cover), advice, slurs or
+  politics; mild language only.
+
+The voice, from other games (write your own words, never reuse theirs):
 {examples}
 
 FACTS:
 {facts}
+{last}"""
+
+# Added after FACTS when this game already has a line: the take must be a new one.
+ONE_LINER_LAST = """
+Your last line for this game was: {last_line!r}. Don't repeat that take: find a different angle. If nothing material
+has changed and there is nothing new worth saying, return {{"line": null}}: the app keeps the last line while it is
+still true.
 """
 
 # ---------------------------------------------------------------- headlines (Screen A)

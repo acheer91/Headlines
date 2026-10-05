@@ -40,8 +40,9 @@ def fake(client, monkeypatch):  # noqa: F811
         state["calls"]["recap"] += 1
         return state["result"] or ready("recap")
 
-    def one_liner(page):
+    def one_liner(page, previous=None, previous_basis=None):
         state["calls"]["one_liner"] += 1
+        state["previous"] = previous
         return state["result"] or ready("one_liner")
 
     monkeypatch.setattr(writer, "write_preview", preview)
@@ -67,21 +68,115 @@ def test_kind_follows_the_game_state(client, fake):  # noqa: F811
     assert client.get(f"/api/games/{ids['KC']}/ai").json()["kind"] == "one_liner"     # back on Adam's call (Oct 1)
 
 
-def test_one_liner_reused_for_15_minutes_then_rewritten(client, fake):  # noqa: F811
+def test_one_liner_reused_for_30_quiet_minutes_then_rewritten(client, fake):  # noqa: F811
     gid = fake["ids"]["KC"]
     client.get(f"/api/games/{gid}/ai")
     client.get(f"/api/games/{gid}/ai")
     assert fake["calls"]["one_liner"] == 1
-    _sql("UPDATE ai_texts SET updated_at = now() - interval '16 minutes' WHERE game_id = %s", gid)
+    _sql("UPDATE ai_texts SET updated_at = now() - interval '29 minutes' WHERE game_id = %s", gid)
+    client.get(f"/api/games/{gid}/ai")
+    assert fake["calls"]["one_liner"] == 1                 # nothing happened in 29 minutes: the line stands
+    _sql("UPDATE ai_texts SET updated_at = now() - interval '31 minutes' WHERE game_id = %s", gid)
     client.get(f"/api/games/{gid}/ai")
     assert fake["calls"]["one_liner"] == 2
 
 
-def test_a_rate_limited_one_liner_is_not_handed_to_the_worker(client, fake, monkeypatch):  # noqa: F811
+def test_the_rewrite_is_told_the_last_line(client, fake):  # noqa: F811
+    gid = fake["ids"]["KC"]
+    client.get(f"/api/games/{gid}/ai")
+    assert fake["previous"] is None
+    _sql("UPDATE ai_texts SET updated_at = now() - interval '31 minutes' WHERE game_id = %s", gid)
+    client.get(f"/api/games/{gid}/ai")
+    assert fake["previous"] == "l"                     # the first line, so the new take is a different one
+
+
+def set_live_mark(gid, turnovers=None, win=None):
+    """Put a turnover count (all on the home side) and/or the home win probability into the stored live summary."""
+    import json
+    payload = _sql("SELECT payload FROM game_summaries WHERE game_id = %s", gid)[0][0]
+    if turnovers is not None:
+        for i, team in enumerate(payload["boxscore"]["teams"]):
+            for s in team["statistics"]:
+                if s["name"] == "turnovers":
+                    s["displayValue"] = str(turnovers if i == 0 else 0)
+    if win is not None:
+        payload["winprobability"] = [{"homeWinPercentage": 0.5}, {"homeWinPercentage": win / 100}]
+    _sql("UPDATE game_summaries SET payload = %s::jsonb WHERE game_id = %s", json.dumps(payload), gid)
+
+
+def test_a_new_turnover_asks_for_a_new_line_at_the_same_score(client, fake):  # noqa: F811
+    gid = fake["ids"]["KC"]
+    client.get(f"/api/games/{gid}/ai")
+    assert fake["calls"]["one_liner"] == 1
+    assert _sql("SELECT fingerprint FROM ai_texts WHERE game_id = %s", gid) == [("t0|w-",)]
+    client.get(f"/api/games/{gid}/ai")
+    assert fake["calls"]["one_liner"] == 1                 # quiet: reused
+    set_live_mark(gid, turnovers=1)
+    client.get(f"/api/games/{gid}/ai")
+    assert fake["calls"]["one_liner"] == 2                 # a turnover, same score, 1 minute later
+    assert _sql("SELECT fingerprint FROM ai_texts WHERE game_id = %s", gid) == [("t1|w-",)]
+    client.get(f"/api/games/{gid}/ai")
+    assert fake["calls"]["one_liner"] == 2
+
+
+def test_a_win_probability_swing_of_ten_asks_for_a_new_line_a_drift_does_not(client, fake):  # noqa: F811
+    gid = fake["ids"]["KC"]
+    client.get(f"/api/games/{gid}")                        # the pull that stores the live summary
+    set_live_mark(gid, win=60)
+    client.get(f"/api/games/{gid}/ai")
+    assert fake["calls"]["one_liner"] == 1
+    assert _sql("SELECT fingerprint FROM ai_texts WHERE game_id = %s", gid) == [("t0|w60",)]
+    set_live_mark(gid, win=69)                             # 9 points: still the same game
+    client.get(f"/api/games/{gid}/ai")
+    assert fake["calls"]["one_liner"] == 1
+    set_live_mark(gid, win=70)                             # 10 points from where the line was written ...
+    client.get(f"/api/games/{gid}/ai")
+    assert fake["calls"]["one_liner"] == 1                 # ... but only a minute ago: a late game can swing every play
+    _sql("UPDATE ai_texts SET updated_at = now() - interval '5 minutes' WHERE game_id = %s", gid)
+    client.get(f"/api/games/{gid}/ai")
+    assert fake["calls"]["one_liner"] == 2
+    assert _sql("SELECT fingerprint FROM ai_texts WHERE game_id = %s", gid) == [("t0|w70",)]
+
+
+def test_a_rate_limited_one_liner_is_handed_to_the_worker(client, fake, monkeypatch):  # noqa: F811
     from app import main
-    monkeypatch.setattr(main, "_hand_to_worker", lambda kind, row: pytest.fail("handed a one-liner to the worker"))
+    handed = []
+    monkeypatch.setattr(main, "_hand_to_worker", lambda kind, row: handed.append((kind, row["espn_id"])) or True)
+    gid = fake["ids"]["KC"]
     fake["result"] = RATE_LIMITED
-    assert client.get(f"/api/games/{fake['ids']['KC']}/ai").json()["status"] == "failed"   # the app: the template
+    first = client.get(f"/api/games/{gid}/ai").json()
+    assert first["kind"] == "one_liner" and first["status"] == "queued" and first["body"] is None
+    assert handed == [("one_liner", _sql("SELECT espn_id FROM games WHERE id = %s", gid)[0][0])]
+    assert _sql("SELECT status, reason FROM ai_texts WHERE game_id = %s", gid) == [("failed", "queued")]
+    assert client.get(f"/api/games/{gid}/ai").json()["status"] == "queued"      # the next pull says so at once
+    assert fake["calls"]["one_liner"] == 1 and len(handed) == 1
+
+
+def test_a_queued_one_liner_is_tried_again_after_a_turnover(client, fake, monkeypatch):  # noqa: F811
+    from app import main
+    handed = []
+    monkeypatch.setattr(main, "_hand_to_worker", lambda kind, row: handed.append(kind) or True)
+    gid = fake["ids"]["KC"]
+    fake["result"] = RATE_LIMITED
+    client.get(f"/api/games/{gid}/ai")
+    set_live_mark(gid, turnovers=1)
+    fake["result"] = None
+    out = client.get(f"/api/games/{gid}/ai").json()
+    assert out["status"] == "ready" and fake["calls"]["one_liner"] == 2 and len(handed) == 1
+
+
+def test_the_worker_writes_a_handed_over_one_liner_from_the_game_as_it_is_then(client, fake):  # noqa: F811
+    from temporalio.testing import ActivityEnvironment
+    from app.temporal import activities
+    from app.temporal.models import TextJob
+    gid = fake["ids"]["KC"]
+    fake["result"] = RATE_LIMITED
+    client.get(f"/api/games/{gid}/ai")
+    fake["result"] = None
+    espn_id = _sql("SELECT espn_id FROM games WHERE id = %s", gid)[0][0]
+    assert ActivityEnvironment().run(activities.write_text, TextJob("one_liner", "nfl", espn_id, "open")) == "ready"
+    out = client.get(f"/api/games/{gid}/ai").json()
+    assert out["status"] == "ready" and out["body"] == {"line": "l"}
 
 
 def test_preview_without_fresh_articles_is_no_sources(client, fake):  # noqa: F811
@@ -836,3 +931,34 @@ def test_hand_to_worker_starts_the_text_workflow_and_survives_temporal_down(monk
     assert main._hand_to_worker("preview", row) is False                   # the page keeps its fallback
     monkeypatch.setattr(main, "TEMPORAL_ADDRESS", None)
     assert main._hand_to_worker("preview", row) is False
+
+
+def test_the_writers_page_carries_the_play_by_play_the_game_screen_does_not_read(client, fake):  # noqa: F811
+    """Review, Oct 4: games.page reads a slim summary view (no drives.previous, scoringPlays, winprobability), so the
+    one-liner's play-by-play must come from its own read. Stored: a full live payload."""
+    import json
+    from pathlib import Path
+    from app import db, games
+    gid = fake["ids"]["KC"]
+    client.get(f"/api/games/{gid}")                                       # stores the live summary and the state
+    full = json.loads((Path(__file__).parent / "fixtures" / "ai" / "live_lac_sea.json").read_text(encoding="utf-8"))
+    kept = _sql("SELECT payload FROM game_summaries WHERE game_id = %s", gid)[0][0]
+    full["header"] = kept["header"]                                       # this game's header, the fixture's plays
+    _sql("UPDATE game_summaries SET payload = %s::jsonb WHERE game_id = %s", json.dumps(full), gid)
+    with db.connect() as conn:
+        plain = games.page(conn, gid)
+        live = games.page(conn, gid, live=True)
+    assert plain["screen"] == "C2" and plain["live"] is None              # the screen's own pull is not made heavier
+    assert live["live"] and len(live["live"]["scores"]) == 2 and live["live"]["win_prob"]["home"] == 79
+    assert len(live["live"]["recent"]) == 5                                # drives.previous came through (the view has none)
+
+
+def test_a_one_liner_the_worker_is_writing_is_answered_at_once(client, fake):  # noqa: F811
+    import time
+    gid = fake["ids"]["KC"]
+    client.get(f"/api/games/{gid}/ai")
+    _sql("UPDATE ai_texts SET status = 'writing', updated_at = now() WHERE game_id = %s", gid)
+    t = time.monotonic()
+    out = client.get(f"/api/games/{gid}/ai").json()
+    assert out["status"] == "writing" and out["body"] is None
+    assert time.monotonic() - t < 3 and fake["calls"]["one_liner"] == 1   # not ten seconds of polling the worker's claim

@@ -280,8 +280,9 @@ def _bets_live(home_score, away_score, lines: dict[str, grading.Line], home: str
 
 
 def detail(conn, card: dict, stored: dict | None, *, stale: bool, error: str | None,
-           team_season: dict[str, dict] | None = None) -> dict:
-    """One response per screen, parsed from the stored summary on read."""
+           team_season: dict[str, dict] | None = None, live_extra: dict | None = None) -> dict:
+    """One response per screen, parsed from the stored summary on read. live_extra (the drives, scoring plays and
+    win probability the stored view leaves out, db.get_summary_live) adds "live", the one-liner's play-by-play."""
     screen = SCREENS.get(card["state"], "C1")
     p = stored["payload"] if stored else {}
     home, away = card["home"]["abbr"], card["away"]["abbr"]
@@ -304,6 +305,8 @@ def detail(conn, card: dict, stored: dict | None, *, stale: bool, error: str | N
             for side in ("home", "away")
         },
         "situation": summary.situation(game_p) if screen == "C2" else None,
+        # play-by-play facts, for the AI one-liner only (page live=True): the game screens never read them
+        "live": summary.live_context({**game_p, **live_extra}) if screen == "C2" and live_extra and game_p else None,
         "team_stats": {"kind": kind, "rows": summary.team_stats(game_p, kind) if stored else []},
         "leaders": {"kind": kind, "rows": summary.leaders(game_p, kind) if stored else []},
         "time_valid": card.get("time_valid", True),
@@ -382,10 +385,12 @@ def card(row: dict, favorites: set[str]) -> dict:
     }
 
 
-def page(conn, game_id: int, *, base_url: str = espn.BASE, favorites: dict[str, list[str]] | None = None) -> dict | None:
+def page(conn, game_id: int, *, base_url: str = espn.BASE, favorites: dict[str, list[str]] | None = None,
+         live: bool = False) -> dict | None:
     """One game's screen payload, exactly as GET /api/games/{id} returns it (None: no such game). A pull: the
     summary is refreshed when the cache rule says so and finals are graded. Shared by the api and, in Phase 4,
-    the worker, which writes AI text from the same payload the page shows."""
+    the worker, which writes AI text from the same payload the page shows. live=True (the live one-liner's writer)
+    adds the play-by-play to a live game's payload: "live"."""
     favorites = favorites or {}
     row = db.game_by_id(conn, game_id)
     if not row:
@@ -407,5 +412,8 @@ def page(conn, game_id: int, *, base_url: str = espn.BASE, favorites: dict[str, 
             conn.rollback()
             log.exception("grading game %s failed", game_id)
     c = card(row, set(favorites.get(row["league"], [])))
+    extra = None
+    if live and row["state"] == "in":
+        extra = (db.get_summary_live(conn, game_id) or {}).get("payload")
     return detail(conn, c, stored, stale=stale, error=error,
-                  team_season=team_season if row["state"] == "pre" else None)
+                  team_season=team_season if row["state"] == "pre" else None, live_extra=extra)

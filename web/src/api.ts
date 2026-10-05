@@ -151,7 +151,7 @@ export type AiText = {
   body:
     | { preview: string; edges: { home: Edge[]; away: Edge[] }; picks: Pick[] }
     | { recap: string; bets: string; home: string; away: string }
-    | { line: string }
+    | { line: string | null }
     | null;
   sources: Source[] | null;
   updated_at: string | null;

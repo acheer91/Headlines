@@ -30,8 +30,29 @@ bowl games are confirmed with the handoff's December checklist by Dec 12.
 ## Phase 4 — AI text (Stage 2 built 2026-09-29 on branch `phase-4-ai-text`; NOT deployed)
 Scope: previews (preview, edges, writers' picks), recaps and team summaries, the live one-liner, Home headlines.
 The CTO cut the AI one-liner on Oct 1; **Adam put it back the same day** (his call outranks the CTO's): written on
-open, reused until the score changes or 15 minutes pass, never handed to the worker; any failure shows the box-score
-template (`summary.one_liner`). Previews are about 110 words (Adam, Oct 1: ~10% shorter than the PRD's 120).
+open. **Oct 4 (Adam): reuse and hand-off.** A line stands while the score is unchanged and 30 minutes (`store.ONE_LINER_TTL`)
+haven't passed; a new turnover or a home win-probability move of 10 points also asks for a new line at the same score
+(`jobs.one_liner_fingerprint`: the row's `fingerprint` is `t<turnovers>|w<home win %>` from `summary.live_mark`, read by the api
+from a slim slice of the stored summary, `db.get_summary_mark`; a drifting percentage is not new inputs, so the rejection cap
+and the 30-minute failed-quiet window hold). A rate-limited open is now **handed to the worker** like a preview or recap
+(`main.HAND_OFF`; the worker's `write_for_game` rebuilds the page when it gets there, so the line is written from the game as it is
+then; the row reads `queued`, the app shows nothing until the next pull has the line; no workflow change). **Oct 4 (Adam): a Ringer-style
+take, not a recap of the score.** At most 225 characters, `{"line": null}` allowed (the app keeps the last line while the
+code checks still pass it), never states the score or margin (`writer.restates_score`), crowd/band/owner color allowed
+(the live fact-check `prompts.LIVE_FACT_CHECK` judges game facts only), betting words still banned. Its FACTS now carry the
+play-by-play from the summary we already store (`summary.live_context`: last 5 plays, every score, drive results, run/pass
+calls, ESPN win probability). **Token churn (Oct 4):** the sheet is `app/ai/live_facts.py` (not facts.py: **facts.py is pinned by
+sha256 `554727d6...` for the Z5 retest, `docs/z5-preregistration.txt`; never edit it**): the score, phase and shape, ball, last 2
+plays and latest score, plus the 4 strongest hooks ranked by code (`_live_hooks`: favorite trailing, comeback, turnover gap, punt
+streak, unanswered points, win-probability swing, ...). The prompt front is fixed (rules + 6 phase-matched examples, FACTS and the
+last line after it, for Groq's prefix cache), replies are capped (`client.ONE_LINER_MAX_OUT` 600, `ONE_LINER_CHECK_MAX_OUT` 800;
+env `AI_ONE_LINER_*`; `_sizing`'s floor is `min(MIN_OUT, asked)`), and an over-long second sentence is cut, not rewritten.
+Live LAC @ SEA prompt: writer 1,535 -> 871 tokens, reserved per attempt ~3,035 -> ~1,470; checker ~2,923 -> ~1,450. The reply caps
+rest on old-prompt measurements: after the first live game read `ai_calls.used` for `one_liner:*`. The live claim checks use `claim_problems(live=True)`
+(`LIVE_UNSUPPORTED`: records and history before this game only). **The box-score template is gone**: a failed or null
+line shows nothing (`summary.one_liner` is still in the page payload, unused by the app). Golden set and style list:
+`tests/fixtures/ai/one_liner_golden.json`, `one_liner_styles.txt` (voice anchors, not replayable payloads).
+Previews are about 110 words (Adam, Oct 1: ~10% shorter than the PRD's 120).
 Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `phase4-results.md`; Stage 2 design:
 `docs/phase4-stage2-temporal-spec.md`. Deploy only after Adam approves samples and Phase 5b is signed off, Tue/Wed.
 - **Routing (CTO, 2026-10-01; `client.ROUTES`):** one row per kind (recap, preview, headlines): writer
@@ -123,7 +144,7 @@ Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `ph
   deploy, any change here needs a new `workflow.patched` id.
 - **On open (api):** `GET /api/games/{id}/ai` returns current text at once, else writes it within 20 s (preview) or
   10 s, **never waiting for quota** (`client.no_wait()`); `GET /api/headlines` for Screen A. A live game gets the one-liner
-  (`one_liner`, 10 s). **A preview or recap page open that runs out of quota hands the text to the worker** (Oct 1, `main._hand_to_worker`: a
+  (`one_liner`, 10 s). **A preview, recap or live one-liner page open that runs out of quota hands the text to the worker** (Oct 1, one-liner Oct 4, `main._hand_to_worker`: a
   `WriteTextWorkflow` with reason `open`, which the worker writes even off the pre-write list, waiting for the minute);
   the row's reason becomes `queued`, `/ai` says `queued` and the app "Writing the preview… pull again in a minute".
   A preview's extract and write don't fit one minute of 120b together (PIT @ CLE, Oct 1: 9,029 + 3,587 tokens), so an

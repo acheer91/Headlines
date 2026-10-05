@@ -202,7 +202,9 @@ def game(game_id: int):
 # (_hand_to_worker), and the app says it is being written. A preview's extract and write are two calls that don't
 # fit one minute of the writer's quota together, so an opened preview usually finishes there.
 AI_WAIT = {"preview": 20.0, "recap": 10.0, "one_liner": 10.0}
-HAND_OFF = {"preview", "recap"}     # a one-liner isn't handed to the worker: by then the score has moved on
+# A live one-liner is handed over too (Oct 4): the worker builds the page afresh when it gets to it, so the line is
+# written from the game as it is then, not as it was at the open; the next pull shows it.
+HAND_OFF = {"preview", "recap", "one_liner"}
 _ai_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="ai-open")
 TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS")     # unset: no hand-off (the app never depends on Temporal)
 TEMPORAL_NAMESPACE = os.environ.get("TEMPORAL_NAMESPACE", "default")
@@ -261,8 +263,8 @@ def _write_on_open(kind: str, game_row: dict) -> dict:
 
 @app.get("/api/games/{game_id}/ai")
 def game_ai(game_id: int):
-    """The AI text that fits the game now (handoff 2.6): preview (pre), one-liner (live; the app falls back to the
-    box-score template), recap (played final); none in a league without AI text (AI_LEAGUES).
+    """The AI text that fits the game now (handoff 2.6): preview (pre), one-liner (live; the app shows nothing until
+    there is a line), recap (played final); none in a league without AI text (AI_LEAGUES).
     status: ready | no_sources ("No fresh previews") | writing or queued (being written: the next pull may have it)
     | failed (the app shows fallback text) | missing.
     Current text comes back at once, and so does a text that failed for the same inputs in the last 30 minutes
@@ -278,12 +280,18 @@ def game_ai(game_id: int):
             return _ai_out(None, None) | {"status": "none"}
         stored = ai_store.get(conn, game_id, kind)
     basis = ai_jobs.row_basis(kind, game_row)
-    # The api doesn't recompute a preview's fingerprint (that fetches articles): the 8 AM refresh does.
-    if (ai_store.current(stored, basis) or ai_store.failed_recently(stored, basis)
-            or ai_store.rejected_out(stored, basis)):       # rejected REJECTION_CAP times for this game day or score
+    # The api doesn't recompute a preview's fingerprint (that fetches articles): the 8 AM refresh does. A live
+    # one-liner's is cheap (the stored summary's turnovers and win probability), so a new turnover or a big swing
+    # asks for a new line even at the same score.
+    fp = ai_jobs.live_fingerprint(game_id, stored) if kind == "one_liner" else None
+    known = fp if fp is not None else ai_store.UNKNOWN
+    if (ai_store.current(stored, basis, fp) or ai_store.failed_recently(stored, basis, known)
+            or ai_store.rejected_out(stored, basis, known)):    # rejected REJECTION_CAP times for these inputs
         return _ai_out(kind, stored)
-    if ai_store.being_written(stored) and ai_store.showable(stored):
-        return _ai_out(kind, stored)            # a preview mid-refresh: its last good text, at once
+    if ai_store.being_written(stored) and (ai_store.showable(stored) or kind == "one_liner"):
+        # A preview mid-refresh: its last good text, at once. A one-liner the worker is writing (it may wait a minute
+        # for quota): "writing" at once, not ten seconds of polling a claim that isn't ours.
+        return _ai_out(kind, stored)
     job = _ai_pool.submit(_write_on_open, kind, game_row)
     deadline = time.monotonic() + AI_WAIT[kind]
     try:

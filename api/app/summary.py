@@ -102,6 +102,98 @@ def situation(p: dict) -> dict | None:
     return {"possession": possession, "down_distance": text}
 
 
+# Plays that say nothing about how the game is going (the live one-liner's "last plays").
+_NOISE_PLAYS = {"Timeout", "Official Timeout", "End Period", "End of Half", "End of Game", "Two-minute warning",
+                "Kickoff"}
+_RUN_PLAYS = {"Rush", "Rushing Touchdown"}
+_PASS_PLAYS = {"Pass Reception", "Pass Incompletion", "Passing Touchdown", "Pass Interception Return", "Sack"}
+RECENT_PLAYS = 5
+WIN_PROB_BACK = 15        # plays: the "was N% a few drives ago" comparison
+
+
+@_safe(lambda: None)
+def live_context(p: dict) -> dict | None:
+    """The play-by-play behind a live game, for the one-liner: the last plays, every scoring play with the running
+    score, each finished drive's result, run and pass calls, and ESPN's win probability. All of it is in the summary
+    we already store (drives, scoringPlays, winprobability). None unless the game is live; each part is left empty
+    when ESPN doesn't send it."""
+    if _get(_comp(p), "status", "type", "state") != "in":
+        return None
+    side_of = {}
+    for side in ("home", "away"):
+        t = _competitor(p, side).get("team") or {}
+        side_of[str(t.get("id"))] = {"side": side, "abbr": t.get("abbreviation")}
+    previous = list(_get(p, "drives", "previous") or [])
+    current = _get(p, "drives", "current") or {}
+    drives = previous + ([current] if current.get("plays") and current.get("id") not in {d.get("id") for d in previous}
+                         else [])
+
+    def team_of(d: dict) -> dict:
+        return side_of.get(str((d.get("team") or {}).get("id")), {})
+
+    recent = []
+    for d in reversed(drives):
+        for play in reversed(d.get("plays") or []):
+            text = (play.get("text") or "").strip()
+            if text and _get(play, "type", "text") not in _NOISE_PLAYS:
+                recent.append({"period": _int(_get(play, "period", "number")),
+                               "clock": _get(play, "clock", "displayValue"),
+                               "team": team_of(d).get("abbr"), "side": team_of(d).get("side"), "text": text})
+            if len(recent) == RECENT_PLAYS:
+                break
+        if len(recent) == RECENT_PLAYS:
+            break
+    recent.reverse()
+
+    scores = [{"period": _int(_get(s, "period", "number")), "clock": _get(s, "clock", "displayValue"),
+               "team": _get(s, "team", "abbreviation"), "side": side_of.get(str(_get(s, "team", "id")), {}).get("side"),
+               "kind": _get(s, "type", "abbreviation"),
+               "text": (s.get("text") or "").strip(), "away": _int(s.get("awayScore")), "home": _int(s.get("homeScore"))}
+              for s in p.get("scoringPlays") or []]
+
+    finished = [{"side": team_of(d).get("side"), "abbr": team_of(d).get("abbr"), "result": d.get("displayResult"),
+                 "plays": _int(d.get("offensivePlays")), "yards": _int(d.get("yards")),
+                 "period": _int(_get(d, "start", "period", "number"))}
+                for d in previous if team_of(d) and d.get("displayResult")]
+
+    calls = {s: {"run": 0, "pass": 0} for s in ("home", "away")}
+    for d in drives:
+        side = team_of(d).get("side")
+        for play in d.get("plays") or []:
+            kind = _get(play, "type", "text")
+            if side and kind in _RUN_PLAYS:
+                calls[side]["run"] += 1
+            elif side and kind in _PASS_PLAYS:
+                calls[side]["pass"] += 1
+
+    series = [x.get("homeWinPercentage") for x in p.get("winprobability") or []
+              if isinstance(x.get("homeWinPercentage"), (int, float))]
+    win = None
+    if series:
+        pct = lambda v: round(v * 100)           # noqa: E731
+        win = {"home": pct(series[-1]), "plays_back": WIN_PROB_BACK,
+               "home_before": pct(series[-WIN_PROB_BACK - 1]) if len(series) > WIN_PROB_BACK else None}
+    st = status(p)
+    return {"period": st.get("period"), "clock": st.get("clock"), "recent": recent, "scores": scores,
+            "drives": finished, "calls": calls, "win_prob": win}
+
+
+@_safe(lambda: None)
+def live_mark(p: dict) -> dict | None:
+    """What a live one-liner was written under besides the score: both teams' turnovers and the home side's win
+    probability now (ai.jobs.one_liner_fingerprint: a new turnover or a big swing is worth a new line). Reads only
+    the box score's team stats and the win probability's last point, so db.get_summary_mark can hand it just
+    those. None when ESPN sent neither."""
+    turnovers = None
+    row = next((r for r in team_stats(p, "game") if r["key"] == "turnovers"), None)
+    if row and _int(row["home"]) is not None and _int(row["away"]) is not None:
+        turnovers = _int(row["home"]) + _int(row["away"])
+    series = [x.get("homeWinPercentage") for x in p.get("winprobability") or [] if isinstance(x, dict)
+              and isinstance(x.get("homeWinPercentage"), (int, float))]
+    win = round(series[-1] * 100) if series else None
+    return {"turnovers": turnovers, "win": win} if turnovers is not None or win is not None else None
+
+
 @_safe(lambda: None)
 def venue(p: dict) -> str | None:
     return _get(p, "gameInfo", "venue", "fullName")

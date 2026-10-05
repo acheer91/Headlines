@@ -1,0 +1,52 @@
+Voice examples for the live one-liner (Adam, Oct 4). Format: league | phase | line. Illustrative: not tied to a payload.
+
+NFL | early | 0-0 in the first quarter and this has the energy of a DMV line with a halftime show coming.
+NFL | early | The Jets are down 3-0 and somehow it already feels like it's their fault.
+NFL | mid | Down 14 in the second with a quarterback who just discovered the sideline cameras means we've reached the prayer portion of the evening.
+NFL | mid | The Cowboys are winning, but they're winning like a guy parallel parking an SUV.
+NFL | mid | Twenty-one unanswered points and the losing coach is still calling the same screen pass. Never change, never learn.
+NFL | mid | Both teams have punted four straight times, and the punter is the only one having fun.
+NFL | mid | It's a defensive struggle, which is NFL for "nobody in this building can throw."
+NFL | late | Chiefs up one with the ball and four minutes left, and you already know how this goes. You're just waiting for them to find a way.
+NFL | late | Two-minute drill, one timeout, and my blood pressure is now a live betting line.
+NFL | late | This is a Level 3 "Sunday Night Football is a hostage situation" game, and there are still eight minutes left.
+NCAAF | early | The band warming up on the sideline is outplaying the offense, and we're only in the first quarter.
+NCAAF | mid | 38-35 in the third between two ranked teams with zero defense is college football at its most honest.
+NCAAF | mid | The backup QB is playing like he's been waiting his whole life for this, because he has.
+NCAAF | mid | The kicker has missed three field goals, and this is now a hostage negotiation.
+NCAAF | mid | The band is better than the offense, and it's the third quarter.
+NCAAF | late | The home crowd just went quiet in a way that sounds like a coach's buyout kicking in.
+NCAAF | early | A 14-point favorite is playing like it's mad at the spread.
+NCAAF | mid | Four turnovers in one quarter. Somewhere a defensive coordinator is eating a sandwich in peace.
+NCAAF | late | The option offense is slowly murdering the clock and everyone's patience, and there are still six minutes left.
+NCAAF | late | A ranked team is trailing a 3-win team at home in the fourth quarter and nobody on that sideline looks surprised, which is the scariest part.
+NBA | early | Both teams are treating defense like an optional DLC.
+NBA | mid | Down 22 in the third with the starters on the bench means we've entered the "see you Thursday" portion of the night.
+NBA | mid | Their best player has taken 4 shots in 30 minutes, and the coach is just staring into the void.
+NBA | late | It's 118-117 in the fourth, and every possession is a small wedding toast.
+NBA | mid | The role player who's hot is shooting like he's been given a corporate card.
+NBA | mid | The refs have decided to have a night, and the game is losing.
+NBA | early | This is a perfect League Pass game: no stakes, 140-point pace, a guy with a mullet going off.
+NBA | mid | The home team is up 15 in the third and playing like they're spooked by it.
+NBA | early | The star sat out with "load management," and now I'm managing my own load by switching channels.
+NBA | late | Nobody has hit a free throw in six minutes of the fourth, and it's become a ghost story.
+EPL | mid | Zero shots on target through 60 minutes, so this is basically a very tall chess match.
+EPL | mid | 70% possession and zero ideas at the hour mark, which is the most English thing I've ever seen.
+EPL | late | 1-0 with 25 minutes left means everyone's about to be in a coma and a bunker at the same time.
+EPL | early | The manager is screaming at the fourth official ten minutes in like it's his fault the whole system exists.
+EPL | mid | That's the third offside flag against the striker, and I think he's starting to take it personally.
+EPL | mid | A VAR check has been going for three minutes and I have personally aged.
+EPL | late | The team in 17th has parked the bus with 20 minutes left, and it's honestly working.
+EPL | late | At 2-2 with ten minutes to go, a draw feels inevitable because the universe needs these two teams to share the pain.
+EPL | mid | The winger has cut inside six times, been blocked six times, and is about to try a seventh. I admire the commitment.
+EPL | early | The relegation-battle energy in this stadium is thick enough to chew, and we're 15 minutes in.
+MLS | mid | It's 1-1 with a bunch of guys on the field mostly for visa reasons and vibes.
+MLS | mid | The home team's designated player is clearly saving himself for the playoffs, or a flight.
+MLS | early | There's a 20-minute weather delay going, and honestly it's the most compelling stretch of the night so far.
+MLS | mid | The supporters' section is outperforming everyone on the pitch, and it's not close.
+MLS | late | A 3-0 lead in the 70th minute feels safe until you remember this is MLS, where nothing is.
+MLS | mid | The coach has made three substitutions and we're all just pretending it's strategy.
+MLS | late | This is a mid-table game with playoff implications and 15 minutes left, which is the most MLS sentence possible.
+MLS | late | Two goals in the last ten minutes so far, which is the league's way of keeping the casual fan from leaving.
+MLS | mid | The goalie is having the game of his life, and the defense is doing its best to ruin it.
+MLS | late | It's the 80th minute and both teams have a point and a dream.

@@ -196,22 +196,23 @@ def test_edge_with_unknown_article_fails(model):
 
 def test_one_liner_from_live_facts(model):
     live = dict(GAME, state="in", status_detail="Q3 4:12")
-    calls = model([{"line": "Chicago leads by 20 in the third."}])
+    calls = model([{"line": "Chicago has this one in a headlock, and it is only the third quarter."}])
     res = writer.write_one_liner(live)
     assert res["status"] == "ready" and "Live, Q3 4:12" in calls[0]
 
 
 def test_one_liner_too_long(model):
-    long = {"line": " ".join(["word"] * 45)}
+    long = {"line": "word " * 46}          # 230 characters: over the 225 limit
     model([long, long])
-    assert writer.write_one_liner(dict(GAME, state="in"))["status"] == "failed"
+    res = writer.write_one_liner(dict(GAME, state="in"))
+    assert res["status"] == "failed" and "characters" in res["rejected"][0]
 
 
 def test_live_one_liner_may_say_tied_inside_a_quarter(model):
     g = {"league": "nfl", "state": "in", "status_detail": "3rd 12:00", "home": {"name": "Chicago Bears", "short": "Bears",
          "score": 14}, "away": {"name": "Philadelphia Eagles", "short": "Eagles", "score": 14},
          "header": {"home": {"linescores": [7, 7, 0]}, "away": {"linescores": [7, 7, 0]}}}
-    model([{"line": "The Eagles responded in the second quarter and it is tied 14-14."}])
+    model([{"line": "The Eagles responded in the second quarter, and the third is starting dead even."}])
     assert writer.write_one_liner(g)["status"] == "ready"
 
 
@@ -230,7 +231,7 @@ def test_one_liner_writer_and_checker_see_the_same_trimmed_facts(model, monkeypa
     assert writer.write_one_liner(_live_phi_chi())["status"] == "ready"
     facts_in = lambda p: p.split("FACTS:\n", 1)[1].split("\n\nTEXT:", 1)[0].strip()
     assert facts_in(calls[0]) == facts_in(seen[0])
-    assert "Passing leader" in facts_in(calls[0])
+    assert "Game phase: " in facts_in(calls[0])
     assert not any(w in facts_in(calls[0]) for w in ("Rushing leader", "possession", "over/under", "penalties"))
 
 
@@ -244,15 +245,23 @@ def test_one_liner_refuses_what_the_trimmed_sheet_left_out(model):
 
 
 def test_one_liner_code_checks_know_the_leaders_the_trimmed_sheet_left_out(model, checker):
-    # 128 is Chicago's rushing so far (in FACTS), not Swift's: the trimmed sheet has no Swift, so only the full list
-    # of leaders lets claims_ok refuse it (review of M4, Oct 2). The writer's FACTS still leave him out.
+    # 128 is Chicago's rushing so far, not Swift's. The sheet no longer carries the rushing line (a hook only when the
+    # yardage gap is big), so the draft is refused as a number not in the facts; and claims_ok, given a sheet that does
+    # carry it, still refuses it as a team total handed to a player, because it knows every leader on the box score
+    # (review of M4, Oct 2). The writer's FACTS leave Swift out.
+    from app.ai import facts, live_facts
     g = _live_phi_chi()
-    from app.ai import facts
-    assert "So far, rushing: Eagles 107, Bears 128." in facts.live_facts(g)["facts"]
-    calls = model([{"line": "Swift has 128 rushing yards already."}, {"line": "Chicago leads by 20 right now."}])
+    assert facts.stats(g)["rushingYards"] == {"home": "128", "away": "107"}     # Chicago's team total, not Swift's
+    sheet = dict(live_facts.live_facts(g), players=facts.players(g),
+                 facts=["So far, rushing: Eagles 107, Bears 128."])
+    with pytest.raises(writer.CheckFailed) as exc:
+        writer.claims_ok(["Swift has 128 rushing yards already."], g, sheet, final=False, live=True)
+    assert "isn't on the player's line" in str(exc.value) and "D'Andre Swift" in str(exc.value)
+    calls = model([{"line": "Swift has 128 rushing yards already."},
+                   {"line": "Chicago is cruising and nobody on the other sideline looks surprised."}])
     res = writer.write_one_liner(g)
     assert res["status"] == "ready" and len(calls) == 2
-    assert "isn't on the player's line" in res["rejected"][0] and "D'Andre Swift" in res["rejected"][0]
+    assert "numbers not in the facts" in res["rejected"][0]
     assert "Swift" not in calls[0].split("FACTS:", 1)[1]
 
 

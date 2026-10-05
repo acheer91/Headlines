@@ -17,7 +17,9 @@ from psycopg.types.json import Jsonb
 # a worker writer can wait minutes for quota while holding its claim.
 WRITING_TIMEOUT = timedelta(minutes=16)
 FAILED_QUIET = timedelta(minutes=30)    # a page open doesn't retry a text that failed this recently (same basis)
-ONE_LINER_TTL = timedelta(minutes=15)   # Adam, 2026-09-29: reused until the score changes or 15 minutes pass
+# Adam, 2026-09-29: reused until the score changes or 15 minutes pass. Oct 4 (token churn): 30 minutes, and only a new
+# turnover or a big win-probability swing also asks for a new line (jobs.one_liner_fingerprint).
+ONE_LINER_TTL = timedelta(minutes=30)
 QUEUED = "queued"                       # reason on a failed row a page open handed to the worker (main._hand_to_worker)
 # A text that failed this many times for reasons retrying won't fix (check failed twice, a non-retryable error) is
 # not written again for the same inputs (Adam, 2026-10-01): it waits for new ones. Rate limits and 5xx never count.
@@ -66,9 +68,11 @@ def being_written(row: dict | None) -> bool:
     return bool(row) and row["status"] == "writing" and _age(row) < WRITING_TIMEOUT
 
 
-def failed_recently(row: dict | None, basis: str) -> bool:
-    """Failed for the same inputs within FAILED_QUIET: a page open shows the fallback instead of paying again."""
+def failed_recently(row: dict | None, basis: str, fingerprint: object = UNKNOWN) -> bool:
+    """Failed for the same inputs within FAILED_QUIET: a page open shows the fallback instead of paying again.
+    A fingerprint (a live one-liner's turnovers and win probability) must match the failed claim's too."""
     return (bool(row) and row["status"] == "failed" and row["claim_basis"] == basis
+            and (fingerprint is UNKNOWN or row["claim_fingerprint"] == fingerprint)
             and _age(row) < FAILED_QUIET)
 
 
