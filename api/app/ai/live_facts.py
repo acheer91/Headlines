@@ -163,9 +163,14 @@ def _live_hooks(game: dict, n: dict, short: dict) -> list[tuple[int, str]]:
     win = live.get("win_prob")
     if win:
         swing = abs(win["home"] - win["home_before"]) if win.get("home_before") is not None else 0
-        line = f"ESPN's live win probability: {short['home']} {win['home']}%, {short['away']} {100 - win['home']}%"
+        # The leader first, then the move as one sentence about one team: the model read an aside about the old
+        # number ("15 plays ago: Panthers 64%") as the current one (CAR-DET, Oct 4: "the Panthers still hold the edge").
+        lead, trail = ("home", "away") if win["home"] >= 50 else ("away", "home")
+        lead_pct = win["home"] if lead == "home" else 100 - win["home"]
+        line = f"ESPN's live win probability: {short[lead]} {lead_pct}%, {short[trail]} {100 - lead_pct}%"
         if win.get("home_before") is not None:
-            line += f" (about {win['plays_back']} plays ago: {short['home']} {win['home_before']}%)"
+            line += (f". Over the last {win['plays_back']} plays or so, {short['home']}'s chance went from "
+                     f"{win['home_before']}% to {win['home']}%")
         sal = max(5 + swing // 10 if swing >= WIN_SWING else 0, 5 if max(win["home"], 100 - win["home"]) >= WIN_EXTREME else 0)
         if sal:
             out.append((sal, line + "."))

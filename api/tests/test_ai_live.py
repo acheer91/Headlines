@@ -527,3 +527,16 @@ def test_a_players_experience_is_refused_before_the_model_check_spends_tokens():
     for line in ("Carolina keeps handing Detroit the ball.", "The kicker has had a rough night.",
                  "Nothing about this offense feels settled."):
         assert not writer.LIVE_UNSUPPORTED.search(line), line
+
+
+def test_the_win_probability_line_names_the_leader_first_and_the_move_about_one_team():
+    """CAR-DET, Oct 4: "15 plays ago: Panthers 64%" read as the current number made the model say Carolina led."""
+    g = _hooks_game()
+    g["live"]["win_prob"] = {"home": 43, "plays_back": 15, "home_before": 64}      # home = the Panthers
+    line = next(x for x in live_facts.live_facts(g, hooks=None)["facts"] if "win probability" in x)
+    home, away = g["home"]["short"], g["away"]["short"]
+    assert line.startswith(f"ESPN's live win probability: {away} 57%, {home} 43%")
+    assert f"{home}'s chance went from 64% to 43%" in line
+    g["live"]["win_prob"] = {"home": 95, "plays_back": 15, "home_before": None}
+    line = next(x for x in live_facts.live_facts(g, hooks=None)["facts"] if "win probability" in x)
+    assert line.startswith(f"ESPN's live win probability: {home} 95%, {away} 5%") and "went from" not in line
