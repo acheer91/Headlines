@@ -51,19 +51,22 @@ class Route(NamedTuple):
     overflow: str | None     # the checker's extra pool, only while the checker is cooling down or out of budget
 
 
-_120B, _QWEN, _QWEN_OR = "openai/gpt-oss-120b", "qwen/qwen3.8-27b", "or:qwen/qwen3.8-27b:free"
+# Overflow checker (Oct 6): OpenRouter retired the free Qwen ("unavailable for free": a 404 on every overflow call). Nemotron 3
+# Super is free, from a third family, and on check_eval's 23 cases it caught 15/15 errors with 0/8 false alarms (Groq's
+# Qwen: 11/15, 1/8). Free pool: 50 requests a day for the whole account, so it stays overflow, not the first checker.
+_120B, _QWEN, _NEMOTRON_OR = "openai/gpt-oss-120b", "qwen/qwen3.8-27b", "or:nvidia/nemotron-3-super-120b-a12b:free"
 # CTO, 2026-10-01. No backup writers: Qwen invents claims as a writer and 20b is untested as one, so with 120b out a
 # recap is the stats-only template, a preview "unavailable", and headlines keep the last set. Qwen on Groq checks
 # (its own quota, another family); OpenRouter's 50 a day is overflow. check_eval (2026-09-30): Qwen caught 11 of 15
 # errors and rejected 1 of 8 correct sentences: a false rejection costs a template, so watch the rejection rate.
 # Headlines move to Gemini (writer) and 20b (checker) once the Gemini key is replaced and the budgets are measured.
 ROUTES = {
-    "recap": Route(_120B, None, _QWEN, _QWEN_OR),
-    "preview": Route(_120B, None, _QWEN, _QWEN_OR),
-    "headlines": Route(_120B, None, _QWEN, _QWEN_OR),
-    "weekend": Route(_120B, None, _QWEN, _QWEN_OR),       # the weekend columns (Adam, Oct 6): same rules as recaps
+    "recap": Route(_120B, None, _QWEN, _NEMOTRON_OR),
+    "preview": Route(_120B, None, _QWEN, _NEMOTRON_OR),
+    "headlines": Route(_120B, None, _QWEN, _NEMOTRON_OR),
+    "weekend": Route(_120B, None, _QWEN, _NEMOTRON_OR),       # the weekend columns (Adam, Oct 6): same rules as recaps
     # Live one-liner: cut by the CTO (Oct 1), back on Adam's call the same day. Its fallback is the template.
-    "one_liner": Route(_120B, None, _QWEN, _QWEN_OR),
+    "one_liner": Route(_120B, None, _QWEN, _NEMOTRON_OR),
 }
 DEFAULT_KIND = "recap"      # for tools that call write()/check() outside a text (check_eval)
 

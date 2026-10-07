@@ -20,8 +20,8 @@ from temporalio.client import (Client, Schedule, ScheduleActionStartWorkflow, Sc
                                ScheduleSpec, ScheduleUpdate)
 
 from ..ai import scope as ai_scope
-from .workflows import (TASK_QUEUE, HeadlinesWorkflow, LeftoverWorkflow, PreviewBatchWorkflow, ScheduleSyncWorkflow,
-                        WeekendWorkflow)
+from .workflows import (TASK_QUEUE, BackupWorkflow, HeadlinesWorkflow, LeftoverWorkflow, PreviewBatchWorkflow,
+                        ScheduleSyncWorkflow, WeekendWorkflow)
 from .worker import connect
 
 TZ = "America/Los_Angeles"
@@ -40,6 +40,8 @@ def _schedules() -> dict:
     out = {
         "schedule-sync": (ScheduleSyncWorkflow, LEAGUES, [6], 0, None),
         "headlines": (HeadlinesWorkflow, LEAGUES, [7, 17], 0, None),
+        # The nightly database backup (Adam, 2026-09-28: out of cron, into Temporal for retries and visibility).
+        "backup": (BackupWorkflow, [], [3], 30, None),
     }
     if ai:
         out["ai-leftover"] = (LeftoverWorkflow, ai, [21], 30, None)

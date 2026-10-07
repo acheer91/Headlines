@@ -7,14 +7,19 @@ activity raises on any ESPN or database failure instead of swallowing it.
 """
 from __future__ import annotations
 
+import gzip
 import logging
 import os
+import subprocess
+import tempfile
 import threading
 import time as _time
 from datetime import datetime, time, timedelta, timezone
 from typing import Callable
+from urllib.parse import unquote, urlparse
 from zoneinfo import ZoneInfo
 
+import httpx
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
@@ -276,6 +281,44 @@ def texts_to_write(league: str, what: str, hours: int) -> list[str]:
     return [rows[i]["espn_id"] for i in ids if i in rows and ai_scope.is_prewritten(rows[i], favs)]
 
 
+BACKUP_MIN_BYTES = 100_000      # an empty or cut-off dump is far smaller (a real one is ~6 MB gzipped)
+BACKUP_TRAILER = b"PostgreSQL database cluster dump complete"      # pg_dumpall's last line
+
+
+@activity.defn
+def backup_database() -> str:
+    """The nightly backup (BackupWorkflow; was scripts/backup.sh in cron): pg_dumpall of every database on the server
+    (the app's and Temporal's own), gzipped, PUT to the Object Storage bucket's write-only pre-authenticated URL
+    (BACKUP_URL, ends in /o/). A dump that fails, is tiny or doesn't end with pg_dumpall's completion line is never
+    uploaded. Safe to run twice (a second object, never an overwrite). Returns the object name and size."""
+    base = os.environ.get("BACKUP_URL", "").strip()
+    if not base:
+        raise ApplicationError("BACKUP_URL is not set", non_retryable=True)
+    dsn = urlparse(os.environ["DATABASE_URL"])
+    name = f"scores-{datetime.now(timezone.utc):%Y%m%dT%H%MZ}.sql.gz"
+    cmd = ["pg_dumpall", "-h", dsn.hostname, "-p", str(dsn.port or 5432), "-U", dsn.username]
+    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:       # private, gone on close or a crash
+        dump = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=err,
+                                env={**os.environ, "PGPASSWORD": unquote(dsn.password or "")})
+        tail = b""
+        with gzip.GzipFile(fileobj=out, mode="wb") as gz:
+            for chunk in iter(lambda: dump.stdout.read(1 << 20), b""):
+                gz.write(chunk)
+                tail = (tail + chunk)[-200:]
+        code = dump.wait()
+        if code != 0:
+            err.seek(0)
+            raise ApplicationError(f"pg_dumpall exited {code}: {err.read().decode(errors='replace')[-400:]}")
+        size = out.tell()
+        if size < BACKUP_MIN_BYTES or BACKUP_TRAILER not in tail:
+            raise ApplicationError(f"the dump looks incomplete ({size} bytes); not uploaded")
+        out.seek(0)
+        resp = httpx.put(base + name, content=out.read(), timeout=600)
+        resp.raise_for_status()
+    log.info("backup uploaded %s (%d bytes)", name, size)
+    return f"{name} ({size} bytes)"
+
+
 ALL = [sync_schedule, save_line, fetch_game_state, fetch_summary, grade_game, fetch_news, generate_preview,
-       texts_to_write, recap_due]
+       texts_to_write, recap_due, backup_database]
 AI = [write_text]        # the `ai` task queue: AI_AT_ONCE at a time (1: one writer)

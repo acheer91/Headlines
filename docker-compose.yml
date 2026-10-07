@@ -120,6 +120,9 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       AI_QUOTA: db
+      # The nightly backup's upload target: Object Storage's write-only pre-authenticated URL (ends in /o/), in .env like
+      # the keys. Empty = BackupWorkflow fails loudly instead of running (laptop stack: no backups).
+      BACKUP_URL: ${BACKUP_URL:-}
     volumes:
       - ./config:/srv/config:ro   # favorites: sync_schedule reads them on every run (no rebuild after an edit)
     depends_on:

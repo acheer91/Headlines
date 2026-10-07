@@ -20,7 +20,7 @@ with workflow.unsafe.imports_passed_through():
     from .models import GameInput, GameRef, GameState, TextJob, Times
 
 __all__ = ["GameWorkflow", "GameInput", "ScheduleSyncWorkflow", "HeadlinesWorkflow", "WriteTextWorkflow",
-           "PreviewBatchWorkflow", "LeftoverWorkflow", "WeekendWorkflow", "WORKFLOWS"]
+           "PreviewBatchWorkflow", "LeftoverWorkflow", "WeekendWorkflow", "BackupWorkflow", "WORKFLOWS"]
 
 TASK_QUEUE = "scores"
 AI_QUEUE = "ai"        # Phase 4: AI text activities, AI_AT_ONCE (1) at a time, never delaying ESPN work
@@ -52,6 +52,14 @@ TEXT_POLICY = dict(
 RECAP_DUE_POLICY = dict(
     start_to_close_timeout=timedelta(seconds=30),
     retry_policy=RetryPolicy(initial_interval=timedelta(seconds=10), maximum_attempts=3),
+)
+# The nightly backup: retried for 6 hours with a growing wait; out of tries the workflow fails, which shows as Failed in
+# the UI (the Monday check) instead of a line in a log nobody reads.
+BACKUP_POLICY = dict(
+    start_to_close_timeout=timedelta(minutes=20),
+    schedule_to_close_timeout=timedelta(hours=6),
+    retry_policy=RetryPolicy(initial_interval=timedelta(minutes=1), backoff_coefficient=2.0,
+                             maximum_interval=timedelta(minutes=30)),
 )
 BATCH_AHEAD = timedelta(days=6)           # a midweek batch covers games through the following Monday night
 LEFTOVER_PREVIEWS = timedelta(days=3)     # the nightly job: previews for the next 3 days ...
@@ -328,6 +336,16 @@ class WeekendWorkflow:
         return started
 
 
+@workflow.defn
+class BackupWorkflow:
+    """Nightly, 3:30 AM Pacific (schedules.py; Adam asked on 2026-09-28 for the backup to move from cron into Temporal):
+    dump every database and upload it. Returns what was uploaded."""
+
+    @workflow.run
+    async def run(self, _unused: list[str]) -> str:
+        return await workflow.execute_activity(act.backup_database, result_type=str, **BACKUP_POLICY)
+
+
 async def _start_all(leagues: list[str], what: str, ahead: timedelta, reason: str) -> int:
     started = 0
     for league in leagues:
@@ -360,4 +378,4 @@ class LeftoverWorkflow:
 
 
 WORKFLOWS = [GameWorkflow, ScheduleSyncWorkflow, HeadlinesWorkflow, WriteTextWorkflow, PreviewBatchWorkflow,
-             LeftoverWorkflow, WeekendWorkflow]
+             LeftoverWorkflow, WeekendWorkflow, BackupWorkflow]

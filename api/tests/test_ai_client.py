@@ -335,7 +335,7 @@ def test_routes_name_one_writer_and_a_checker_from_another_family(monkeypatch):
         writers, checkers = client.route(kind)
         assert writers == [r.writer] + ([r.backup] if r.backup else []) and len(writers) <= 2
         assert all(client.family(c) != client.family(w) for c in checkers for w in writers), kind
-    assert client.route("recap") == (["openai/gpt-oss-120b"], ["qwen/qwen3.8-27b", "or:qwen/qwen3.8-27b:free"])
+    assert client.route("recap") == (["openai/gpt-oss-120b"], ["qwen/qwen3.8-27b", "or:nvidia/nemotron-3-super-120b-a12b:free"])
     client.begin("preview")
     assert client.model() == "openai/gpt-oss-120b"
     client.begin("one_liner")                       # back on Adam's call (Oct 1)
@@ -478,15 +478,15 @@ def test_ai_schedules_cover_only_ai_leagues(monkeypatch):
     monkeypatch.setattr(scope, "AI_LEAGUES", {"nfl"})
     monkeypatch.setattr(scope, "HEADLINE_LEAGUES", {"nfl"})
     out = schedules._schedules()
-    assert set(out) == {"schedule-sync", "headlines", "ai-leftover", "ai-previews-nfl", "ai-weekend-nfl"}
+    assert set(out) == {"schedule-sync", "headlines", "backup", "ai-leftover", "ai-previews-nfl", "ai-weekend-nfl"}
     assert out["ai-leftover"][1] == ["nfl"] and out["schedule-sync"][1] == ["nfl", "ncaaf"]
     assert out["headlines"][1] == ["nfl", "ncaaf"]
     monkeypatch.setattr(scope, "AI_LEAGUES", {"nfl", "ncaaf"})
-    assert set(schedules._schedules()) == {"schedule-sync", "headlines", "ai-leftover", "ai-previews-nfl",
-                                           "ai-previews-ncaaf", "ai-weekend-nfl"}
+    assert set(schedules._schedules()) == {"schedule-sync", "headlines", "backup", "ai-leftover",
+                                           "ai-previews-nfl", "ai-previews-ncaaf", "ai-weekend-nfl"}
     monkeypatch.setattr(scope, "AI_LEAGUES", set())
     monkeypatch.setattr(scope, "HEADLINE_LEAGUES", set())
-    assert set(schedules._schedules()) == {"schedule-sync", "headlines"}
+    assert set(schedules._schedules()) == {"schedule-sync", "headlines", "backup"}
 
 
 def test_weekend_columns_are_written_nfl_tuesday_and_ncaaf_sunday_morning(monkeypatch):
@@ -517,9 +517,9 @@ def test_unavailable_for_with_the_real_routes(fresh, monkeypatch):
     for kind in ("recap", "preview", "headlines"):
         assert client.unavailable_for(kind) is None
     client.quota.cool("qwen/qwen3.8-27b", 600)
-    assert client.unavailable_for("recap") is None                 # OpenRouter's Qwen can still check
-    client.quota.cool("or:qwen/qwen3.8-27b:free", 300)
-    assert 290 < client.unavailable_for("preview") <= 300          # both Qwens limited: the sooner one
+    assert client.unavailable_for("recap") is None                 # OpenRouter's Nemotron can still check
+    client.quota.cool("or:nvidia/nemotron-3-super-120b-a12b:free", 300)
+    assert 290 < client.unavailable_for("preview") <= 300          # both checkers limited: the sooner one
     client.quota.cool("openai/gpt-oss-120b", 900)
     assert 890 < client.unavailable_for("headlines") <= 900        # no backup writer: its wait is the answer
 

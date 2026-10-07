@@ -825,7 +825,7 @@ def test_a_weekend_column_with_history_betting_or_a_made_up_number_is_rewritten(
 
 def test_a_weekend_column_that_reuses_an_example_is_rewritten(model):
     from app.ai import prompts
-    copied_line = prompts.ONE_LINER_EXAMPLES[4].split("] ", 1)[1]
+    copied_line = prompts.ONE_LINER_EXAMPLES[10].split("] ", 1)[1]
     calls = model([_column(sentence=copied_line), _column()])
     assert writer.write_weekend(_weekend_facts())["status"] == "ready"
     assert "reused an example" in calls[1]
@@ -882,3 +882,17 @@ def test_unknown_names_lets_acronyms_through_and_the_title_is_not_checked(model)
     title_case = {"title": "Bears Flatten Eagles In Cold", "paragraphs": _column()["paragraphs"]}
     model([title_case])
     assert writer.write_weekend(_weekend_facts())["status"] == "ready"
+
+
+def test_a_weekend_column_that_ranks_games_is_rewritten(model):
+    ranky = "The Bears flattened the Eagles 31-7 in the biggest statement of the afternoon, a nap with a scoreboard."
+    calls = model([_column(sentence=ranky), _column()])
+    assert writer.write_weekend(_weekend_facts())["status"] == "ready"
+    assert "ranking games" in calls[1] and "biggest" in calls[1]
+
+
+def test_the_checker_prompts_guard_roles_and_winners():
+    from app.ai import prompts
+    assert "an analyst called a player" in prompts.FACT_CHECK
+    assert "A name before a colon" in prompts.EXTRACT_HEADLINES
+    assert "The team listed first in a" in prompts.WEEKEND_FACT_CHECK

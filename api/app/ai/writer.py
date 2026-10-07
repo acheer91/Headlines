@@ -1055,6 +1055,10 @@ HISTORY = re.compile(r"\b(streaks?|undefeated|unbeaten|winless|all-time|franchis
                      re.I)
 
 
+# Ranking the weekend's games against each other: the prompt forbids it and the checker is jumpy about it, so code refuses
+# it (the first NFL column called a 21-point margin "the weekend's loudest statement").
+RANKING = re.compile(r"\b(biggest|loudest|closest|stunners?|shockers?|surprises?|only (?:blowout|upset|game|team|one))\b", re.I)
+
 WORD = re.compile(r"[A-Za-z][A-Za-z'’]*")
 KNOWN_CAPS = {"I", "NFL", "NCAAF", "AP", "CFP", "SEC", "ACC", "OT"}
 
@@ -1094,6 +1098,9 @@ def write_weekend(facts: dict) -> dict:
                 raise CheckFailed(f"{words} words: write about 150, never over 190")
             texts = [title, *paras]
             _texts_ok(texts, fj, live=True)
+            ranking = RANKING.search(" ".join(texts))
+            if ranking:
+                raise CheckFailed(f"ranking games against each other ({ranking[0]!r}): describe the games, don't rank them")
             invented = unknown_names(paras, fj)          # not the title: it is in Title Case
             if invented:
                 raise CheckFailed(f"names FACTS never gives: {invented}; use only the teams, players and places in FACTS "

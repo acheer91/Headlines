@@ -200,6 +200,7 @@ A problem is any factual claim in TEXT that FACTS does not directly support:
 - a wrong number, team, player, quarter, or who led / who won / who scored when;
 - a claim FACTS never makes (a streak, a comparison, a cause, a record, "never trailed", "dominated");
 - a mix-up of sides (turnovers committed vs forced, home vs away, offense vs defense);
+- a position, team, title or role given to a person that FACTS does not state for them (an analyst called a player);
 - a team total given to a player (FACTS lists each player's own line), or the kind or count of scoring plays
   ("a late field goal", "two more scores") when FACTS doesn't show it;
 - any claim about who led, took the lead or pulled ahead DURING a quarter: FACTS only knows the score at quarter
@@ -328,6 +329,9 @@ with the 12 most important stories: injuries, trades, firings and coaching chang
 moves, big upsets and storylines. Cover every league in NEWS: at least 4 items from each league that has that many.
 No bare final-score lines (scores have their own screens); a result is fine when it is part of the story.
 Skip fantasy advice, betting odds and listicles. Only what NEWS says, one story per item.
+Never give a person a position, team or title that NEWS doesn't state beside their name. A name before a colon in a
+headline is the person being quoted (often an analyst or reporter), not a player: "Dan Orlovsky: Johnson's retirement is
+a significant loss" is an analyst's opinion, not an Eagles player's.
 
 NEWS:
 {news}
@@ -337,7 +341,7 @@ WRITE_HEADLINES = """You write the headline list for a sports app's home screen.
 {{"items": [{{"text": "one line, under 15 words", "news": <same id or null>}}]}}
 
 Write 8 to 12 items from FACTS, most important first, one line each, same ids. Each line tells exactly one
-item's story; never join two items into one line. Mix the leagues (NFL and NCAAF) through the list; never write a
+item's story; never join two items into one line. Use a person's position or team only as FACTS gives it. Mix the leagues (NFL and NCAAF) through the list; never write a
 line that is only a final score.
 
 {voice}
@@ -409,7 +413,10 @@ A problem is a claim about the GAMES that FACTS does not support:
 - a stat, injury, quote, record, streak, standing or history FACTS never gives, or a play or a moment in a game FACTS
   never describes;
 - a ranking of results (biggest blowout, closest game, highest score, only upset) that the scores and margins in
-  FACTS don't bear out.
+  FACTS don't bear out;
+- a sentence about two teams with a score or margin that doesn't match their line in FACTS. The team listed first in a
+  results line won; "margin N" is the points it won by. Saying the other team won, or that the loser won or lost by that
+  margin, is wrong: read each such sentence against its line before you pass it.
 Not a problem, so never list them: opinion, mood, jokes, exaggeration and comparisons; pop-culture references; color
 about fans, bands, coaches' feelings or owners; a hedged read about next week ("feels like", "looks headed for");
 rhetorical questions.
