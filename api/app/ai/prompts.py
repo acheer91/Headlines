@@ -375,8 +375,8 @@ Rules:
 - Never state a record, a streak, a standing, a stat or any history FACTS doesn't give, and never name a player FACTS
   doesn't name. A player's age, experience, contract or past is a fact too: leave it out unless FACTS says it. No
   predictions stated as fact; a hedged read ("feels like", "looks headed for") is fine.
-- Describe the games, don't rank them against each other: no biggest, only, best, worst, most, closest, loudest,
-  surprise or stunner. Call a game an upset only when FACTS tags it one (ranks exist for college games only). Opinions,
+- Describe the games, don't rank them against each other: no biggest, only, best, worst, most, closest, loudest
+  or stunner. Call a game an upset only when FACTS tags it one (ranks exist for college games only). Opinions,
   jokes, exaggeration and comparisons about a team or a play are fine: they are mood, never a game fact.
 - NOTES hold, per featured game, a line from a checked recap and ESPN's top passer, rusher and receiver lines
   ("leaders"): the only player stats you may cite, exactly as written. NEWS is ESPN headlines: use one or two at most.
