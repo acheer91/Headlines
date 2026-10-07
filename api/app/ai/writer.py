@@ -196,9 +196,9 @@ def copied(text: str, articles: list[dict], n: int = COPY_WORDS) -> str | None:
     return None
 
 
-def _json(prompt: str, light: bool = False) -> dict:
+def _json(prompt: str, light: bool = False, reasoning: str | None = None) -> dict:
     try:
-        out = json.loads(client.write(prompt, json_out=True, light=light))
+        out = json.loads(client.write(prompt, json_out=True, light=light, **({"reasoning": reasoning} if reasoning else {})))
     except (ValueError, client.BadReply):
         raise CheckFailed("reply was not JSON") from None
     if not isinstance(out, dict):
@@ -206,14 +206,15 @@ def _json(prompt: str, light: bool = False) -> dict:
     return out
 
 
-def _step(prompt: str, check: Callable[[dict], None], stats: dict, light: bool = False, tries: int = 2) -> dict:
+def _step(prompt: str, check: Callable[[dict], None], stats: dict, light: bool = False, tries: int = 2,
+          reasoning: str | None = None) -> dict:
     """One writer JSON call plus its check, rerun (once; a weekend column twice) if the check fails, told what was
     wrong. light: a short structured reply (client.write's low-reasoning mode). RateLimited/AIError propagate."""
     ask = prompt
     for attempt in range(1, tries + 1):
         stats["calls"] += 1
         try:
-            out = _json(ask, light)
+            out = _json(ask, light, reasoning)
             try:
                 check(out)
             except (AttributeError, KeyError, TypeError):    # JSON of the wrong shape, e.g. an edge that's a string
@@ -1045,6 +1046,8 @@ def write_headlines(news: list[dict]) -> dict:
 # ---------------------------------------------------------------- weekend columns
 
 WEEKEND_TITLE_CHARS = 80      # asked for 70
+WEEKEND_REASONING = "low"     # medium spent the 3,000-token reply allowance thinking and cut the JSON off (Oct 6, live); the
+                              # code checks and the fact-check, not the model's care, are what keep the facts straight
 WEEKEND_TRIES = 3             # one column a week per league: a third draft costs little and a failure shows nothing
 # History and standings no fact sheet gives (the one-liner's rule): a column riffs on the weekend, not on the record book.
 HISTORY = re.compile(r"\b(streaks?|undefeated|unbeaten|winless|all-time|franchise (?:record|best|worst)|"
@@ -1083,7 +1086,8 @@ def write_weekend(facts: dict) -> dict:
                 raise CheckFailed(f"reused an example: {copy!r}; write your own words")
             _fact_check(texts, fj, stats, prompts.WEEKEND_FACT_CHECK)
 
-        out = _step(prompts.WRITE_WEEKEND.format(league=facts["league"], facts=fj), check, stats, tries=WEEKEND_TRIES)
+        out = _step(prompts.WRITE_WEEKEND.format(league=facts["league"], facts=fj), check, stats, tries=WEEKEND_TRIES,
+                    reasoning=WEEKEND_REASONING)
         return {"status": "ready", "body": {"title": out["title"].strip(), "paragraphs": [p.strip() for p in out["paragraphs"]]}}
 
     return _run("weekend", go)

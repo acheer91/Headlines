@@ -21,7 +21,7 @@ def fake(replies):
     it = iter(replies)
     calls = []
 
-    def write(prompt, json_out=False, light=False):
+    def write(prompt, json_out=False, light=False, reasoning=None):
         calls.append(prompt)
         return json.dumps(next(it))
     return write, calls
@@ -850,3 +850,14 @@ def test_the_weekend_fact_check_prompt_is_the_weekend_one(model, monkeypatch):
     model([_column()])
     writer.write_weekend(_weekend_facts())
     assert "weekend sports column" in prompts_seen[0]
+
+
+def test_the_weekend_column_is_written_at_low_reasoning_and_other_texts_are_not(monkeypatch):
+    seen = []
+
+    def write(prompt, json_out=False, light=False, reasoning=None):
+        seen.append(reasoning)
+        return json.dumps(_column())
+    monkeypatch.setattr(client, "write", write)
+    assert writer.write_weekend(_weekend_facts())["status"] == "ready"
+    assert seen == ["low"]
