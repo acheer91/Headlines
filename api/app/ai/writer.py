@@ -1072,7 +1072,7 @@ def write_weekend(facts: dict) -> dict:
             words = sum(len(p.split()) for p in paras)
             lo, hi = prompts.WEEKEND_WORDS
             if not lo <= words <= hi:
-                raise CheckFailed(f"{words} words: write about 170")
+                raise CheckFailed(f"{words} words: write about 150, never over 190")
             texts = [title, *paras]
             _texts_ok(texts, fj, live=True)
             bet = bet_talk(texts, live=True)

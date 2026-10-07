@@ -809,7 +809,7 @@ def test_a_weekend_column_is_written_checked_and_returned(model):
 def test_a_weekend_column_with_a_wrong_length_is_rewritten(model):
     calls = model([_column(n=2), _column()])
     assert writer.write_weekend(_weekend_facts())["status"] == "ready"
-    assert "words: write about 170" in calls[1]
+    assert "words: write about 150" in calls[1]
 
 
 @pytest.mark.parametrize("bad, why", [

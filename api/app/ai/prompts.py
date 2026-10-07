@@ -350,16 +350,17 @@ FACTS:
 
 # ---------------------------------------------------------------- weekend columns (Home, Adam 2026-10-06)
 
-WEEKEND_WORDS = (120, 260)      # what code accepts; the prompt asks for about 170 and the model runs long
+WEEKEND_WORDS = (120, 260)      # what code accepts; the prompt asks for about 150 (never over 190) and the model runs long
 
 # FACTS and the league first-to-last fixed text: everything that never changes comes before FACTS (Groq's prefix cache).
-WRITE_WEEKEND = """You write the weekend column for a personal sports app: how the {league} weekend went, about 170 words,
+WRITE_WEEKEND = """You write the weekend column for a personal sports app: how the {league} weekend went, in about 150 words,
 in the voice of a Ringer-style podcast host: conversational, opinionated, self-aware, a fan first, with a running joke
 or two and at most one pop-culture comparison that lands. Never write as a real person or quote anyone. Reply with
 JSON only: {{"title": "...", "paragraphs": ["...", "..."]}}
 
 Rules:
-- The title is a take, not a label, at most 70 characters. Two to four short paragraphs, 150 to 190 words in all. No
+- The title is a take, not a label, at most 70 characters. Two to four short paragraphs, about 150 words in all and
+  never more than 190: shorter is better. No
   bullets, headings, hashtags, emojis or preamble. Never use double quotation marks inside the text (they break the
   JSON): use single quotes or none.
 - Lead with the weekend's biggest story, then the best of the rest: who surprised, who flopped, who scared everyone.
@@ -370,8 +371,9 @@ Rules:
 - Never state a record, a streak, a standing, a stat or any history FACTS doesn't give, and never name a player FACTS
   doesn't name. A player's age, experience, contract or past is a fact too: leave it out unless FACTS says it. No
   predictions stated as fact; a hedged read ("feels like", "looks headed for") is fine.
-- A superlative about results (biggest blowout, closest game, most points) is a game fact: it must match the scores and
-  margins in FACTS. Opinions, jokes, exaggeration and comparisons are fine: they are mood, never a game fact.
+- Describe the games, don't rank them against each other: no biggest, only, best, worst, most, closest, loudest,
+  surprise or stunner. Call a game an upset only when FACTS tags it one (ranks exist for college games only). Opinions,
+  jokes, exaggeration and comparisons about a team or a play are fine: they are mood, never a game fact.
 - NOTES hold, per featured game, a line from a checked recap and ESPN's top passer, rusher and receiver lines
   ("leaders"): the only player stats you may cite, exactly as written. NEWS is ESPN headlines: use one or two at most.
 - Don't call anything the biggest, loudest, best, worst, closest or most of the weekend unless the margins and tags in
@@ -406,7 +408,7 @@ A problem is a claim about the GAMES that FACTS does not support:
 - a wrong or unsupported score, margin, team, player, rank, or who beat whom;
 - a stat, injury, quote, record, streak, standing or history FACTS never gives, or a play or a moment in a game FACTS
   never describes;
-- a superlative about results (biggest blowout, closest game, highest score, only upset) that the scores and margins in
+- a ranking of results (biggest blowout, closest game, highest score, only upset) that the scores and margins in
   FACTS don't bear out.
 Not a problem, so never list them: opinion, mood, jokes, exaggeration and comparisons; pop-culture references; color
 about fans, bands, coaches' feelings or owners; a hedged read about next week ("feels like", "looks headed for");
