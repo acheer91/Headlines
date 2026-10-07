@@ -875,3 +875,10 @@ def test_unknown_names_skips_sentence_starts_possessives_and_names_in_the_facts(
     ok = ["Meanwhile the Falcons' offense and the Saints’ defense met. Penix did the rest, and NFL fans noticed."]
     assert writer.unknown_names(ok, facts) == []
     assert writer.unknown_names(["The Falcons beat Chicago in the Superdome."], facts) == ["Chicago", "Superdome"]
+
+
+def test_unknown_names_lets_acronyms_through_and_the_title_is_not_checked(model):
+    assert writer.unknown_names(["Nine TDs and a BBQ later, the NFL shrugged."], '{"x": "NFL"}') == []
+    title_case = {"title": "Bears Flatten Eagles In Cold", "paragraphs": _column()["paragraphs"]}
+    model([title_case])
+    assert writer.write_weekend(_weekend_facts())["status"] == "ready"

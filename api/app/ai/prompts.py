@@ -359,7 +359,7 @@ or two and at most one pop-culture comparison that lands. Never write as a real 
 JSON only: {{"title": "...", "paragraphs": ["...", "..."]}}
 
 Rules:
-- The title is a take, not a label, at most 70 characters. Two to four short paragraphs, about 150 words in all and
+- The title is a take, not a label, at most 70 characters, in sentence case. Two to four short paragraphs, about 150 words in all and
   never more than 190: shorter is better. No
   bullets, headings, hashtags, emojis or preamble. Never use double quotation marks inside the text (they break the
   JSON): use single quotes or none.

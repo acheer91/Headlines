@@ -1060,7 +1060,7 @@ KNOWN_CAPS = {"I", "NFL", "NCAAF", "AP", "CFP", "SEC", "ACC", "OT"}
 
 
 def unknown_names(texts: list[str], facts_json: str) -> list[str]:
-    """Capitalized words (not a sentence's first) that FACTS never uses: an invented venue, day, player or show. A column
+    """Capitalized words (not a sentence's first; not acronyms) that FACTS never uses: an invented venue, day, player or show. A column
     may riff, but every name in it comes from FACTS (the first weekend column set a game in a stadium FACTS never named)."""
     known = {w.lower() for w in WORD.findall(facts_json)} | {k.lower() for k in KNOWN_CAPS}
     out: list[str] = []
@@ -1068,7 +1068,8 @@ def unknown_names(texts: list[str], facts_json: str) -> list[str]:
         for sentence in SENTENCE.split(_norm(t)):
             for w in WORD.findall(sentence)[1:]:
                 base = re.sub(r"['’]s?$", "", w)
-                if base[:1].isupper() and base.lower() not in known and base not in out:
+                acronym = base.isupper() or (base.endswith("s") and base[:-1].isupper())        # TD, TDs, BBQ
+                if base[:1].isupper() and not acronym and base.lower() not in known and base not in out:
                     out.append(base)
     return out
 
@@ -1093,7 +1094,7 @@ def write_weekend(facts: dict) -> dict:
                 raise CheckFailed(f"{words} words: write about 150, never over 190")
             texts = [title, *paras]
             _texts_ok(texts, fj, live=True)
-            invented = unknown_names(texts, fj)
+            invented = unknown_names(paras, fj)          # not the title: it is in Title Case
             if invented:
                 raise CheckFailed(f"names FACTS never gives: {invented}; use only the teams, players and places in FACTS "
                                   "(no stadiums, days of the week, shows or brands)")
