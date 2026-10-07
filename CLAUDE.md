@@ -79,20 +79,27 @@ Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `ph
   at least 2 times or the set is rewritten once (`writer.LEAGUE_FLOOR`). The fingerprint is the news alone. The app
   (`Home.tsx`) also drops any line that reads as a final score, so an older stored set renders as news. Kept for the
   weekend columns: `jobs.featured_final` (the NCAAF board filter for finals).
-- **Weekend columns (Oct 6, Adam: "a Bill Simmons / Ringer style summary of the weekend", NFL and NCAAF, ~170 words each; not
-  deployed).** A new text kind `weekend` (migration 011: `ai_texts.league`, kind check widened), one row per run like
-  headlines, route = recap's (`client.ROUTES["weekend"]`). `jobs.write_weekend(league, reason)`: the window's finals
-  (NFL 5 days, NCAAF 3 days: `WEEKEND_WINDOW`; NCAAF follows the board filter; fewer than 3 = skipped), the stored recaps of
-  the 6 most interesting games, 5 news items -> `weekend_facts.build` (code tags what the scores prove: upset, ranked vs
-  ranked, one-score game, blowout, overtime; never facts.py). `writer.write_weekend`: one write, code checks (numbers in the
-  facts, 130-230 words, no betting words, no history/record/streak words, no reused voice example) then a game-facts-only
-  fact-check (`prompts.WEEKEND_FACT_CHECK`: opinion and jokes pass), one rewrite told why. Same facts as the last ready
-  column = `current`; same 3-rejection cap. Schedules (new `WeekendWorkflow`, ids `ai-weekend-<league>`, only for
-  `HEADLINE_LEAGUES`): NFL Tuesday 7 AM PT, NCAAF Sunday 8 AM PT. `GET /api/weekend` lists each league's newest ready column
-  from the last 8 days; Home shows them above the news ("Written by AI"). Run one now: `workflow start --type
-  WriteTextWorkflow --task-queue scores --workflow-id ai-weekend-nfl-manual --input '{"kind":"weekend","league":"nfl","espn_id":null,"reason":"manual"}'`.
-  After deploy run `docker compose exec worker python -m app.temporal.schedules` to create the two schedules. Not yet run
-  against a real model (the laptop has no keys): read the first column by hand, then `ai_calls` for the `weekend:*` kinds.
+- **Weekend columns (Oct 6, Adam: "a Bill Simmons / Ringer style summary of the weekend", NFL and NCAAF; DEPLOYED Oct 6,
+  a8145ba..).** A text kind `weekend` (migration 011: `ai_texts.league`, kind check widened), one row per run like headlines,
+  route = recap's. `jobs.build_weekend_facts(league, window=None)` -> `weekend_facts.build`: the window's finals (NFL 5 days,
+  NCAAF 3: `WEEKEND_WINDOW`; NCAAF follows the board filter; under 3 finals = skipped), tags code can prove from the scores
+  (upset, ranked vs ranked, one-score game, blowout, overtime) with a `key` spelling them out, and for the 6 most interesting
+  games the stored recap's first sentences plus ESPN's top passer/rusher/receiver lines (`summary.leaders`), and 5 news items
+  (fantasy and listicles dropped). `writer.write_weekend`: ONE write at **low reasoning** (`WEEKEND_REASONING`: at medium the
+  3,000-token allowance went on thinking and Groq cut the JSON off), up to **3 drafts** (`WEEKEND_TRIES`), asked for ~150
+  words (accepted 120-260), no examples in the prompt (the model lifted their phrases; the copy check against the
+  one-liner examples stays). Code checks: every number in the facts; **every capitalized name in the paragraphs in the facts**
+  (`unknown_names`: no invented venue, day or show; acronyms pass, the title is not checked); no betting words; no
+  history/record/streak words; then a game-facts-only fact-check (`prompts.WEEKEND_FACT_CHECK`; Qwen is jumpy about
+  superlatives, so the prompt tells the writer to describe games, not rank them). Same facts as the last ready column =
+  `current`; 3-rejection cap as headlines. Schedules (`WeekendWorkflow`, ids `ai-weekend-<league>`, only for
+  `HEADLINE_LEAGUES`): NFL Tuesday 7 AM PT, NCAAF Sunday 8 AM PT. `GET /api/weekend` = each league's newest ready column from
+  the last 8 days; Home shows them above the news ("Written by AI"). Run one now: `workflow start --type WriteTextWorkflow
+  --task-queue scores --workflow-id ai-weekend-nfl-manual-<n> --input '{"kind":"weekend","league":"nfl","espn_id":null,"reason":"manual"}'`.
+  The first NCAAF column (Oct 6) was written by a one-off script with a 5.5-day window (the Sunday run covers Thu-Sat).
+  **Known soft spots:** the model sometimes garbles a sentence the checkers don't catch ("scrambling for a 21-point win");
+  the overflow checker `or:qwen/qwen3.8-27b:free` answers 404, so when Groq's Qwen is busy or cooling a check fails over to
+  it and the write fails "openrouter 404" (Temporal retries; pre-existing, it also failed the 00:00 UTC headlines run).
 - **Recap length: back to ~120 words** (2026-10-01, until Adam confirms 200-230 was his call): the recap paragraph is
   about 120 words (code accepts 60-200), each team 2-3 sentences. The one-minute-read tiers (standard ~200 words,
   featured ~230 for a favorite, ranked vs ranked, two winning NFL teams, overtime, a margin of 3 or less, or 2+ lead
