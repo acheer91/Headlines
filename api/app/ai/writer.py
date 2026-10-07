@@ -1082,9 +1082,7 @@ def write_weekend(facts: dict) -> dict:
                 raise CheckFailed(f"reused an example: {copy!r}; write your own words")
             _fact_check(texts, fj, stats, prompts.WEEKEND_FACT_CHECK)
 
-        out = _step(prompts.WRITE_WEEKEND.format(
-            league=facts["league"], facts=fj, examples="\n".join(f"- {ex}" for ex in prompts.WEEKEND_EXAMPLES)),
-            check, stats)
+        out = _step(prompts.WRITE_WEEKEND.format(league=facts["league"], facts=fj), check, stats)
         return {"status": "ready", "body": {"title": out["title"].strip(), "paragraphs": [p.strip() for p in out["paragraphs"]]}}
 
     return _run("weekend", go)

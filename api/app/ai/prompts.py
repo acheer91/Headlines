@@ -350,9 +350,6 @@ FACTS:
 
 # ---------------------------------------------------------------- weekend columns (Home, Adam 2026-10-06)
 
-# Voice anchors from the one-liner list: the column's host is the same person, a fan first. Never reused word for word.
-WEEKEND_EXAMPLES = [ONE_LINER_EXAMPLES[i].split("] ", 1)[1] for i in (3, 4, 5, 7, 10, 11)]   # the [phase] tag dropped
-
 WEEKEND_WORDS = (130, 230)      # what code accepts; the prompt asks for about 170
 
 # FACTS and the league first-to-last fixed text: everything that never changes comes before FACTS (Groq's prefix cache).
@@ -380,8 +377,10 @@ Rules:
   serious injury: drop the bit, be brief). No betting words (spread, over/under, bet, odds, cover), advice, slurs or
   politics; mild language only.
 
-The voice, from other moments. They set the tone only: borrow no phrase, joke or image from them.
-{examples}
+The voice: specific over generic, so name the player, the play or the team behind a joke; compare a team's weekend to
+one ordinary, relatable situation instead of a cliche; mix short punchy sentences with a long one that runs away from
+itself; talk to the reader sparingly; let the loser get roasted and the winner get a grudging compliment. Every line
+is your own: nothing borrowed from any other writer, show or sample.
 
 FACTS:
 {facts}

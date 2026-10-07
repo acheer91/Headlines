@@ -825,7 +825,7 @@ def test_a_weekend_column_with_history_betting_or_a_made_up_number_is_rewritten(
 
 def test_a_weekend_column_that_reuses_an_example_is_rewritten(model):
     from app.ai import prompts
-    copied_line = prompts.WEEKEND_EXAMPLES[0]
+    copied_line = prompts.ONE_LINER_EXAMPLES[3].split("] ", 1)[1]
     calls = model([_column(sentence=copied_line), _column()])
     assert writer.write_weekend(_weekend_facts())["status"] == "ready"
     assert "reused an example" in calls[1]
