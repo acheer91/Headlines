@@ -825,7 +825,7 @@ def test_a_weekend_column_with_history_betting_or_a_made_up_number_is_rewritten(
 
 def test_a_weekend_column_that_reuses_an_example_is_rewritten(model):
     from app.ai import prompts
-    copied_line = prompts.ONE_LINER_EXAMPLES[3].split("] ", 1)[1]
+    copied_line = prompts.ONE_LINER_EXAMPLES[4].split("] ", 1)[1]
     calls = model([_column(sentence=copied_line), _column()])
     assert writer.write_weekend(_weekend_facts())["status"] == "ready"
     assert "reused an example" in calls[1]
@@ -861,3 +861,17 @@ def test_the_weekend_column_is_written_at_low_reasoning_and_other_texts_are_not(
     monkeypatch.setattr(client, "write", write)
     assert writer.write_weekend(_weekend_facts())["status"] == "ready"
     assert seen == ["low"]
+
+
+def test_a_weekend_column_may_not_invent_a_venue_a_day_or_a_show(model):
+    bad = "The Bears flattened the Eagles 31-7 at Soldier Field on Sunday and it felt like a Netflix finale."
+    calls = model([_column(sentence=bad), _column()])
+    assert writer.write_weekend(_weekend_facts())["status"] == "ready"
+    assert "names FACTS never gives" in calls[1] and "Soldier" in calls[1] and "Sunday" in calls[1] and "Netflix" in calls[1]
+
+
+def test_unknown_names_skips_sentence_starts_possessives_and_names_in_the_facts():
+    facts = '{"results": ["Atlanta Falcons 45, New Orleans Saints 24"], "notes": [{"leaders": ["Falcons passing: Michael Penix 20/30"]}]}'
+    ok = ["Meanwhile the Falcons' offense and the Saints’ defense met. Penix did the rest, and NFL fans noticed."]
+    assert writer.unknown_names(ok, facts) == []
+    assert writer.unknown_names(["The Falcons beat Chicago in the Superdome."], facts) == ["Chicago", "Superdome"]

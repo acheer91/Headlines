@@ -1055,6 +1055,24 @@ HISTORY = re.compile(r"\b(streaks?|undefeated|unbeaten|winless|all-time|franchis
                      re.I)
 
 
+WORD = re.compile(r"[A-Za-z][A-Za-z'’]*")
+KNOWN_CAPS = {"I", "NFL", "NCAAF", "AP", "CFP", "SEC", "ACC", "OT"}
+
+
+def unknown_names(texts: list[str], facts_json: str) -> list[str]:
+    """Capitalized words (not a sentence's first) that FACTS never uses: an invented venue, day, player or show. A column
+    may riff, but every name in it comes from FACTS (the first weekend column set a game in a stadium FACTS never named)."""
+    known = {w.lower() for w in WORD.findall(facts_json)} | {k.lower() for k in KNOWN_CAPS}
+    out: list[str] = []
+    for t in texts:
+        for sentence in SENTENCE.split(_norm(t)):
+            for w in WORD.findall(sentence)[1:]:
+                base = re.sub(r"['’]s?$", "", w)
+                if base[:1].isupper() and base.lower() not in known and base not in out:
+                    out.append(base)
+    return out
+
+
 def write_weekend(facts: dict) -> dict:
     """A league's weekend column from weekend_facts.build: {title, paragraphs}. One write call, then the code checks
     and a fact-check that judges game facts only; a failure is rewritten once, told why."""
@@ -1075,6 +1093,10 @@ def write_weekend(facts: dict) -> dict:
                 raise CheckFailed(f"{words} words: write about 150, never over 190")
             texts = [title, *paras]
             _texts_ok(texts, fj, live=True)
+            invented = unknown_names(texts, fj)
+            if invented:
+                raise CheckFailed(f"names FACTS never gives: {invented}; use only the teams, players and places in FACTS "
+                                  "(no stadiums, days of the week, shows or brands)")
             bet = bet_talk(texts, live=True)
             if bet:
                 raise CheckFailed(f"bet talk: {bet!r}")
