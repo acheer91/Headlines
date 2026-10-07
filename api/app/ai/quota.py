@@ -1,0 +1,100 @@
+"""Free-tier quota shared by every process through Postgres (spec: "Sharing quota between the API and the worker").
+
+The api (writing on open) and the worker (writing ahead) call the same Groq models. Pacing in memory, each would
+think it had a model's whole minute to itself. Here every call reserves its tokens in `ai_calls` under a
+per-model advisory lock, so two processes can never both take a model's last slot, and a 429's cool-down in
+`ai_cooling` is seen by both. Turned on with AI_QUOTA=db (docker-compose sets it for api and worker).
+"""
+from __future__ import annotations
+
+import time
+
+from .. import db
+from . import client
+
+# ai_calls rows older than this are pruned. The per-minute sum and the 24 h budgets need only a day; the rest is the
+# history `python -m app.ai.usage` reports (a week of real token numbers is what the held decisions wait for).
+KEEP = "14 days"
+
+
+class DbQuota:
+    def reserve(self, models: list[str], cost: int, limit: int, wait: bool,
+                kind: str | None = None) -> tuple[str, int] | None:
+        while True:
+            soonest = None           # seconds until the first usable model's oldest reservation leaves its minute
+            any_usable = False
+            for m in models:
+                with db.connect() as conn:
+                    conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"ai-quota:{m}",))
+                    cooling = conn.execute("SELECT 1 FROM ai_cooling WHERE model = %s AND until > now()",
+                                           (m,)).fetchone()
+                    if cooling:
+                        continue
+                    any_usable = True
+                    row = conn.execute("""
+                        SELECT coalesce(sum(reserved), 0) AS held, count(*) AS n,
+                               extract(epoch FROM (min(at) + interval '60 seconds' - now())) AS frees_in
+                        FROM ai_calls WHERE model = %s AND at > now() - interval '60 seconds'""", (m,)).fetchone()
+                    if row["n"] == 0 or row["held"] + cost <= limit:
+                        rid = conn.execute("""INSERT INTO ai_calls (model, reserved, kind) VALUES (%s, %s, %s)
+                                              RETURNING id""", (m, cost, kind)).fetchone()["id"]
+                        if rid % 200 == 0:
+                            conn.execute(f"DELETE FROM ai_calls WHERE at < now() - interval '{KEEP}'")
+                        return m, rid
+                    if soonest is None:
+                        soonest = max(float(row["frees_in"] or 0), 0.0) + 0.1
+            if not any_usable or not wait:
+                return None
+            client.paced_seconds += soonest
+            time.sleep(soonest)
+
+    def cool(self, model_name: str, seconds: float) -> None:
+        with db.connect() as conn:
+            conn.execute("""
+                INSERT INTO ai_cooling (model, until) VALUES (%s, now() + make_interval(secs => %s))
+                ON CONFLICT (model) DO UPDATE SET until = GREATEST(ai_cooling.until, EXCLUDED.until)""",
+                         (model_name, seconds))
+
+    def is_cooling(self, model_name: str) -> bool:
+        with db.connect() as conn:
+            return conn.execute("SELECT 1 FROM ai_cooling WHERE model = %s AND until > now()",
+                                (model_name,)).fetchone() is not None
+
+    def cooling_left(self, models: list[str]) -> float | None:
+        """Seconds until the first of `models` stops cooling down; None if one of them isn't cooling."""
+        with db.connect() as conn:
+            rows = conn.execute("""
+                SELECT m, extract(epoch FROM (c.until - now())) AS left FROM unnest(%s::text[]) AS m
+                LEFT JOIN ai_cooling c ON c.model = m""", (models,)).fetchall()
+        left = [float(r["left"]) if r["left"] is not None else 0.0 for r in rows]
+        return None if not left or min(left) <= 0 else min(left)
+
+    def spent_today(self, pool: str, requests: bool) -> tuple[float, float]:
+        """(spent in the last 24 h, seconds until the oldest of it leaves the window) for a model, or for every model
+        under a prefix pool ("or:", OpenRouter's account-wide budget). Spent is requests, or tokens used (reserved
+        until the call reports)."""
+        with db.connect() as conn:
+            row = conn.execute("""
+                SELECT CASE WHEN %(req)s THEN count(*) ELSE coalesce(sum(coalesce(used, reserved)), 0) END AS spent,
+                       extract(epoch FROM (min(at) + interval '24 hours' - now())) AS frees_in
+                FROM ai_calls
+                WHERE (CASE WHEN %(prefix)s THEN starts_with(model, %(pool)s) ELSE model = %(pool)s END)
+                  AND at > now() - interval '24 hours'""",
+                               {"req": requests, "prefix": pool.endswith(":"), "pool": pool}).fetchone()
+        return float(row["spent"]), max(float(row["frees_in"] or 0), 0.0)
+
+    def used(self, handle: object, tokens: int, cached: int | None = None, remaining: int | None = None,
+             reset: float | None = None) -> None:
+        """tokens: what the call counts against the day (Groq's total_tokens, cached included). cached, remaining and
+        reset (Groq's cached prompt tokens and rate-limit headers): logged only until the log-only week (T1) shows
+        Groq doesn't count cached tokens (M1); the budgets never read them."""
+        if handle is not None:
+            with db.connect() as conn:
+                conn.execute("""UPDATE ai_calls SET used = %s, cached_tokens = %s, remaining_tokens = %s,
+                                                    reset_tokens_secs = %s WHERE id = %s""",
+                             (tokens, cached, remaining, reset, handle))
+
+
+def install() -> None:
+    """Share quota through Postgres from now on (api and worker startup, when AI_QUOTA=db)."""
+    client.quota = DbQuota()

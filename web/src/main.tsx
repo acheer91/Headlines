@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter, NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { Scoreboard } from "./Scoreboard";
 import { GamePage } from "./GamePage";
+import { Home } from "./Home";
 import { ErrorBoundary } from "./ErrorBoundary";
 import "./styles.css";
 
@@ -18,6 +19,10 @@ const TABS = [
 function TabBar() {
   return (
     <nav className="tabs">
+      {/* Screen A is a peer of the sports: always one tap away (Adam, 2026-10-02: there was no way back to it). */}
+      <NavLink to="/" end className={({ isActive }) => (isActive ? "tab active" : "tab")}>
+        Home
+      </NavLink>
       {TABS.map((t) =>
         t.enabled ? (
           <NavLink key={t.id} to={`/scores/${t.id}`} className={({ isActive }) => (isActive ? "tab active" : "tab")}>
@@ -44,8 +49,8 @@ function App() {
     <BrowserRouter>
       <RoutedErrorBoundary>
       <Routes>
-        {/* Screen A (headlines) arrives in Phase 4; until then home is the NFL board. */}
-        <Route path="/" element={<Navigate to="/scores/nfl" replace />} />
+        {/* Screen A: the AI headlines (Phase 4); the NFL board until the first set is written. */}
+        <Route path="/" element={<Home />} />
         <Route path="/scores/:league" element={<Scoreboard />} />
         <Route path="/game/:id" element={<GamePage />} />
         <Route path="*" element={<Navigate to="/" replace />} />

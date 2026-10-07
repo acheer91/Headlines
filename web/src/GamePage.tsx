@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { getGame, type Bet, type GameCard, type GameDetail, type Injury, type Leader, type SideRow } from "./api";
+import { getAi, getGame, type AiText, type Bet, type GameCard, type GameDetail, type Injury, type Leader, type SideRow } from "./api";
 import { GameCardView, LineRow, tbdDate } from "./GameCard";
 import { recall, remember, touchGame } from "./lastSeen";
 import { updatedAt } from "./Scoreboard";
@@ -33,6 +33,9 @@ export function GamePage() {
   const [g, setG] = useState<GameDetail | null>(() => recall<GameDetail>(`game:${id}`, looksLikeGame));
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // AI text loads after the game (stats show at once); null while it's being fetched or written.
+  const [ai, setAi] = useState<AiText | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
   const shownId = useRef(id);
   shownId.current = id;
   const loadingId = useRef<string | undefined | null>(null);
@@ -47,6 +50,12 @@ export function GamePage() {
       remember(`game:${id}`, fresh);
       touchGame(Number(id));
       if (shownId.current === id) setG(fresh);
+      // Once per open or pull (never on a timer): the server returns stored text or writes it now.
+      setAiLoading(true);
+      getAi(Number(id))
+        .then((a) => shownId.current === id && setAi(a))
+        .catch(() => shownId.current === id && setAi(null))
+        .finally(() => shownId.current === id && setAiLoading(false));
     } catch (e) {
       if (shownId.current === id) setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -60,6 +69,7 @@ export function GamePage() {
   // Last-seen version of this game (if any) is already on screen; pull fresh data over it.
   useEffect(() => {
     setG(recall<GameDetail>(`game:${id}`, looksLikeGame));
+    setAi(null);
     load();
   }, [load, id]);
 
@@ -95,7 +105,7 @@ export function GamePage() {
       )}
       {g ? (
         <>
-          <Detail g={g} />
+          <Detail g={g} ai={ai} aiLoading={aiLoading} />
           {g.summary_updated_at && (
             <p className="muted center small">
               {loading ? "Updating… " : ""}Game details updated {updatedAt(g.summary_updated_at)}
@@ -114,13 +124,19 @@ export function GamePage() {
   );
 }
 
-function Detail({ g }: { g: GameDetail }) {
+function Detail({ g, ai, aiLoading }: { g: GameDetail; ai: AiText | null; aiLoading: boolean }) {
   const noData = g.summary_available ? "ESPN didn't send this" : "Not available yet";
+  // Live: the AI one-liner when it's ready (checked) and has something to say. No box-score template any more
+  // (Adam, Oct 4: a bare score and a QB's yards read as awkward): a failed or empty line shows nothing.
+  const oneLiner = ai?.kind === "one_liner" && ai.status === "ready" && ai.body && "line" in ai.body ? ai.body.line : null;
   return (
     <main className="list">
       <Matchup g={g} />
-      {g.screen === "C2" && g.one_liner && <p className="oneliner">{g.one_liner}</p>}
+      {g.screen === "C2" && oneLiner && <p className="oneliner">{oneLiner}</p>}
       {g.screen !== "C1" && <Linescore g={g} />}
+
+      {/* Adam, Oct 3: the preview and edges lead the pre-game page, above the line and the stats. */}
+      {g.screen === "C1" && <PreviewSections g={g} ai={ai} loading={aiLoading} />}
 
       {g.screen === "C1" && (
         <Section title="Line">
@@ -142,11 +158,7 @@ function Detail({ g }: { g: GameDetail }) {
         </Section>
       )}
 
-      {g.placeholders.map((p) => (
-        <Section key={p} title={p}>
-          <p className="muted empty">Coming in Phase 4</p>
-        </Section>
-      ))}
+      {g.screen === "D" && g.completed !== false && <RecapSections g={g} ai={ai} loading={aiLoading} />}
     </main>
   );
 }
@@ -377,5 +389,118 @@ function Injuries({ g }: { g: GameDetail }) {
         </div>
       ))}
     </div>
+  );
+}
+
+// ---------- Phase 4: AI text ----------
+
+const readyBody = <K extends string>(ai: AiText | null, kind: AiText["kind"], key: K) =>
+  ai && ai.kind === kind && ai.status === "ready" && ai.body && key in ai.body ? (ai.body as Record<K, unknown>) : null;
+
+/** The server is writing it (or handed it to the worker): the next pull may have it. */
+const beingWritten = (ai: AiText | null) => ai?.status === "writing" || ai?.status === "queued";
+
+const shortDate = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+
+/** C1: the preview, edges per team with their sources, and writers' picks, attributed and linked. */
+function PreviewSections({ g, ai, loading }: { g: GameDetail; ai: AiText | null; loading: boolean }) {
+  const body = readyBody(ai, "preview", "preview") as
+    | { preview: string; edges: { home: { text: string; url: string; outlet: string }[]; away: { text: string; url: string; outlet: string }[] }; picks: { writer: string; outlet: string; pick: string; url: string }[] }
+    | null;
+  const waiting = loading && !body;
+  const fallback =
+    ai?.status === "no_sources"
+      ? "No fresh previews"
+      : beingWritten(ai)
+        ? "Writing the preview… pull again in a minute."
+        : "Preview unavailable right now.";
+  if (ai?.status === "none") return null; // a league without AI text (AI_LEAGUES)
+  return (
+    <>
+      <Section title="Preview">
+        {body ? <p className="ai-text">{body.preview}</p> : <p className="muted empty">{waiting ? "Writing the preview…" : fallback}</p>}
+        {body && ai?.written_at && <p className="muted small">Updated {updatedAt(ai.written_at)}</p>}
+        {body && ai?.sources && ai.sources.length > 0 && (
+          <p className="muted small sources">
+            From{" "}
+            {ai.sources.map((s, i) => (
+              <span key={s.url}>
+                {i > 0 && ", "}
+                <a href={s.url} target="_blank" rel="noreferrer">{s.outlet}</a> ({shortDate(s.published)})
+              </span>
+            ))}
+          </p>
+        )}
+      </Section>
+      {body && (body.edges.away.length > 0 || body.edges.home.length > 0) && (
+        <Section title="Edges">
+          {(["away", "home"] as const).map((side) =>
+            body.edges[side].length ? (
+              <div key={side} className="edges">
+                <h3>{g[side].short ?? g[side].name}</h3>
+                <ul>
+                  {body.edges[side].map((e) => (
+                    <li key={e.text}>
+                      {e.text} <a href={e.url} target="_blank" rel="noreferrer" className="muted small">{e.outlet}</a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null,
+          )}
+        </Section>
+      )}
+      {body && (
+        <Section title="Writers' picks">
+          {body.picks.length ? (
+            <ul className="picks">
+              {body.picks.map((p) => (
+                <li key={p.url + p.writer}>
+                  {p.outlet}'s {p.writer} picks {p.pick}{" "}
+                  <a href={p.url} target="_blank" rel="noreferrer" className="muted small">link</a>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="muted empty">None in these articles</p>
+          )}
+        </Section>
+      )}
+    </>
+  );
+}
+
+/** D: the recap and a short summary per team; the stats-only text when there's no AI text. */
+function RecapSections({ g, ai, loading }: { g: GameDetail; ai: AiText | null; loading: boolean }) {
+  const body = readyBody(ai, "recap", "recap") as { recap: string; bets: string; home: string; away: string } | null;
+  const bets = (g.bets ?? []).filter((b) => b.status === "graded").map((b) => `${b.label}: ${b.text}.`).join(" ");
+  const fallback = `Final: ${g.home.short ?? g.home.name} ${g.home.score ?? ""}, ${g.away.short ?? g.away.name} ${g.away.score ?? ""}.`;
+  return (
+    <>
+      <Section title="Recap">
+        {body ? (
+          <>
+            <p className="ai-text">{body.recap}</p>
+            {body.bets && <p className="muted small">{body.bets}</p>}
+          </>
+        ) : loading ? (
+          <p className="muted empty">Writing the recap…</p>
+        ) : (
+          <>
+            <p className="empty">{fallback} {bets}</p>
+            {beingWritten(ai) && <p className="muted small">Writing the recap… pull again in a minute.</p>}
+          </>
+        )}
+      </Section>
+      {body && (
+        <Section title="Team summaries">
+          {(["away", "home"] as const).map((side) => (
+            <p key={side} className="ai-text">
+              <strong>{g[side].short ?? g[side].name}:</strong> {body[side]}
+            </p>
+          ))}
+        </Section>
+      )}
+    </>
   );
 }

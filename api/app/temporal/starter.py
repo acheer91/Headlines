@@ -7,8 +7,8 @@ from temporalio.client import Client
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
-from .models import GameInput, GameRef, Times
-from .workflows import TASK_QUEUE, GameWorkflow
+from .models import GameInput, GameRef, TextJob, Times
+from .workflows import TASK_QUEUE, GameWorkflow, WriteTextWorkflow, text_workflow_id
 
 
 def workflow_id(league: str, espn_id: str) -> str:
@@ -41,3 +41,14 @@ class Starter:
                 pass  # this game's workflow already completed; never reopen it
         activity.logger.info("%d of %d games have a running workflow", running, len(games))
         return running
+
+
+async def start_text(client: Client, job: TextJob) -> bool:
+    """Start WriteTextWorkflow for one text from outside a workflow (the 8 AM preview step, the runbook). False
+    when that text is already being written."""
+    try:
+        await client.start_workflow(WriteTextWorkflow.run, job, id=text_workflow_id(job), task_queue=TASK_QUEUE,
+                                    id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE)
+        return True
+    except WorkflowAlreadyStartedError:
+        return False

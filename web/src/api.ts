@@ -138,3 +138,35 @@ export type GameDetail = GameCard & {
 };
 
 export const getGame = (id: number) => get<GameDetail>(`/api/games/${id}`);
+
+// ---------- Phase 4: AI text ----------
+
+export type Edge = { text: string; url: string; outlet: string };
+export type Pick = { writer: string; outlet: string; pick: string; url: string };
+export type Source = { title: string; url: string; outlet: string; published: string };
+
+export type AiText = {
+  kind: "preview" | "recap" | "one_liner" | null;
+  /** ready | no_sources ("No fresh previews") | writing or queued (being written: pull again) | failed (show
+   * fallback text) | missing | none */
+  status: "ready" | "no_sources" | "failed" | "writing" | "queued" | "missing" | "none";
+  body:
+    | { preview: string; edges: { home: Edge[]; away: Edge[] }; picks: Pick[] }
+    | { recap: string; bets: string; home: string; away: string }
+    | { line: string | null }
+    | null;
+  sources: Source[] | null;
+  updated_at: string | null;
+  /** When the shown text was written (a failed refresh keeps the last good preview). */
+  written_at: string | null;
+};
+
+/** The AI text that fits the game now. The server may write it on the spot (up to ~20 s for a preview). */
+export const getAi = (id: number) => get<AiText>(`/api/games/${id}/ai`);
+
+export type Headlines = { items: { text: string; url: string | null }[]; updated_at: string } | null;
+export const getHeadlines = () => get<Headlines>("/api/headlines");
+
+// The weekend columns (Ringer-style, one per league, written Tuesday for the NFL and Sunday for NCAAF); [] when none is fresh.
+export type WeekendColumn = { league: string; title: string; paragraphs: string[]; written_at: string };
+export const getWeekend = () => get<WeekendColumn[]>("/api/weekend");

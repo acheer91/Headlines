@@ -11,7 +11,7 @@ TEST_DB = os.environ.get("TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not TEST_DB, reason="set TEST_DATABASE_URL to run DB tests")
 
 MIGRATIONS = sorted((Path(__file__).resolve().parents[2] / "db" / "migrations").glob("*.sql"))
-TABLES = ("league_calendar", "news_items", "team_season_stats", "team_season_leaders", "bet_results", "game_summaries", "fetch_log",
+TABLES = ("ai_calls", "ai_cooling", "ai_texts", "league_calendar", "news_items", "team_season_stats", "team_season_leaders", "bet_results", "game_summaries", "fetch_log",
           "odds_snapshots", "games", "teams", "schema_migrations")
 
 

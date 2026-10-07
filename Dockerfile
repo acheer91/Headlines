@@ -10,6 +10,11 @@ FROM python:3.12-slim
 WORKDIR /srv
 COPY api/requirements.txt api/requirements.txt
 RUN pip install --no-cache-dir -r api/requirements.txt
+# pg_dumpall for the nightly backup (BackupWorkflow); Debian's client is newer than the server's 16, which pg_dump allows.
+RUN apt-get update && apt-get install -y --no-install-recommends postgresql-client && rm -rf /var/lib/apt/lists/*
+# Bake gpt-oss's tokenizer file into the image: tiktoken would otherwise download it on the first AI call.
+ENV TIKTOKEN_CACHE_DIR=/srv/tiktoken
+RUN python -c "import tiktoken; tiktoken.get_encoding('o200k_harmony')"
 COPY api/ api/
 COPY config/ config/
 COPY db/ db/
