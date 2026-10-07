@@ -27,7 +27,7 @@ bowl games are confirmed with the handoff's December checklist by Dec 12.
   1, 4, 5, 8, 9, 12, 15, 17, 18, 37, 151; every other id seen (20, 21, 24, 25, 27, 29, 30, 31, 32, 48, 177, 179) is FCS.
   Texas is `TEX`.
 
-## Phase 4 — AI text (Stage 2 built 2026-09-29 on branch `phase-4-ai-text`; deployed 2026-10-02, later work through 2026-10-06; production runs this branch, PR #11)
+## Phase 4 — AI text (Stage 2 built 2026-09-29 on branch `phase-4-ai-text`; deployed 2026-10-02, later work through 2026-10-06; merged to `main` as PR #11 on 2026-10-07; production runs `main`)
 Scope: previews (preview, edges, writers' picks), recaps and team summaries, the live one-liner, Home headlines.
 The CTO cut the AI one-liner on Oct 1; **Adam put it back the same day** (his call outranks the CTO's): written on
 open. **Oct 4 (Adam): reuse and hand-off.** A line stands while the score is unchanged and 30 minutes (`store.ONE_LINER_TTL`)
@@ -442,7 +442,7 @@ web/src/                  Scoreboard.tsx (B), GamePage.tsx (C1 / C2 / D), GameCa
 ## Next phases (don't start without Adam's go-ahead)
 3. (Built, see above.) The nightly backup moved from cron into Temporal on Oct 6 (Adam, 2026-09-28). Nothing alerts on a failed
    backup beyond the UI's Failed filter: look at it, and the bucket, every Monday.
-4. AI text: built on `phase-4-ai-text` (Groq free tier; see the Phase 4 section). In production; lands on `main` with PR #11.
+4. AI text: built on `phase-4-ai-text` (Groq free tier; see the Phase 4 section). In production; merged to `main` (PR #11, 2026-10-07).
 5. 5a NCAAF built (see the top). 5b: NBA, EPL, MLS (scores only).
    Needs a date-window query: NBA and soccer have no weeks.
 6. Deploy to Oracle Cloud always-free, Tailscale only.
