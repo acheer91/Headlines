@@ -831,11 +831,17 @@ def test_a_weekend_column_that_reuses_an_example_is_rewritten(model):
     assert "reused an example" in calls[1]
 
 
-def test_a_weekend_column_the_fact_checker_rejects_twice_fails(model, checker):
-    checker.extend([[{"quote": "x", "why": "not in FACTS"}], [{"quote": "x", "why": "not in FACTS"}]])
-    model([_column(), _column()])
+def test_a_weekend_column_the_fact_checker_rejects_three_times_fails(model, checker):
+    checker.extend([[{"quote": "x", "why": "not in FACTS"}]] * 3)
+    calls = model([_column(), _column(), _column()])
     res = writer.write_weekend(_weekend_facts())
-    assert res["status"] == "failed" and "fact check" in res["reason"]
+    assert res["status"] == "failed" and "fact check" in res["reason"] and len(calls) == 3      # a third draft is tried
+
+
+def test_a_weekend_column_the_third_draft_can_pass(model, checker):
+    checker.extend([[{"quote": "x", "why": "not in FACTS"}]] * 2)
+    model([_column(), _column(), _column()])
+    assert writer.write_weekend(_weekend_facts())["status"] == "ready"
 
 
 def test_the_weekend_fact_check_prompt_is_the_weekend_one(model, monkeypatch):

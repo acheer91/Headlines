@@ -372,7 +372,11 @@ Rules:
   predictions stated as fact; a hedged read ("feels like", "looks headed for") is fine.
 - A superlative about results (biggest blowout, closest game, most points) is a game fact: it must match the scores and
   margins in FACTS. Opinions, jokes, exaggeration and comparisons are fine: they are mood, never a game fact.
-- NOTES are lines from checked game recaps: build on them. NEWS is ESPN headlines: use one or two at most.
+- NOTES hold, per featured game, a line from a checked recap and ESPN's top passer, rusher and receiver lines
+  ("leaders"): the only player stats you may cite, exactly as written. NEWS is ESPN headlines: use one or two at most.
+- Don't call anything the biggest, loudest, best, worst, closest or most of the weekend unless the margins and tags in
+  FACTS plainly show it; when in doubt, say it without the superlative. When you want a stat that isn't in FACTS, make
+  the joke without one.
 - Roast teams, coaches and plays, never people: nothing about bodies, backgrounds or off-field lives, no injury jokes (a
   serious injury: drop the bit, be brief). No betting words (spread, over/under, bet, odds, cover), advice, slurs or
   politics; mild language only.

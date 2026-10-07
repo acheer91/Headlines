@@ -48,3 +48,22 @@ def test_news_is_trimmed_and_capped():
     out = wf.build("nfl", [game("A", 1, "B", 2)], news)["news"]
     assert len(out) == wf.NEWS_ITEMS and all(len(x) <= wf.NEWS_CHARS for x in out)
     assert wf.build("nfl", [game("A", 1, "B", 2)], [{"headline": "Just a headline", "description": None}])["news"] == ["Just a headline"]
+
+
+def test_leader_lines_name_the_team_and_keep_espns_line():
+    leaders = [{"key": "passingYards", "label": "Passing", "home": {"name": "Caleb Williams", "value": "25/35, 312 YDS, 2 TD"},
+                "away": None},
+               {"key": "rushingYards", "label": "Rushing", "home": {"name": "D'Andre Swift", "value": "20 CAR, 101 YDS"},
+                "away": {"name": "Saquon Barkley", "value": "18 CAR, 77 YDS"}}]
+    assert wf.leader_lines(leaders, "Chicago Bears", "Philadelphia Eagles") == [
+        "Chicago Bears passing: Caleb Williams 25/35, 312 YDS, 2 TD",
+        "Philadelphia Eagles rushing: Saquon Barkley 18 CAR, 77 YDS",
+        "Chicago Bears rushing: D'Andre Swift 20 CAR, 101 YDS"]
+    assert wf.leader_lines([], "A", "B") == []
+
+
+def test_featured_games_get_their_leaders_and_others_do_not():
+    rows = [dict(game("A", 10, "B", 40, i=0), id=1), dict(game("C", 28, "D", 27, i=1), id=2)]
+    facts = wf.build("nfl", rows, [], {1: ["B passing: X 20/30, 250 YDS"], 2: []})
+    assert facts["notes"] == [{"game": "B 40, A 10", "leaders": ["B passing: X 20/30, 250 YDS"]}]       # game 2 has neither
+    assert len(wf.featured([dict(game("A", 1, "B", 2, i=i), id=i) for i in range(10)])) == wf.NOTE_GAMES

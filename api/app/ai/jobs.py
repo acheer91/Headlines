@@ -257,15 +257,22 @@ def weekend_fingerprint(facts_: dict) -> str:
     return hashlib.sha1(json.dumps(facts_, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:16]
 
 
-def write_weekend(league: str, reason: str, preflight: bool = False) -> dict:
-    """The league's weekend column. Written from code's fact sheet (weekend_facts): the finals of the window (NCAAF
-    follows the board filter), the stored recaps of the most interesting of them, and a few news items. The same
-    facts as the last ready column mean nothing to write; a manual run always writes."""
+def _game_leader_lines(conn, row: dict) -> list[str]:
+    """The game's top passer, rusher and receiver per team from the stored summary (a final's is kept); [] if it has none."""
+    stored = db.get_summary_view(conn, row["id"])
+    if not stored or not stored.get("payload"):
+        return []
+    return weekend_facts.leader_lines(summary.leaders(stored["payload"], "game"), row["home"], row["away"])
+
+
+def build_weekend_facts(league: str) -> dict | None:
+    """The league's weekend fact sheet (weekend_facts.build) from what is stored, or None when there is no weekend to
+    write about: not a weekend league, not a headline league, or fewer than WEEKEND_MIN_GAMES finals in the window."""
     if league not in WEEKEND_WINDOW or not scope.headline_league(league):
-        return {"status": "skipped", "id": None}
+        return None
     with db.connect() as conn:
         rows = conn.execute("""
-            SELECT g.league, a.name AS away, g.away_score, h.name AS home, g.home_score, g.status_detail, g.start_time,
+            SELECT g.id, g.league, a.name AS away, g.away_score, h.name AS home, g.home_score, g.status_detail, g.start_time,
                    g.home_conf, g.away_conf, g.home_rank, g.away_rank,
                    h.espn_id AS home_espn_id, a.espn_id AS away_espn_id, h.abbr AS home_abbr, a.abbr AS away_abbr,
                    t.body ->> 'recap' AS recap
@@ -276,12 +283,24 @@ def write_weekend(league: str, reason: str, preflight: bool = False) -> dict:
               AND g.home_score IS NOT NULL AND g.away_score IS NOT NULL
             ORDER BY g.start_time, g.espn_id""", (league, WEEKEND_WINDOW[league])).fetchall()
         news = store.news(conn, [league], days=WEEKEND_NEWS_DAYS, limit=weekend_facts.NEWS_ITEMS)
-        last = store.latest_weekend(conn, league)
     favs = favorites.load()
     rows = [r for r in rows if featured_final(r, favs)]
     if len(rows) < WEEKEND_MIN_GAMES:
+        return None
+    with db.connect() as conn:
+        leaders = {r["id"]: _game_leader_lines(conn, r) for r in weekend_facts.featured(rows)}
+    return weekend_facts.build(league, rows, news, leaders)
+
+
+def write_weekend(league: str, reason: str, preflight: bool = False) -> dict:
+    """The league's weekend column, written from build_weekend_facts: the finals of the window (NCAAF follows the board
+    filter), the stored recaps and leaders of the most interesting of them, and a few news items. The same facts as
+    the last ready column mean nothing to write; a manual run always writes."""
+    facts_ = build_weekend_facts(league)
+    if facts_ is None:
         return {"status": "skipped", "id": None}
-    facts_ = weekend_facts.build(league, rows, news)
+    with db.connect() as conn:
+        last = store.latest_weekend(conn, league)
     fp = weekend_fingerprint(facts_)
     if reason != "manual" and last and last["fingerprint"] == fp:
         return {"status": "current", "id": last["id"]}

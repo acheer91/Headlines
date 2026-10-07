@@ -206,11 +206,11 @@ def _json(prompt: str, light: bool = False) -> dict:
     return out
 
 
-def _step(prompt: str, check: Callable[[dict], None], stats: dict, light: bool = False) -> dict:
-    """One writer JSON call plus its check, rerun once if the check fails, told what was wrong. light: a short
-    structured reply (client.write's low-reasoning mode). RateLimited/AIError propagate."""
+def _step(prompt: str, check: Callable[[dict], None], stats: dict, light: bool = False, tries: int = 2) -> dict:
+    """One writer JSON call plus its check, rerun (once; a weekend column twice) if the check fails, told what was
+    wrong. light: a short structured reply (client.write's low-reasoning mode). RateLimited/AIError propagate."""
     ask = prompt
-    for attempt in (1, 2):
+    for attempt in range(1, tries + 1):
         stats["calls"] += 1
         try:
             out = _json(ask, light)
@@ -221,7 +221,7 @@ def _step(prompt: str, check: Callable[[dict], None], stats: dict, light: bool =
             return out
         except CheckFailed as exc:
             stats.setdefault("rejected", []).append(str(exc))
-            if attempt == 2:
+            if attempt == tries:
                 raise
             ask = f"{prompt}\n\nYour previous draft was rejected: {exc}. Write it again without that problem."
 
@@ -1045,6 +1045,7 @@ def write_headlines(news: list[dict]) -> dict:
 # ---------------------------------------------------------------- weekend columns
 
 WEEKEND_TITLE_CHARS = 80      # asked for 70
+WEEKEND_TRIES = 3             # one column a week per league: a third draft costs little and a failure shows nothing
 # History and standings no fact sheet gives (the one-liner's rule): a column riffs on the weekend, not on the record book.
 HISTORY = re.compile(r"\b(streaks?|undefeated|unbeaten|winless|all-time|franchise (?:record|best|worst)|"
                      r"(?:career|season)[- ]high|record[- ](?:setting|breaking)|first (?:win|loss|time) since|since \d{4})\b",
@@ -1082,7 +1083,7 @@ def write_weekend(facts: dict) -> dict:
                 raise CheckFailed(f"reused an example: {copy!r}; write your own words")
             _fact_check(texts, fj, stats, prompts.WEEKEND_FACT_CHECK)
 
-        out = _step(prompts.WRITE_WEEKEND.format(league=facts["league"], facts=fj), check, stats)
+        out = _step(prompts.WRITE_WEEKEND.format(league=facts["league"], facts=fj), check, stats, tries=WEEKEND_TRIES)
         return {"status": "ready", "body": {"title": out["title"].strip(), "paragraphs": [p.strip() for p in out["paragraphs"]]}}
 
     return _run("weekend", go)

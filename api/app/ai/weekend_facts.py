@@ -71,13 +71,37 @@ def note_of(recap: str | None) -> str | None:
     return " ".join(SENTENCE.split(recap.strip())[:NOTE_SENTENCES])
 
 
-def build(league: str, rows: list[dict], news: list[dict]) -> dict:
-    """rows: the weekend's completed games (home, away, scores, ranks, status_detail, start_time, optional recap),
-    oldest first. news: stored ESPN items, newest first."""
-    ranked = sorted((r for r in rows if note_of(r.get("recap"))), key=lambda r: (-interest(r), r["start_time"]))
-    noted = ranked[:NOTE_GAMES]
-    notes = [{"game": result_line(r).split(" (")[0], "note": note_of(r["recap"])}
-             for r in sorted(noted, key=lambda r: r["start_time"])]
+def featured(rows: list[dict]) -> list[dict]:
+    """The games that get a note and their leaders: the most interesting NOTE_GAMES, oldest first."""
+    top = sorted(rows, key=lambda r: (-interest(r), r["start_time"]))[:NOTE_GAMES]
+    return sorted(top, key=lambda r: r["start_time"])
+
+
+def leader_lines(leaders: list[dict], home: str, away: str) -> list[str]:
+    """summary.leaders(p, "game") -> "Chicago Bears passing: Caleb Williams 25/35, 312 YDS, 2 TD" (ESPN's own line)."""
+    out = []
+    for cat in leaders:
+        for side, team in (("away", away), ("home", home)):
+            who = cat.get(side)
+            if who and who.get("name") and who.get("value"):
+                out.append(f"{team} {cat['label'].lower()}: {who['name']} {who['value']}")
+    return out
+
+
+def build(league: str, rows: list[dict], news: list[dict], leaders: dict | None = None) -> dict:
+    """rows: the weekend's completed games (home, away, scores, ranks, status_detail, start_time, optional recap and
+    id), oldest first. news: stored ESPN items, newest first. leaders: game id -> leader_lines, for the featured games."""
+    leaders = leaders or {}
+    games = []
+    for r in featured(rows):
+        entry = {"game": result_line(r).split(" (")[0]}
+        note = note_of(r.get("recap"))
+        if note:
+            entry["note"] = note
+        if leaders.get(r.get("id")):
+            entry["leaders"] = leaders[r["id"]]
+        if len(entry) > 1:
+            games.append(entry)
     stories = []
     for n in news[:NEWS_ITEMS]:
         text = n["headline"].strip()
@@ -89,6 +113,6 @@ def build(league: str, rows: list[dict], news: list[dict]) -> dict:
         "league": league.upper(),
         "games_played": len(rows),
         "results": [result_line(r) for r in rows],
-        "notes": notes,
+        "notes": games,
         "news": stories,
     }
