@@ -1067,8 +1067,8 @@ def write_weekend(facts: dict) -> dict:
                 raise CheckFailed("no title")
             if len(title) > WEEKEND_TITLE_CHARS:
                 raise CheckFailed(f"the title is {len(title)} characters: at most 70")
-            if not isinstance(paras, list) or not 2 <= len(paras) <= 4 or not all(isinstance(p, str) and p.strip() for p in paras):
-                raise CheckFailed("write two to four paragraphs, each a string")
+            if not isinstance(paras, list) or not 2 <= len(paras) <= 6 or not all(isinstance(p, str) and p.strip() for p in paras):
+                raise CheckFailed("write two to four paragraphs, each one a plain string")
             words = sum(len(p.split()) for p in paras)
             lo, hi = prompts.WEEKEND_WORDS
             if not lo <= words <= hi:

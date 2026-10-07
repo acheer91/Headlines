@@ -350,7 +350,7 @@ FACTS:
 
 # ---------------------------------------------------------------- weekend columns (Home, Adam 2026-10-06)
 
-WEEKEND_WORDS = (130, 230)      # what code accepts; the prompt asks for about 170
+WEEKEND_WORDS = (120, 260)      # what code accepts; the prompt asks for about 170 and the model runs long
 
 # FACTS and the league first-to-last fixed text: everything that never changes comes before FACTS (Groq's prefix cache).
 WRITE_WEEKEND = """You write the weekend column for a personal sports app: how the {league} weekend went, about 170 words,
@@ -398,6 +398,9 @@ Return JSON only:
 
 Decide each claim before you write anything. List only claims that are wrong or unsupported; never list a claim
 and then explain that it is fine. No reasoning in the reply.
+
+FACTS' key explains its labels: a "margin" is points, "blowout" and "one-score game" and "upset" are code's labels with
+the meanings given there. Judge a claim by those meanings.
 
 A problem is a claim about the GAMES that FACTS does not support:
 - a wrong or unsupported score, margin, team, player, rank, or who beat whom;

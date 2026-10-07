@@ -14,6 +14,9 @@ NEWS_ITEMS = 5
 NEWS_CHARS = 160
 ONE_SCORE = 8               # a margin of 8 or less is a one-score game
 BLOWOUT = 21
+# Code's labels, spelled out for the writer and the fact-checker (a checker once read "margin 5" as not 5 points).
+KEY = (f"margin = points the winner won by; blowout = won by {BLOWOUT} or more; one-score game = won by {ONE_SCORE} or "
+       "fewer; upset = an unranked or lower-ranked team beat a ranked one; ranks are the ranks the game was played at")
 
 
 def _team(name: str, rank: int | None) -> str:
@@ -111,6 +114,7 @@ def build(league: str, rows: list[dict], news: list[dict], leaders: dict | None 
         stories.append(text[:NEWS_CHARS].rstrip())
     return {
         "league": league.upper(),
+        "key": KEY,
         "games_played": len(rows),
         "results": [result_line(r) for r in rows],
         "notes": games,
