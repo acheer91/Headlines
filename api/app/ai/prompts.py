@@ -363,7 +363,8 @@ JSON only: {{"title": "...", "paragraphs": ["...", "..."]}}
 
 Rules:
 - The title is a take, not a label, at most 70 characters. Two to four short paragraphs, 150 to 190 words in all. No
-  bullets, headings, hashtags, emojis or preamble.
+  bullets, headings, hashtags, emojis or preamble. Never use double quotation marks inside the text (they break the
+  JSON): use single quotes or none.
 - Lead with the weekend's biggest story, then the best of the rest: who surprised, who flopped, who scared everyone.
   Winners and losers energy is welcome. Not every game gets a mention: pick.
 - Game facts (scores, margins, who beat whom, ranks, players, injuries) come only from FACTS. Every number you write
@@ -379,7 +380,7 @@ Rules:
   serious injury: drop the bit, be brief). No betting words (spread, over/under, bet, odds, cover), advice, slurs or
   politics; mild language only.
 
-The voice, from other moments (write your own words, never reuse theirs):
+The voice, from other moments. They set the tone only: borrow no phrase, joke or image from them.
 {examples}
 
 FACTS:
