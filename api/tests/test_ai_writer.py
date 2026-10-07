@@ -896,3 +896,17 @@ def test_the_checker_prompts_guard_roles_and_winners():
     assert "an analyst called a player" in prompts.FACT_CHECK
     assert "A name before a colon" in prompts.EXTRACT_HEADLINES
     assert "The team listed first in a" in prompts.WEEKEND_FACT_CHECK
+
+
+def test_a_weekend_column_with_a_junk_paragraph_is_rewritten(model):
+    junk = _column()
+    junk["paragraphs"].append(")")
+    calls = model([junk, _column()])
+    assert writer.write_weekend(_weekend_facts())["status"] == "ready"
+    assert "is not a paragraph" in calls[1]
+
+
+def test_ranking_words_catch_an_adjective_in_between():
+    assert writer.RANKING.search("The Falcons were the only true blowout of the day.")
+    assert writer.RANKING.search("Just the only upset.")
+    assert not writer.RANKING.search("There were no surprises, and one blowout.")

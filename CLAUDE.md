@@ -57,8 +57,10 @@ Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `ph
 `docs/phase4-stage2-temporal-spec.md`. Deploy only after Adam approves samples and Phase 5b is signed off, Tue/Wed.
 - **Routing (CTO, 2026-10-01; `client.ROUTES`):** one row per kind (recap, preview, headlines): writer
   `openai/gpt-oss-120b`, **no backup writer** (with 120b out: recap = stats-only template, preview "unavailable",
-  headlines keep the last set), checker `qwen/qwen3.8-27b` on Groq, overflow `or:qwen/qwen3.8-27b:free` (OpenRouter,
-  only while Groq's Qwen is cooling or out of budget). Rules: one named writer + at most one named backup, every
+  headlines keep the last set), checker `qwen/qwen3.8-27b` on Groq, overflow `or:nvidia/nemotron-3-super-120b-a12b:free` (OpenRouter,
+  only while Groq's Qwen is cooling or out of budget; **Oct 6**: OpenRouter retired the free Qwen, every overflow call was a 404;
+  Nemotron 3 Super on `check_eval`: 15/15 errors caught, 0/8 false alarms, Groq's Qwen 11/15 and 1/8; free models list in
+  the Oct 6 session: also gemma-4 31B/26B (rate-limited upstream), nemotron-3-ultra, apodex, poolside laguna, inkling). Rules: one named writer + at most one named backup, every
   failover logged (`ai failover: ...`); **the checker is never the writer's family** (`client.family`, the vendor:
   gpt-oss-20b can't check gpt-oss-120b); no such checker = `NoChecker`, the text fails closed, never unchecked.
   A model's name picks the provider: `or:<id>` OpenRouter, `gemini-*` Gemini, else Groq. `AI_WRITERS` (at most 2) /
@@ -97,9 +99,11 @@ Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `ph
   the last 8 days; Home shows them above the news ("Written by AI"). Run one now: `workflow start --type WriteTextWorkflow
   --task-queue scores --workflow-id ai-weekend-nfl-manual-<n> --input '{"kind":"weekend","league":"nfl","espn_id":null,"reason":"manual"}'`.
   The first NCAAF column (Oct 6) was written by a one-off script with a 5.5-day window (the Sunday run covers Thu-Sat).
-  **Known soft spots:** the model sometimes garbles a sentence the checkers don't catch ("scrambling for a 21-point win");
-  the overflow checker `or:qwen/qwen3.8-27b:free` answers 404, so when Groq's Qwen is busy or cooling a check fails over to
-  it and the write fails "openrouter 404" (Temporal retries; pre-existing, it also failed the 00:00 UTC headlines run).
+  Also refused in code (Oct 6): ranking words (biggest, loudest, closest, "only (true) blowout", stunner), a paragraph under
+  15 words (the first NFL column had a lone ")" as a fourth). **Known soft spot:** the model sometimes garbles a sentence
+  neither checker catches ("leave New Orleans scrambling for a 21-point win": the Saints lost); read each column. When two
+  texts need Qwen at once the second fails over to Nemotron, which can return an empty reply ("openrouter: empty reply",
+  transient: Temporal retries the text, which is how the Oct 6 NFL column got written).
 - **Recap length: back to ~120 words** (2026-10-01, until Adam confirms 200-230 was his call): the recap paragraph is
   about 120 words (code accepts 60-200), each team 2-3 sentences. The one-minute-read tiers (standard ~200 words,
   featured ~230 for a favorite, ranked vs ranked, two winning NFL teams, overtime, a margin of 3 or less, or 2+ lead
@@ -298,11 +302,17 @@ github.com/acheer91/Headlines with a read-only deploy key `~/.ssh/scores_deploy`
 https://scores.tailca897c.ts.net (tailnet only). Phase 1 15/15 and Phase 2 14/14 passed there; survives a reboot.
 Updates: `git pull && docker compose up -d --build` on the server. Temporal UI: https://scores.tailca897c.ts.net:8443
 (`tailscale serve --bg --https=8443 8080`, tailnet only).
-**Backups** (PRD: nightly dump stored off the server): `scripts/backup.sh` runs from the server's crontab at 10:30 UTC
-(3:30 AM Pacific), `pg_dumpall` of every database (app + Temporal from Phase 3) gzipped into the Oracle Object Storage
+**Backups** (PRD: nightly dump stored off the server): **since Oct 6 a Temporal schedule, not cron**: `backup` starts
+`BackupWorkflow` at 3:30 AM Pacific, whose activity `backup_database` runs `pg_dumpall` (postgres-client 17 is in the image) of
+every database (app + Temporal), refuses a dump that is tiny or lacks pg_dumpall's completion line, gzips it and PUTs it to the
+bucket; it retries for 6 hours, then the workflow shows Failed in the UI (the Monday check). The URL is `BACKUP_URL` in the
+server's `.env` (copied from `~/.backup_url`); `scripts/backup.sh` stays as the manual tool, its cron line was removed (old
+crontab: `~/ops/crontab.bak-20261006-pre-temporal-backup`; put the line back if Temporal is ever dropped). First Temporal
+run 2026-10-07 01:12 UTC, 6,528,211 bytes, downloaded, `gunzip -t` ok, 3 databases. Run one now: `workflow start --type
+BackupWorkflow --task-queue scores --workflow-id backup-manual-<n> --input '[]'`. `pg_dumpall` of every database (app + Temporal from Phase 3) gzipped into the Oracle Object Storage
 bucket `scores-backups` (root compartment, always free; lifecycle rule deletes objects after 30 days). Upload uses a
 write-only pre-authenticated request in `~/.backup_url` (mode 600, never in the repo) that **expires 2027-09-28 23:00 UTC**:
-make a new one before then. Log: `~/backup.log`. Restore (tested 2026-09-28): the PAR can't read, so download with
+make a new one before then (edit `BACKUP_URL` in `.env`, restart the worker). Old cron log: `~/backup.log`. Restore (tested 2026-09-28): the PAR can't read, so download with
 `~/.local/oci-cli/bin/oci os object get --auth instance_principal --bucket-name scores-backups --name <file> --file <file>`,
 then `gunzip -c <file> | docker exec -i <empty postgres:16 container> psql -U postgres` and check `select count(*) from games`.
 OS security updates install daily (Ubuntu unattended-upgrades). The laptop stack runs again for Phase 3 testing (its own data).
@@ -430,8 +440,8 @@ web/src/                  Scoreboard.tsx (B), GamePage.tsx (C1 / C2 / D), GameCa
 ```
 
 ## Next phases (don't start without Adam's go-ahead)
-3. (Built, see above.) Not in the Phase 3 handoff, still to do: move the nightly backup (`scripts/backup.sh`, now cron) into Temporal for retries and visibility (Adam, 2026-09-28).
-   Until then a failed backup alerts no one: glance at `~/backup.log` and the bucket on the server once a week.
+3. (Built, see above.) The nightly backup moved from cron into Temporal on Oct 6 (Adam, 2026-09-28). Nothing alerts on a failed
+   backup beyond the UI's Failed filter: look at it, and the bucket, every Monday.
 4. AI text: built on `phase-4-ai-text` (Groq free tier; see the Phase 4 section). Not deployed.
 5. 5a NCAAF built (see the top). 5b: NBA, EPL, MLS (scores only).
    Needs a date-window query: NBA and soccer have no weeks.

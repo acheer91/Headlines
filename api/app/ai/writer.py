@@ -1048,6 +1048,7 @@ def write_headlines(news: list[dict]) -> dict:
 WEEKEND_TITLE_CHARS = 80      # asked for 70
 WEEKEND_REASONING = "low"     # medium spent the 3,000-token reply allowance thinking and cut the JSON off (Oct 6, live); the
                               # code checks and the fact-check, not the model's care, are what keep the facts straight
+PARAGRAPH_MIN_WORDS = 15      # the first NFL column had a lone ")" for a fourth paragraph
 WEEKEND_TRIES = 3             # one column a week per league: a third draft costs little and a failure shows nothing
 # History and standings no fact sheet gives (the one-liner's rule): a column riffs on the weekend, not on the record book.
 HISTORY = re.compile(r"\b(streaks?|undefeated|unbeaten|winless|all-time|franchise (?:record|best|worst)|"
@@ -1057,7 +1058,7 @@ HISTORY = re.compile(r"\b(streaks?|undefeated|unbeaten|winless|all-time|franchis
 
 # Ranking the weekend's games against each other: the prompt forbids it and the checker is jumpy about it, so code refuses
 # it (the first NFL column called a 21-point margin "the weekend's loudest statement").
-RANKING = re.compile(r"\b(biggest|loudest|closest|stunners?|shockers?|only (?:blowout|upset|game|team|one))\b", re.I)
+RANKING = re.compile(r"\b(biggest|loudest|closest|stunners?|shockers?|only (?:\w+ )?(?:blowout|upset|game|team|one))\b", re.I)
 
 WORD = re.compile(r"[A-Za-z][A-Za-z'’]*")
 KNOWN_CAPS = {"I", "NFL", "NCAAF", "AP", "CFP", "SEC", "ACC", "OT"}
@@ -1092,6 +1093,9 @@ def write_weekend(facts: dict) -> dict:
                 raise CheckFailed(f"the title is {len(title)} characters: at most 70")
             if not isinstance(paras, list) or not 2 <= len(paras) <= 6 or not all(isinstance(p, str) and p.strip() for p in paras):
                 raise CheckFailed("write two to four paragraphs, each one a plain string")
+            short = [p for p in paras if len(p.split()) < PARAGRAPH_MIN_WORDS]
+            if short:
+                raise CheckFailed(f"{short[0][:30]!r} is not a paragraph: each is a few sentences")
             words = sum(len(p.split()) for p in paras)
             lo, hi = prompts.WEEKEND_WORDS
             if not lo <= words <= hi:
