@@ -265,9 +265,10 @@ def _game_leader_lines(conn, row: dict) -> list[str]:
     return weekend_facts.leader_lines(summary.leaders(stored["payload"], "game"), row["home"], row["away"])
 
 
-def build_weekend_facts(league: str) -> dict | None:
+def build_weekend_facts(league: str, window: timedelta | None = None) -> dict | None:
     """The league's weekend fact sheet (weekend_facts.build) from what is stored, or None when there is no weekend to
-    write about: not a weekend league, not a headline league, or fewer than WEEKEND_MIN_GAMES finals in the window."""
+    write about: not a weekend league, not a headline league, or fewer than WEEKEND_MIN_GAMES finals in the window.
+    window: a wider look back than WEEKEND_WINDOW, for a first column written mid-week (the launch's NCAAF one)."""
     if league not in WEEKEND_WINDOW or not scope.headline_league(league):
         return None
     with db.connect() as conn:
@@ -281,7 +282,7 @@ def build_weekend_facts(league: str) -> dict | None:
             LEFT JOIN ai_texts t ON t.game_id = g.id AND t.kind = 'recap' AND t.status = 'ready'
             WHERE g.state = 'post' AND g.completed IS TRUE AND g.league = %s AND g.start_time > now() - %s
               AND g.home_score IS NOT NULL AND g.away_score IS NOT NULL
-            ORDER BY g.start_time, g.espn_id""", (league, WEEKEND_WINDOW[league])).fetchall()
+            ORDER BY g.start_time, g.espn_id""", (league, window or WEEKEND_WINDOW[league])).fetchall()
         news = store.news(conn, [league], days=WEEKEND_NEWS_DAYS, limit=weekend_facts.NEWS_ITEMS)
     favs = favorites.load()
     rows = [r for r in rows if featured_final(r, favs)]

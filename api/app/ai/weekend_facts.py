@@ -12,6 +12,7 @@ NOTE_SENTENCES = 2          # a recap's first two sentences: the result and what
 NOTE_GAMES = 6              # games that get a note (the most interesting that have a recap)
 NEWS_ITEMS = 5
 NEWS_CHARS = 160
+NEWS_SKIP = re.compile(r"fantasy|consistency ratings|keys to watch|mock draft|power rankings|odds|picks|predictions|best bets", re.I)
 ONE_SCORE = 8               # a margin of 8 or less is a one-score game
 BLOWOUT = 21
 # Code's labels, spelled out for the writer and the fact-checker (a checker once read "margin 5" as not 5 points).
@@ -106,7 +107,7 @@ def build(league: str, rows: list[dict], news: list[dict], leaders: dict | None 
         if len(entry) > 1:
             games.append(entry)
     stories = []
-    for n in news[:NEWS_ITEMS]:
+    for n in [n for n in news if not NEWS_SKIP.search(n["headline"])][:NEWS_ITEMS]:
         text = n["headline"].strip()
         desc = (n.get("description") or "").strip()
         if desc:

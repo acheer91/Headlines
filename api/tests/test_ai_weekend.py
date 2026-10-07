@@ -67,3 +67,10 @@ def test_featured_games_get_their_leaders_and_others_do_not():
     facts = wf.build("nfl", rows, [], {1: ["B passing: X 20/30, 250 YDS"], 2: []})
     assert facts["notes"] == [{"game": "B 40, A 10", "leaders": ["B passing: X 20/30, 250 YDS"]}]       # game 2 has neither
     assert len(wf.featured([dict(game("A", 1, "B", 2, i=i), id=i) for i in range(10)])) == wf.NOTE_GAMES
+
+
+def test_fantasy_and_listicle_news_is_left_out():
+    news = [{"headline": "Fantasy football consistency ratings for 2026", "description": "x"},
+            {"headline": "3 keys to watch for Sunday", "description": None},
+            {"headline": "Lane Johnson retires", "description": "after 14 seasons"}]
+    assert wf.build("nfl", [game("A", 1, "B", 2)], news)["news"] == ["Lane Johnson retires: after 14 seasons"]
