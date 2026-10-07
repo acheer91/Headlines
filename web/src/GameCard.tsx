@@ -63,7 +63,10 @@ function TeamRow({ side, g, isHome }: { side: Game["home"]; g: Game; isHome: boo
       ) : (
         <span className="logo-ph" />
       )}
-      <span className="name">{side.short ?? side.name}</span>
+      <span className="name">
+        {side.rank != null && <span className="rank">{side.rank}</span>}
+        {side.short ?? side.name}
+      </span>
       <span className="abbr">{side.abbr}</span>
       <span className={`score ${winning ? "lead" : ""}`}>{g.state === "pre" ? "" : side.score ?? ""}</span>
     </div>

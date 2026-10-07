@@ -5,6 +5,8 @@ export type TeamSide = {
   logo: string | null;
   color: string | null;
   score: number | null;
+  /** AP / CFP rank 1-25 (NCAAF); null = unranked */
+  rank: number | null;
 };
 
 export type Line = {
@@ -31,6 +33,8 @@ export type GameCard = {
   clock: string | null;
   broadcast: string | null;
   venue: string | null;
+  /** stored for NCAAF; nothing displays it yet */
+  neutral_site: boolean;
   favorite: boolean;
   home: TeamSide;
   away: TeamSide;
@@ -42,6 +46,10 @@ export type Scoreboard = {
   league: string;
   season: number | null;
   week: number | null;
+  /** 1 preseason, 2 regular season, 3 postseason */
+  season_type: number | null;
+  /** ESPN's season stages in order (weeks, then e.g. Bowls and CFP); Prev and Next walk it */
+  calendar: { season_type: number; week: number; label: string }[];
   updated_at: string | null;
   stale: boolean;
   error: string | null;
@@ -66,9 +74,10 @@ async function get<T>(url: string): Promise<T> {
   return r.json();
 }
 
-export const getScoreboard = (league: string, week?: number, force = false) => {
+export const getScoreboard = (league: string, week?: number, seasonType?: number, force = false) => {
   const q = new URLSearchParams();
   if (week) q.set("week", String(week));
+  if (seasonType) q.set("season_type", String(seasonType));
   if (force) q.set("force", "true");
   const qs = q.toString();
   return get<Scoreboard>(`/api/scoreboard/${league}${qs ? `?${qs}` : ""}`);
@@ -127,3 +136,35 @@ export type GameDetail = GameCard & {
 };
 
 export const getGame = (id: number) => get<GameDetail>(`/api/games/${id}`);
+
+// ---------- Phase 4: AI text ----------
+
+export type Edge = { text: string; url: string; outlet: string };
+export type Pick = { writer: string; outlet: string; pick: string; url: string };
+export type Source = { title: string; url: string; outlet: string; published: string };
+
+export type AiText = {
+  kind: "preview" | "recap" | "one_liner" | null;
+  /** ready | no_sources ("No fresh previews") | writing or queued (being written: pull again) | failed (show
+   * fallback text) | missing | none */
+  status: "ready" | "no_sources" | "failed" | "writing" | "queued" | "missing" | "none";
+  body:
+    | { preview: string; edges: { home: Edge[]; away: Edge[] }; picks: Pick[] }
+    | { recap: string; bets: string; home: string; away: string }
+    | { line: string | null }
+    | null;
+  sources: Source[] | null;
+  updated_at: string | null;
+  /** When the shown text was written (a failed refresh keeps the last good preview). */
+  written_at: string | null;
+};
+
+/** The AI text that fits the game now. The server may write it on the spot (up to ~20 s for a preview). */
+export const getAi = (id: number) => get<AiText>(`/api/games/${id}/ai`);
+
+export type Headlines = { items: { text: string; url: string | null }[]; updated_at: string } | null;
+export const getHeadlines = () => get<Headlines>("/api/headlines");
+
+// The weekend columns (Ringer-style, one per league, written Tuesday for the NFL and Sunday for NCAAF); [] when none is fresh.
+export type WeekendColumn = { league: string; title: string; paragraphs: string[]; written_at: string };
+export const getWeekend = () => get<WeekendColumn[]>("/api/weekend");

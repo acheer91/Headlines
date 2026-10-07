@@ -23,7 +23,7 @@ def main() -> int:
     ap.add_argument("--week", type=int, required=True)
     ap.add_argument("--season-type", type=int, choices=[1, 2, 3],
                     help="1 preseason, 2 regular season, 3 postseason (default: ESPN's current)")
-    ap.add_argument("--league", default="nfl", choices=["nfl"])
+    ap.add_argument("--league", default="nfl", choices=["nfl", "ncaaf"])
     a = ap.parse_args()
     espn.disable_down_switch()
 
