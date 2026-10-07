@@ -72,8 +72,27 @@ Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `ph
 - **AI leagues:** `AI_LEAGUES` (default and compose: `nfl`), separate from `ENABLED_LEAGUES`. Other leagues get no AI
   text: not written ahead, not on open (`/ai` says `none`, the app hides the preview block). **Headlines have their
   own wider list** (Adam, 2026-10-02): `HEADLINE_LEAGUES` (compose: `nfl,ncaaf`; unset it follows `AI_LEAGUES`), and
-  NCAAF finals in the feed follow the board filter (`jobs.featured_final`), not the full FBS slate. The Home screen
-  also got a `Home` tab (first tab, `main.tsx`) and chip-styled rows (`Final` / league chips) the same day.
+  college news is in the feed. The Home screen also got a `Home` tab (first tab, `main.tsx`) the same day.
+  **Oct 6 (Adam): headlines are news only, every league we load, NCAAF included.** No final-score lines: the writer's
+  input is `store.news_balanced` (newest 14 stories per league, so one busy league can't crowd out the other), each
+  story tagged with its league; 8-12 lines asked (6-12 accepted), and a league with 3+ stories in the input must show
+  at least 2 times or the set is rewritten once (`writer.LEAGUE_FLOOR`). The fingerprint is the news alone. The app
+  (`Home.tsx`) also drops any line that reads as a final score, so an older stored set renders as news. Kept for the
+  weekend columns: `jobs.featured_final` (the NCAAF board filter for finals).
+- **Weekend columns (Oct 6, Adam: "a Bill Simmons / Ringer style summary of the weekend", NFL and NCAAF, ~170 words each; not
+  deployed).** A new text kind `weekend` (migration 011: `ai_texts.league`, kind check widened), one row per run like
+  headlines, route = recap's (`client.ROUTES["weekend"]`). `jobs.write_weekend(league, reason)`: the window's finals
+  (NFL 5 days, NCAAF 3 days: `WEEKEND_WINDOW`; NCAAF follows the board filter; fewer than 3 = skipped), the stored recaps of
+  the 6 most interesting games, 5 news items -> `weekend_facts.build` (code tags what the scores prove: upset, ranked vs
+  ranked, one-score game, blowout, overtime; never facts.py). `writer.write_weekend`: one write, code checks (numbers in the
+  facts, 130-230 words, no betting words, no history/record/streak words, no reused voice example) then a game-facts-only
+  fact-check (`prompts.WEEKEND_FACT_CHECK`: opinion and jokes pass), one rewrite told why. Same facts as the last ready
+  column = `current`; same 3-rejection cap. Schedules (new `WeekendWorkflow`, ids `ai-weekend-<league>`, only for
+  `HEADLINE_LEAGUES`): NFL Tuesday 7 AM PT, NCAAF Sunday 8 AM PT. `GET /api/weekend` lists each league's newest ready column
+  from the last 8 days; Home shows them above the news ("Written by AI"). Run one now: `workflow start --type
+  WriteTextWorkflow --task-queue scores --workflow-id ai-weekend-nfl-manual --input '{"kind":"weekend","league":"nfl","espn_id":null,"reason":"manual"}'`.
+  After deploy run `docker compose exec worker python -m app.temporal.schedules` to create the two schedules. Not yet run
+  against a real model (the laptop has no keys): read the first column by hand, then `ai_calls` for the `weekend:*` kinds.
 - **Recap length: back to ~120 words** (2026-10-01, until Adam confirms 200-230 was his call): the recap paragraph is
   about 120 words (code accepts 60-200), each team 2-3 sentences. The one-minute-read tiers (standard ~200 words,
   featured ~230 for a favorite, ranked vs ranked, two winning NFL teams, overtime, a margin of 3 or less, or 2+ lead

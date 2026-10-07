@@ -61,6 +61,7 @@ ROUTES = {
     "recap": Route(_120B, None, _QWEN, _QWEN_OR),
     "preview": Route(_120B, None, _QWEN, _QWEN_OR),
     "headlines": Route(_120B, None, _QWEN, _QWEN_OR),
+    "weekend": Route(_120B, None, _QWEN, _QWEN_OR),       # the weekend columns (Adam, Oct 6): same rules as recaps
     # Live one-liner: cut by the CTO (Oct 1), back on Adam's call the same day. Its fallback is the template.
     "one_liner": Route(_120B, None, _QWEN, _QWEN_OR),
 }

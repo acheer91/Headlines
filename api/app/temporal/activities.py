@@ -241,6 +241,8 @@ def write_text(job: TextJob) -> str:
     ignores the pre-write list only."""
     if job.kind == "headlines":
         out = ai_jobs.write_headlines([x for x in job.league.split(",") if x], job.reason, preflight=True)
+    elif job.kind == "weekend":
+        out = ai_jobs.write_weekend(job.league, job.reason, preflight=True)
     else:
         row = _stored(job.league, job.espn_id)
         if job.reason not in ("manual", "open") and not ai_scope.is_prewritten(row):

@@ -294,7 +294,7 @@ def test_headlines_endpoint(client, fake, monkeypatch):  # noqa: F811
     from app.ai import jobs, writer
     assert client.get("/api/headlines").json() is None
     _sql("INSERT INTO news_items (league, espn_id, headline, published_at) VALUES ('nfl', '1', 'Big news', now())")
-    monkeypatch.setattr(writer, "write_headlines", lambda news, finals: {
+    monkeypatch.setattr(writer, "write_headlines", lambda news: {
         "status": "ready", "body": {"items": [{"text": "Big news", "url": None}]}, "model": "fake"})
     assert jobs.write_headlines(["nfl"], "schedule")["status"] == "ready"
     out = client.get("/api/headlines").json()
@@ -590,7 +590,7 @@ def test_headlines_with_nothing_new_are_not_written_again(client, fake, monkeypa
     from app.ai import jobs, writer
     calls = []
 
-    def write(news, finals):
+    def write(news):
         calls.append(1)
         return {"status": "ready", "body": {"items": []}, "model": "fake"}
     monkeypatch.setattr(writer, "write_headlines", write)
@@ -608,7 +608,7 @@ def test_a_failed_headlines_run_is_tried_again_with_the_same_inputs(client, fake
     from app.ai import jobs, writer
     results = iter([{"status": "failed", "reason": "check failed twice", "model": "fake"},
                     {"status": "ready", "body": {"items": []}, "model": "fake"}])
-    monkeypatch.setattr(writer, "write_headlines", lambda news, finals: next(results))
+    monkeypatch.setattr(writer, "write_headlines", lambda news: next(results))
     _sql("INSERT INTO news_items (league, espn_id, headline, published_at) VALUES ('nfl', '1', 'Big news', now())")
     assert jobs.write_headlines(["nfl"], "schedule")["status"] == "failed"
     assert jobs.write_headlines(["nfl"], "schedule")["status"] == "ready"
@@ -736,7 +736,7 @@ def test_headlines_rejected_cap_times_wait_for_new_news(client, fake, monkeypatc
                    + [{"status": "ready", "body": {"items": []}, "model": "fake"}, dict(REJECTED)])
     calls = []
 
-    def write(news, finals):
+    def write(news):
         calls.append(1)
         return next(results)
     monkeypatch.setattr(writer, "write_headlines", write)
@@ -754,7 +754,7 @@ def test_headlines_rejected_cap_times_wait_for_new_news(client, fake, monkeypatc
 
 def test_a_manual_headlines_run_ignores_the_cap(client, fake, monkeypatch):  # noqa: F811
     from app.ai import jobs, writer
-    monkeypatch.setattr(writer, "write_headlines", lambda news, finals: dict(REJECTED))
+    monkeypatch.setattr(writer, "write_headlines", lambda news: dict(REJECTED))
     _sql("INSERT INTO news_items (league, espn_id, headline, published_at) VALUES ('nfl', '1', 'Big news', now())")
     for _ in range(cap()):
         jobs.write_headlines(["nfl"], "schedule")
@@ -797,17 +797,35 @@ def test_headlines_rejections_are_counted_since_the_last_ready_set(client, fake)
         assert store.headlines_rejected_out(conn, "fp-x") is False
 
 
-def test_headlines_are_written_again_when_a_final_changes(client, fake, monkeypatch):  # noqa: F811
+def test_headlines_are_written_again_when_the_news_changes(client, fake, monkeypatch):  # noqa: F811
     from app.ai import jobs, writer
     calls = []
-    monkeypatch.setattr(writer, "write_headlines", lambda news, finals: (
-        calls.append(finals), {"status": "ready", "body": {"items": []}, "model": "fake"})[1])
-    gid = fake["ids"]["DAL"]
-    _sql("UPDATE games SET start_time = now() - interval '2 hours' WHERE id = %s", gid)    # a final inside the window
-    assert jobs.write_headlines(["nfl"], "schedule")["status"] == "ready" and len(calls[0]) >= 1
+    monkeypatch.setattr(writer, "write_headlines", lambda news: (
+        calls.append(news), {"status": "ready", "body": {"items": []}, "model": "fake"})[1])
+    _sql("INSERT INTO news_items (league, espn_id, headline, published_at) VALUES ('nfl', '1', 'Big news', now())")
+    assert jobs.write_headlines(["nfl"], "schedule")["status"] == "ready" and len(calls[0]) == 1
     assert jobs.write_headlines(["nfl"], "schedule")["status"] == "current"
-    _sql("UPDATE games SET home_score = home_score + 1 WHERE id = %s", gid)                # a stat correction
+    # A final score is not an input: the feed is news only (Adam, 2026-10-06).
+    _sql("UPDATE games SET start_time = now() - interval '2 hours' WHERE id = %s", fake["ids"]["DAL"])
+    _sql("UPDATE games SET home_score = home_score + 1 WHERE id = %s", fake["ids"]["DAL"])
+    assert jobs.write_headlines(["nfl"], "schedule")["status"] == "current"
+    _sql("INSERT INTO news_items (league, espn_id, headline, published_at) VALUES ('nfl', '2', 'More news', now())")
     assert jobs.write_headlines(["nfl"], "schedule")["status"] == "ready" and len(calls) == 2
+
+
+def test_headline_input_is_balanced_across_leagues(client, fake):  # noqa: F811
+    # NFL has the newest 20 stories; the newest-30 read would still show NCAAF, but 40 NFL stories would hide it.
+    from collections import Counter
+    from app import db
+    from app.ai import store
+    for i in range(20):
+        _sql("INSERT INTO news_items (league, espn_id, headline, published_at) VALUES ('nfl', %s, 'nfl', now() - %s * interval '1 minute')", str(i), i)
+    for i in range(3):
+        _sql("INSERT INTO news_items (league, espn_id, headline, published_at) VALUES ('ncaaf', %s, 'cfb', now() - interval '1 day')", str(i))
+    with db.connect() as conn:
+        rows = store.news_balanced(conn, ["nfl", "ncaaf"], per_league=14)
+    assert Counter(r["league"] for r in rows) == {"nfl": 14, "ncaaf": 3}
+    assert [r["published_at"] for r in rows] == sorted((r["published_at"] for r in rows), reverse=True)
 
 
 def test_a_manual_job_writes_any_game_and_lifts_the_cap(client, fake, monkeypatch, tmp_path):  # noqa: F811
@@ -1032,3 +1050,45 @@ def test_the_rejection_cap_still_stops_a_one_liner_after_three_failed_writes(cli
         client.get(f"/api/games/{gid}/ai")
         _sql("UPDATE ai_texts SET updated_at = now() - interval '3 minutes' WHERE game_id = %s", gid)
     assert fake["calls"]["one_liner"] == 3                               # the cap, spaced by the 2-minute quiet window
+
+
+# ---------- weekend columns (Adam, 2026-10-06) ----------
+
+def _weekend_final(gid, hours_ago=30):
+    _sql("UPDATE games SET state = 'post', completed = true, status_detail = 'Final', home_score = 27, away_score = 20,"
+         " start_time = now() - %s * interval '1 hour' WHERE id = %s", hours_ago, gid)
+
+
+def test_weekend_column_is_written_once_and_served(client, fake, monkeypatch):  # noqa: F811
+    from app.ai import jobs, scope, writer
+    monkeypatch.setattr(scope, "HEADLINE_LEAGUES", {"nfl"})
+    facts_seen = []
+    monkeypatch.setattr(writer, "write_weekend", lambda facts: (
+        facts_seen.append(facts), {"status": "ready", "model": "fake",
+                                   "body": {"title": "A take", "paragraphs": ["One.", "Two."]}})[1])
+    monkeypatch.setattr(jobs, "WEEKEND_MIN_GAMES", 1)                       # the fixture has one finished game
+    _weekend_final(fake["ids"]["DAL"])
+    assert jobs.write_weekend("nfl", "schedule")["status"] == "ready" and len(facts_seen) == 1
+    assert facts_seen[0]["games_played"] == 1 and facts_seen[0]["league"] == "NFL"
+    assert jobs.write_weekend("nfl", "schedule")["status"] == "current"          # same facts: nothing to write
+    assert jobs.write_weekend("nfl", "manual")["status"] == "ready"              # a manual run always writes
+    out = client.get("/api/weekend").json()
+    assert out[0]["league"] == "nfl" and out[0]["title"] == "A take" and out[0]["paragraphs"] == ["One.", "Two."]
+
+
+def test_weekend_column_needs_a_weekend_and_a_headline_league(client, fake, monkeypatch):  # noqa: F811
+    from app.ai import jobs, scope, writer
+    monkeypatch.setattr(writer, "write_weekend", lambda facts: pytest.fail("wrote with nothing to write about"))
+    monkeypatch.setattr(scope, "HEADLINE_LEAGUES", {"nfl"})
+    assert jobs.write_weekend("nfl", "schedule")["status"] == "skipped"          # no finals in the window
+    assert jobs.write_weekend("ncaaf", "schedule")["status"] == "skipped"        # not a headline league
+    assert jobs.write_weekend("nba", "schedule")["status"] == "skipped"          # no window defined
+    assert client.get("/api/weekend").json() == []
+
+
+def test_an_old_weekend_column_is_not_served(client, fake, monkeypatch):  # noqa: F811
+    from app.ai import scope
+    monkeypatch.setattr(scope, "HEADLINE_LEAGUES", {"nfl"})
+    _sql("INSERT INTO ai_texts (kind, league, status, body, written_at, attempts) VALUES ('weekend', 'nfl', 'ready', "
+         "'{\"title\": \"Old\", \"paragraphs\": [\"x\"]}', now() - interval '9 days', 1)")
+    assert client.get("/api/weekend").json() == []

@@ -321,24 +321,24 @@ still true.
 
 EXTRACT_HEADLINES = """You pick the news for a sports app's home screen. Return JSON only.
 
-NEWS is recent ESPN news (id, headline, description, date). FINALS are recent final scores.
+NEWS is recent ESPN news (id, league, date, headline, description), NFL and college football (NCAAF) together.
 
-Return {{"items": [{{"fact": "what happened, in plain words, numbers exactly as in the source", "news": <id or null>}}]}}
-with the 8 most important items across NEWS and FINALS: big results, injuries, trades, firings, records.
-Skip fantasy advice, betting odds and listicles. Only what NEWS and FINALS say.
+Return {{"items": [{{"fact": "what happened, in plain words, numbers exactly as in the source", "news": <id>, "league": "NFL or NCAAF, as tagged"}}]}}
+with the 12 most important stories: injuries, trades, firings and coaching changes, suspensions, records, rankings
+moves, big upsets and storylines. Cover every league in NEWS: at least 4 items from each league that has that many.
+No bare final-score lines (scores have their own screens); a result is fine when it is part of the story.
+Skip fantasy advice, betting odds and listicles. Only what NEWS says, one story per item.
 
 NEWS:
 {news}
-
-FINALS:
-{finals}
 """
 
 WRITE_HEADLINES = """You write the headline list for a sports app's home screen. Return JSON only:
 {{"items": [{{"text": "one line, under 15 words", "news": <same id or null>}}]}}
 
-Write 5 to 8 items from FACTS, most important first, one line each, same ids. Each line tells exactly one
-item's story; never join two items into one line.
+Write 8 to 12 items from FACTS, most important first, one line each, same ids. Each line tells exactly one
+item's story; never join two items into one line. Mix the leagues (NFL and NCAAF) through the list; never write a
+line that is only a final score.
 
 {voice}
 
@@ -346,4 +346,69 @@ item's story; never join two items into one line.
 
 FACTS:
 {facts}
+"""
+
+# ---------------------------------------------------------------- weekend columns (Home, Adam 2026-10-06)
+
+# Voice anchors from the one-liner list: the column's host is the same person, a fan first. Never reused word for word.
+WEEKEND_EXAMPLES = [ONE_LINER_EXAMPLES[i].split("] ", 1)[1] for i in (3, 4, 5, 7, 10, 11)]   # the [phase] tag dropped
+
+WEEKEND_WORDS = (130, 230)      # what code accepts; the prompt asks for about 170
+
+# FACTS and the league first-to-last fixed text: everything that never changes comes before FACTS (Groq's prefix cache).
+WRITE_WEEKEND = """You write the weekend column for a personal sports app: how the {league} weekend went, about 170 words,
+in the voice of a Ringer-style podcast host: conversational, opinionated, self-aware, a fan first, with a running joke
+or two and at most one pop-culture comparison that lands. Never write as a real person or quote anyone. Reply with
+JSON only: {{"title": "...", "paragraphs": ["...", "..."]}}
+
+Rules:
+- The title is a take, not a label, at most 70 characters. Two to four short paragraphs, 150 to 190 words in all. No
+  bullets, headings, hashtags, emojis or preamble.
+- Lead with the weekend's biggest story, then the best of the rest: who surprised, who flopped, who scared everyone.
+  Winners and losers energy is welcome. Not every game gets a mention: pick.
+- Game facts (scores, margins, who beat whom, ranks, players, injuries) come only from FACTS. Every number you write
+  must appear in FACTS exactly as written; do no arithmetic, and never write a number FACTS doesn't have. Call teams by
+  the names in FACTS. A rank is the rank the game was played at.
+- Never state a record, a streak, a standing, a stat or any history FACTS doesn't give, and never name a player FACTS
+  doesn't name. A player's age, experience, contract or past is a fact too: leave it out unless FACTS says it. No
+  predictions stated as fact; a hedged read ("feels like", "looks headed for") is fine.
+- A superlative about results (biggest blowout, closest game, most points) is a game fact: it must match the scores and
+  margins in FACTS. Opinions, jokes, exaggeration and comparisons are fine: they are mood, never a game fact.
+- NOTES are lines from checked game recaps: build on them. NEWS is ESPN headlines: use one or two at most.
+- Roast teams, coaches and plays, never people: nothing about bodies, backgrounds or off-field lives, no injury jokes (a
+  serious injury: drop the bit, be brief). No betting words (spread, over/under, bet, odds, cover), advice, slurs or
+  politics; mild language only.
+
+The voice, from other moments (write your own words, never reuse theirs):
+{examples}
+
+FACTS:
+{facts}
+"""
+
+# A column is a take, so its fact-check judges game facts only (like the live one-liner's), but the games are over.
+WEEKEND_FACT_CHECK = """You are a strict fact-checker for a weekend sports column. Compare TEXT with FACTS.
+Return JSON only:
+{{"problems": [{{"quote": "the exact words from TEXT", "verdict": "wrong" or "unsupported",
+               "why": "under 25 words: the FACTS line it contradicts, or that FACTS doesn't say it"}}]}}
+
+Decide each claim before you write anything. List only claims that are wrong or unsupported; never list a claim
+and then explain that it is fine. No reasoning in the reply.
+
+A problem is a claim about the GAMES that FACTS does not support:
+- a wrong or unsupported score, margin, team, player, rank, or who beat whom;
+- a stat, injury, quote, record, streak, standing or history FACTS never gives, or a play or a moment in a game FACTS
+  never describes;
+- a superlative about results (biggest blowout, closest game, highest score, only upset) that the scores and margins in
+  FACTS don't bear out.
+Not a problem, so never list them: opinion, mood, jokes, exaggeration and comparisons; pop-culture references; color
+about fans, bands, coaches' feelings or owners; a hedged read about next week ("feels like", "looks headed for");
+rhetorical questions.
+Return {{"problems": []}} when every game claim is supported.
+
+FACTS:
+{facts}
+
+TEXT:
+{text}
 """

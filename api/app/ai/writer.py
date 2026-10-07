@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections import Counter
 from typing import Callable
 
 from . import client, facts, live_facts, prompts
@@ -999,25 +1000,36 @@ def write_one_liner(game: dict, previous: str | None = None, previous_basis: str
 
 # ---------------------------------------------------------------- headlines
 
-def write_headlines(news: list[dict], finals: list[str]) -> dict:
+HEADLINES_MIN, HEADLINES_MAX = 6, 12     # asked for 8 to 12; a thin news day may give fewer
+LEAGUE_FLOOR = 3                         # a league with this many stories in the input must show up in the set...
+LEAGUE_MIN_ITEMS = 2                     # ...at least this many times
+
+
+def write_headlines(news: list[dict]) -> dict:
+    """Home headlines: news only, across every league in `news` (rows carry `league`)."""
     def go(stats):
         ids = {i + 1: n for i, n in enumerate(news)}
-        nj = "\n".join(f"[{i}] {n['published_at']:%Y-%m-%d} | {n['headline']} | {n.get('description') or ''}"
-                       for i, n in ids.items())
-        fin = "\n".join(finals)
-        inputs = nj + "\n" + fin
+        nj = "\n".join(f"[{i}] {n['league'].upper()} | {n['published_at']:%Y-%m-%d} | {n['headline']} | "
+                       f"{n.get('description') or ''}" for i, n in ids.items())
+        inputs = nj
+        stories = Counter(n["league"] for n in news)
 
         def check_extract(x):
             if not numbers_ok(json.dumps(x, ensure_ascii=False), inputs):
                 raise CheckFailed("extract has numbers not in the inputs")
 
-        facts = _step(prompts.EXTRACT_HEADLINES.format(news=nj, finals=fin), check_extract, stats, light=True)
+        facts = _step(prompts.EXTRACT_HEADLINES.format(news=nj), check_extract, stats, light=True)
         fj = json.dumps(facts, ensure_ascii=False)
 
         def check_write(x):
             items = x.get("items") or []
-            if not 5 <= len(items) <= 8:
-                raise CheckFailed(f"{len(items)} headlines")
+            if not HEADLINES_MIN <= len(items) <= HEADLINES_MAX:
+                raise CheckFailed(f"{len(items)} headlines; write 8 to 12")
+            shown = Counter(ids[i["news"]]["league"] for i in items if i.get("news") in ids)
+            short = [lg.upper() for lg, n in stories.items() if n >= LEAGUE_FLOOR and shown[lg] < LEAGUE_MIN_ITEMS]
+            if short:
+                raise CheckFailed(f"every league needs coverage: write at least {LEAGUE_MIN_ITEMS} {', '.join(short)} "
+                                  "items from the FACTS tagged with that league")
             _texts_ok([i.get("text") for i in items], fj)
             _fact_check([i.get("text") for i in items], fj, stats)
 
@@ -1028,3 +1040,51 @@ def write_headlines(news: list[dict], finals: list[str]) -> dict:
         return {"status": "ready", "body": {"items": items}}
 
     return _run("headlines", go)
+
+
+# ---------------------------------------------------------------- weekend columns
+
+WEEKEND_TITLE_CHARS = 80      # asked for 70
+# History and standings no fact sheet gives (the one-liner's rule): a column riffs on the weekend, not on the record book.
+HISTORY = re.compile(r"\b(streaks?|undefeated|unbeaten|winless|all-time|franchise (?:record|best|worst)|"
+                     r"(?:career|season)[- ]high|record[- ](?:setting|breaking)|first (?:win|loss|time) since|since \d{4})\b",
+                     re.I)
+
+
+def write_weekend(facts: dict) -> dict:
+    """A league's weekend column from weekend_facts.build: {title, paragraphs}. One write call, then the code checks
+    and a fact-check that judges game facts only; a failure is rewritten once, told why."""
+    def go(stats):
+        fj = json.dumps(facts, ensure_ascii=False)
+
+        def check(x):
+            title, paras = x.get("title"), x.get("paragraphs")
+            if not isinstance(title, str) or not title.strip():
+                raise CheckFailed("no title")
+            if len(title) > WEEKEND_TITLE_CHARS:
+                raise CheckFailed(f"the title is {len(title)} characters: at most 70")
+            if not isinstance(paras, list) or not 2 <= len(paras) <= 4 or not all(isinstance(p, str) and p.strip() for p in paras):
+                raise CheckFailed("write two to four paragraphs, each a string")
+            words = sum(len(p.split()) for p in paras)
+            lo, hi = prompts.WEEKEND_WORDS
+            if not lo <= words <= hi:
+                raise CheckFailed(f"{words} words: write about 170")
+            texts = [title, *paras]
+            _texts_ok(texts, fj, live=True)
+            bet = bet_talk(texts, live=True)
+            if bet:
+                raise CheckFailed(f"bet talk: {bet!r}")
+            history = HISTORY.search(" ".join(texts))
+            if history:
+                raise CheckFailed(f"history or a record the facts don't give: {history[0]!r}")
+            copy = copied(" ".join(texts), [{"text": ex} for ex in prompts.ONE_LINER_EXAMPLES], EXAMPLE_COPY_WORDS)
+            if copy:
+                raise CheckFailed(f"reused an example: {copy!r}; write your own words")
+            _fact_check(texts, fj, stats, prompts.WEEKEND_FACT_CHECK)
+
+        out = _step(prompts.WRITE_WEEKEND.format(
+            league=facts["league"], facts=fj, examples="\n".join(f"- {ex}" for ex in prompts.WEEKEND_EXAMPLES)),
+            check, stats)
+        return {"status": "ready", "body": {"title": out["title"].strip(), "paragraphs": [p.strip() for p in out["paragraphs"]]}}
+
+    return _run("weekend", go)

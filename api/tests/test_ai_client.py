@@ -476,15 +476,28 @@ def test_ai_schedules_cover_only_ai_leagues(monkeypatch):
     from app.temporal import schedules
     monkeypatch.setattr(schedules, "LEAGUES", ["nfl", "ncaaf"])
     monkeypatch.setattr(scope, "AI_LEAGUES", {"nfl"})
+    monkeypatch.setattr(scope, "HEADLINE_LEAGUES", {"nfl"})
     out = schedules._schedules()
-    assert set(out) == {"schedule-sync", "headlines", "ai-leftover", "ai-previews-nfl"}
+    assert set(out) == {"schedule-sync", "headlines", "ai-leftover", "ai-previews-nfl", "ai-weekend-nfl"}
     assert out["ai-leftover"][1] == ["nfl"] and out["schedule-sync"][1] == ["nfl", "ncaaf"]
     assert out["headlines"][1] == ["nfl", "ncaaf"]
     monkeypatch.setattr(scope, "AI_LEAGUES", {"nfl", "ncaaf"})
     assert set(schedules._schedules()) == {"schedule-sync", "headlines", "ai-leftover", "ai-previews-nfl",
-                                           "ai-previews-ncaaf"}
+                                           "ai-previews-ncaaf", "ai-weekend-nfl"}
     monkeypatch.setattr(scope, "AI_LEAGUES", set())
+    monkeypatch.setattr(scope, "HEADLINE_LEAGUES", set())
     assert set(schedules._schedules()) == {"schedule-sync", "headlines"}
+
+
+def test_weekend_columns_are_written_nfl_tuesday_and_ncaaf_sunday_morning(monkeypatch):
+    from app.ai import scope
+    from app.temporal import schedules
+    monkeypatch.setattr(schedules, "LEAGUES", ["nfl", "ncaaf"])
+    monkeypatch.setattr(scope, "HEADLINE_LEAGUES", {"nfl", "ncaaf"})
+    out = schedules._schedules()
+    assert out["ai-weekend-nfl"][1:] == (["nfl"], [7], 0, [schedules.TUE])
+    assert out["ai-weekend-ncaaf"][1:] == (["ncaaf"], [8], 0, [schedules.SUN])
+    assert (schedules.SUN, schedules.TUE) == (0, 2)             # Temporal's day_of_week: 0 = Sunday
 
 
 def test_a_checker_without_a_key_is_not_a_checker_for_preflight(fresh, monkeypatch):

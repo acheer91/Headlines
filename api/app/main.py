@@ -13,7 +13,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeout
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
@@ -326,6 +326,22 @@ def headlines():
     if not row:
         return None
     return {"items": row["body"]["items"], "updated_at": row["updated_at"].isoformat()}
+
+
+WEEKEND_SHOWN = timedelta(days=8)       # last weekend's column is hidden once the next one is due
+
+
+@app.get("/api/weekend")
+def weekend():
+    """The Home weekend columns: each headline league's newest ready column from the last 8 days (a list, maybe empty)."""
+    out = []
+    with db.connect() as conn:
+        for league in (lg for lg in ("nfl", "ncaaf") if ai_scope.headline_league(lg)):
+            row = ai_store.latest_weekend(conn, league, within=WEEKEND_SHOWN)
+            if row and row["body"]:
+                out.append({"league": league, "title": row["body"]["title"], "paragraphs": row["body"]["paragraphs"],
+                            "written_at": row["written_at"].isoformat()})
+    return out
 
 
 # Serve the built web app from the same origin (one server, one HTTPS name, no CORS).

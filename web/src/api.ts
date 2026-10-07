@@ -164,3 +164,7 @@ export const getAi = (id: number) => get<AiText>(`/api/games/${id}/ai`);
 
 export type Headlines = { items: { text: string; url: string | null }[]; updated_at: string } | null;
 export const getHeadlines = () => get<Headlines>("/api/headlines");
+
+// The weekend columns (Ringer-style, one per league, written Tuesday for the NFL and Sunday for NCAAF); [] when none is fresh.
+export type WeekendColumn = { league: string; title: string; paragraphs: string[]; written_at: string };
+export const getWeekend = () => get<WeekendColumn[]>("/api/weekend");

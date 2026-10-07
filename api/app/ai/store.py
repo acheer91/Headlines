@@ -202,6 +202,47 @@ def latest_headlines(conn) -> dict | None:
 def news(conn, leagues: list[str], days: int = 8, limit: int = 60) -> list[dict]:
     """Stored ESPN news, newest first (previews: the ESPN-first articles; headlines: the input)."""
     return conn.execute("""
-        SELECT headline, description, url, published_at FROM news_items
+        SELECT league, headline, description, url, published_at FROM news_items
         WHERE league = ANY(%s) AND published_at > now() - make_interval(days => %s)
         ORDER BY published_at DESC LIMIT %s""", (leagues, days, limit)).fetchall()
+
+
+def news_balanced(conn, leagues: list[str], days: int = 2, per_league: int = 14) -> list[dict]:
+    """The newest `per_league` stories of each league, merged newest first: a plain newest-N read lets one busy league
+    (NFL on a Tuesday) fill the whole input and the others never reach the headlines."""
+    return conn.execute("""
+        SELECT league, headline, description, url, published_at FROM (
+            SELECT *, row_number() OVER (PARTITION BY league ORDER BY published_at DESC) AS rn FROM news_items
+            WHERE league = ANY(%s) AND published_at > now() - make_interval(days => %s)) n
+        WHERE rn <= %s ORDER BY published_at DESC""", (leagues, days, per_league)).fetchall()
+
+
+def save_weekend(conn, league: str, result: dict, reason: str, fingerprint: str) -> int:
+    """A weekend column, one row per run (like headlines); fingerprint: the facts it was written from."""
+    row = conn.execute("""
+        INSERT INTO ai_texts (kind, league, status, body, writer, checker, reason, last_error, attempts, fingerprint,
+                              rejections, written_at)
+        VALUES ('weekend', %s, %s, %s, %s, %s, %s, %s, 1, %s, %s, CASE WHEN %s = 'ready' THEN now() END) RETURNING id""",
+                       (league, result["status"], Jsonb(result.get("body")), result.get("model"), result.get("checker"),
+                        reason, result.get("reason"), fingerprint, int(counts_as_rejection(result)),
+                        result["status"])).fetchone()
+    conn.commit()
+    return row["id"]
+
+
+def weekend_rejected_out(conn, league: str, fingerprint: str) -> bool:
+    """This weekend's facts have failed REJECTION_CAP times since the league's last ready column."""
+    n = conn.execute("""
+        SELECT count(*) AS n FROM ai_texts
+        WHERE kind = 'weekend' AND league = %s AND status = 'failed' AND rejections > 0 AND fingerprint = %s
+          AND created_at > coalesce((SELECT max(created_at) FROM ai_texts
+                                     WHERE kind = 'weekend' AND league = %s AND status = 'ready'), '-infinity')""",
+                     (league, fingerprint, league)).fetchone()["n"]
+    return n >= REJECTION_CAP
+
+
+def latest_weekend(conn, league: str, within: timedelta | None = None) -> dict | None:
+    """The league's newest ready column; within: only one written that recently (the app hides last month's)."""
+    return conn.execute("""SELECT * FROM ai_texts WHERE kind = 'weekend' AND league = %s AND status = 'ready'
+                             AND (%s::interval IS NULL OR written_at > now() - %s::interval)
+                           ORDER BY created_at DESC LIMIT 1""", (league, within, within)).fetchone()

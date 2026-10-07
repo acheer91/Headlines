@@ -11,7 +11,7 @@ import os
 import sys
 import tempfile
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -68,19 +68,10 @@ def _game(gid: int) -> dict:
 
 def _news(conn, league: str, before: datetime | None = None, limit: int = 60) -> list[dict]:
     return conn.execute("""
-        SELECT headline, description, url, published_at FROM news_items
+        SELECT league, headline, description, url, published_at FROM news_items
         WHERE league = ANY(%s) AND published_at IS NOT NULL AND (%s::timestamptz IS NULL OR published_at < %s)
         ORDER BY published_at DESC LIMIT %s""",
                         ([league] if isinstance(league, str) else league, before, before, limit)).fetchall()
-
-
-def _finals(conn, since: datetime, before: datetime) -> list[str]:
-    rows = conn.execute("""
-        SELECT g.league, a.name AS away, g.away_score, h.name AS home, g.home_score FROM games g
-        JOIN teams h ON h.id = g.home_team_id JOIN teams a ON a.id = g.away_team_id
-        WHERE g.state = 'post' AND g.start_time BETWEEN %s AND %s ORDER BY g.start_time""",
-                        (since, before)).fetchall()
-    return [f"{r['league'].upper()}: {r['away']} {r['away_score']}, {r['home']} {r['home_score']} (final)" for r in rows]
 
 
 def _timed(fn, *args):
@@ -124,7 +115,7 @@ def main() -> None:
         runs = (("Now", now), ("As of Sep 28, 11:00 AM PT", datetime(2026, 9, 28, 18, tzinfo=timezone.utc)))
         for label, before in runs if "headlines" in only else []:
             news = _news(conn, ["nfl", "ncaaf"], before, 30)
-            res, t = _timed(writer.write_headlines, news, _finals(conn, before - timedelta(days=4), before))
+            res, t = _timed(writer.write_headlines, news)
             raw.append({"kind": "headlines", "as_of": label, "result": res})
             md += _headlines_md(label, res, t)
     out_path.write_text("\n".join(md), encoding="utf-8", newline="\n")

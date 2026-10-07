@@ -20,7 +20,7 @@ with workflow.unsafe.imports_passed_through():
     from .models import GameInput, GameRef, GameState, TextJob, Times
 
 __all__ = ["GameWorkflow", "GameInput", "ScheduleSyncWorkflow", "HeadlinesWorkflow", "WriteTextWorkflow",
-           "PreviewBatchWorkflow", "LeftoverWorkflow", "WORKFLOWS"]
+           "PreviewBatchWorkflow", "LeftoverWorkflow", "WeekendWorkflow", "WORKFLOWS"]
 
 TASK_QUEUE = "scores"
 AI_QUEUE = "ai"        # Phase 4: AI text activities, AI_AT_ONCE (1) at a time, never delaying ESPN work
@@ -314,6 +314,20 @@ class WriteTextWorkflow:
             return f"gave up: {exc.cause or exc}"
 
 
+@workflow.defn
+class WeekendWorkflow:
+    """Weekly, per league (Adam, 2026-10-06): start the league's weekend column. NFL Tuesday morning, NCAAF Sunday
+    morning (schedules.py). Only starts the WriteTextWorkflow: the `ai` queue spaces it with the writer's minute."""
+
+    @workflow.run
+    async def run(self, leagues: list[str]) -> int:
+        started = 0
+        for league in leagues:
+            started += await start_text(TextJob("weekend", league, None, "schedule"),
+                                        f"ai-weekend-{league}-{workflow.now():%Y%m%d}")      # one per league per day
+        return started
+
+
 async def _start_all(leagues: list[str], what: str, ahead: timedelta, reason: str) -> int:
     started = 0
     for league in leagues:
@@ -346,4 +360,4 @@ class LeftoverWorkflow:
 
 
 WORKFLOWS = [GameWorkflow, ScheduleSyncWorkflow, HeadlinesWorkflow, WriteTextWorkflow, PreviewBatchWorkflow,
-             LeftoverWorkflow]
+             LeftoverWorkflow, WeekendWorkflow]

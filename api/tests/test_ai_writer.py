@@ -755,7 +755,92 @@ def test_only_the_extraction_steps_ask_for_extract_mode(monkeypatch):
     monkeypatch.setattr(client, "write", write)
     assert writer.write_preview(dict(GAME, state="pre"), [ARTICLE])["status"] == "ready"
     from datetime import datetime, timezone
-    news = [{"published_at": datetime(2026, 9, 28, tzinfo=timezone.utc), "headline": "Bears beat Eagles",
+    news = [{"published_at": datetime(2026, 9, 28, tzinfo=timezone.utc), "headline": "Bears beat Eagles 27-7", "league": "nfl",
              "description": "", "url": "https://www.espn.com/nfl/story/_/id/2/y"}]
-    assert writer.write_headlines(news, ["NFL: Eagles 7, Bears 27 (final)"])["status"] == "ready"
+    assert writer.write_headlines(news)["status"] == "ready"
     assert flags == [True, False, True, False]          # preview: extract, write; headlines: extract, write
+
+
+def test_headlines_must_cover_every_league_with_news(monkeypatch):
+    # Adam, 2026-10-06: the feed is every sport we load, not three NFL lines. A set with no college stories is rewritten.
+    from datetime import datetime, timezone
+    news = [{"league": lg, "published_at": datetime(2026, 10, 5, tzinfo=timezone.utc), "headline": f"{lg} story {i}",
+             "description": "", "url": f"https://www.espn.com/{lg}/story/{i}"} for lg in ("nfl", "ncaaf") for i in range(3)]
+    nfl_only = {"items": [{"text": f"NFL line {c}", "news": 1 + i % 3} for i, c in enumerate("ABCDEFGH")]}
+    both = {"items": [{"text": f"Line {c}", "news": n} for c, n in zip("ABCDEFGH", (1, 2, 3, 4, 5, 6, 1, 4))]}
+    prompts, replies = [], iter([{"items": [{"fact": "a story", "news": 1, "league": "NFL"}]}, nfl_only, both])
+
+    def write(prompt, json_out=False, light=False):
+        prompts.append(prompt)
+        return json.dumps(next(replies))
+    monkeypatch.setattr(client, "write", write)
+    out = writer.write_headlines(news)
+    assert out["status"] == "ready" and len(out["body"]["items"]) == 8
+    assert len(prompts) == 3 and "every league needs coverage" in prompts[2] and "NCAAF" in prompts[2]
+    assert "NCAAF | 2026-10-05" in prompts[0] and "FINALS" not in prompts[0]      # each story is tagged; no scores in
+    assert {i["url"].split("/")[3] for i in out["body"]["items"]} == {"nfl", "ncaaf"}
+
+
+# ---------- weekend columns (Adam, 2026-10-06) ----------
+
+def _weekend_facts():
+    from datetime import datetime, timezone
+    from app.ai import weekend_facts
+    rows = [{"league": "nfl", "away": "Philadelphia Eagles", "away_score": 7, "home": "Chicago Bears", "home_score": 31,
+             "status_detail": "Final", "start_time": datetime(2026, 10, 4, 17, tzinfo=timezone.utc), "home_rank": None,
+             "away_rank": None, "recap": "The Bears won 31-7. Their defense set the tone."}]
+    return weekend_facts.build("nfl", rows, [{"headline": "Eagles lose again", "description": ""}])
+
+
+def _column(sentence="The Bears flattened the Eagles 31-7 and the whole afternoon played like a long nap with a scoreboard.", n=10):
+    return {"title": "The Bears are a problem and the Eagles are a mystery",
+            "paragraphs": [" ".join([sentence] * (n // 2)), " ".join([sentence] * (n - n // 2))]}
+
+
+def test_a_weekend_column_is_written_checked_and_returned(model):
+    calls = model([_column()])
+    res = writer.write_weekend(_weekend_facts())
+    assert res["status"] == "ready" and res["checks"] == 1
+    assert res["body"]["title"].startswith("The Bears") and len(res["body"]["paragraphs"]) == 2
+    assert '"league": "NFL"' in calls[0] and "Chicago Bears 31, Philadelphia Eagles 7" in calls[0]
+    assert "Ringer-style" in calls[0] and "FACTS" in calls[0]
+
+
+def test_a_weekend_column_with_a_wrong_length_is_rewritten(model):
+    calls = model([_column(n=2), _column()])
+    assert writer.write_weekend(_weekend_facts())["status"] == "ready"
+    assert "words: write about 170" in calls[1]
+
+
+@pytest.mark.parametrize("bad, why", [
+    ("The Bears are on a three-game winning streak after beating the Eagles 31-7 on a nap of an afternoon.", "history or a record"),
+    ("The Bears covered the spread against the Eagles 31-7 on a nap of an afternoon.", "bet talk"),
+    ("The Bears beat the Eagles 31-9 on a nap of an afternoon, and the Eagles will be sad.", "numbers not in the facts"),
+])
+def test_a_weekend_column_with_history_betting_or_a_made_up_number_is_rewritten(model, bad, why):
+    calls = model([_column(sentence=bad), _column()])
+    assert writer.write_weekend(_weekend_facts())["status"] == "ready"
+    assert why in calls[1]
+
+
+def test_a_weekend_column_that_reuses_an_example_is_rewritten(model):
+    from app.ai import prompts
+    copied_line = prompts.WEEKEND_EXAMPLES[0]
+    calls = model([_column(sentence=copied_line), _column()])
+    assert writer.write_weekend(_weekend_facts())["status"] == "ready"
+    assert "reused an example" in calls[1]
+
+
+def test_a_weekend_column_the_fact_checker_rejects_twice_fails(model, checker):
+    checker.extend([[{"quote": "x", "why": "not in FACTS"}], [{"quote": "x", "why": "not in FACTS"}]])
+    model([_column(), _column()])
+    res = writer.write_weekend(_weekend_facts())
+    assert res["status"] == "failed" and "fact check" in res["reason"]
+
+
+def test_the_weekend_fact_check_prompt_is_the_weekend_one(model, monkeypatch):
+    prompts_seen = []
+    monkeypatch.setattr(client, "check", lambda p: (prompts_seen.append(p), json.dumps({"problems": []}))[1])
+    model([_column()])
+    writer.write_weekend(_weekend_facts())
+    assert "weekend sports column" in prompts_seen[0]

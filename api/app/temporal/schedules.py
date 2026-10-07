@@ -20,13 +20,14 @@ from temporalio.client import (Client, Schedule, ScheduleActionStartWorkflow, Sc
                                ScheduleSpec, ScheduleUpdate)
 
 from ..ai import scope as ai_scope
-from .workflows import TASK_QUEUE, HeadlinesWorkflow, LeftoverWorkflow, PreviewBatchWorkflow, ScheduleSyncWorkflow
+from .workflows import (TASK_QUEUE, HeadlinesWorkflow, LeftoverWorkflow, PreviewBatchWorkflow, ScheduleSyncWorkflow,
+                        WeekendWorkflow)
 from .worker import connect
 
 TZ = "America/Los_Angeles"
 LEAGUES = [x.strip() for x in os.environ.get("ENABLED_LEAGUES", "nfl").split(",") if x.strip()]
 
-WED, THU, FRI = 3, 4, 5      # Temporal's day_of_week: 0 = Sunday
+SUN, TUE, WED, THU, FRI = 0, 2, 3, 4, 5      # Temporal's day_of_week: 0 = Sunday
 
 
 def _schedules() -> dict:
@@ -46,6 +47,12 @@ def _schedules() -> dict:
         out["ai-previews-ncaaf"] = (PreviewBatchWorkflow, ["ncaaf"], [19], 0, [WED, THU])
     if "nfl" in ai:
         out["ai-previews-nfl"] = (PreviewBatchWorkflow, ["nfl"], [19], 0, [THU, FRI])
+    # Weekend columns (Adam, 2026-10-06), for the leagues whose news feeds the Home screen: NFL Tuesday morning, after
+    # Monday night's game; NCAAF Sunday morning, after Saturday night's.
+    if ai_scope.headline_league("nfl") and "nfl" in LEAGUES:
+        out["ai-weekend-nfl"] = (WeekendWorkflow, ["nfl"], [7], 0, [TUE])
+    if ai_scope.headline_league("ncaaf") and "ncaaf" in LEAGUES:
+        out["ai-weekend-ncaaf"] = (WeekendWorkflow, ["ncaaf"], [8], 0, [SUN])
     return out
 
 
