@@ -1092,14 +1092,14 @@ def write_weekend(facts: dict) -> dict:
             if len(title) > WEEKEND_TITLE_CHARS:
                 raise CheckFailed(f"the title is {len(title)} characters: at most 70")
             if not isinstance(paras, list) or not 2 <= len(paras) <= 6 or not all(isinstance(p, str) and p.strip() for p in paras):
-                raise CheckFailed("write two to four paragraphs, each one a plain string")
+                raise CheckFailed("write two or three paragraphs, each one a plain string")
             short = [p for p in paras if len(p.split()) < PARAGRAPH_MIN_WORDS]
             if short:
                 raise CheckFailed(f"{short[0][:30]!r} is not a paragraph: each is a few sentences")
             words = sum(len(p.split()) for p in paras)
             lo, hi = prompts.WEEKEND_WORDS
             if not lo <= words <= hi:
-                raise CheckFailed(f"{words} words: write about 150, never over 190")
+                raise CheckFailed(f"{words} words: write about 115, never over 145")
             texts = [title, *paras]
             _texts_ok(texts, fj, live=True)
             ranking = RANKING.search(" ".join(texts))

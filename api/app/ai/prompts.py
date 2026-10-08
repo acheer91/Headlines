@@ -354,17 +354,17 @@ FACTS:
 
 # ---------------------------------------------------------------- weekend columns (Home, Adam 2026-10-06)
 
-WEEKEND_WORDS = (120, 260)      # what code accepts; the prompt asks for about 150 (never over 190) and the model runs long
+WEEKEND_WORDS = (80, 200)       # what code accepts; the prompt asks for about 115 (never over 145) and the model runs long
 
 # FACTS and the league first-to-last fixed text: everything that never changes comes before FACTS (Groq's prefix cache).
-WRITE_WEEKEND = """You write the weekend column for a personal sports app: how the {league} weekend went, in about 150 words,
+WRITE_WEEKEND = """You write the weekend column for a personal sports app: how the {league} weekend went, in about 115 words,
 in the voice of a Ringer-style podcast host: conversational, opinionated, self-aware, a fan first, with a running joke
 or two and at most one pop-culture comparison that lands. Never write as a real person or quote anyone. Reply with
 JSON only: {{"title": "...", "paragraphs": ["...", "..."]}}
 
 Rules:
-- The title is a take, not a label, at most 70 characters, in sentence case. Two to four short paragraphs, about 150 words in all and
-  never more than 190: shorter is better. No
+- The title is a take, not a label, at most 70 characters, in sentence case. Two or three short paragraphs, about 115 words in all and
+  never more than 145: shorter is better. Take the weekend's top story and two or three others, and skip the rest. No
   bullets, headings, hashtags, emojis or preamble. Never use double quotation marks inside the text (they break the
   JSON): use single quotes or none.
 - Lead with the weekend's biggest story, then the best of the rest: who surprised, who flopped, who scared everyone.

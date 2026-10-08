@@ -792,7 +792,7 @@ def _weekend_facts():
     return weekend_facts.build("nfl", rows, [{"headline": "Eagles lose again", "description": ""}])
 
 
-def _column(sentence="The Bears flattened the Eagles 31-7 and the whole afternoon played like a long nap with a scoreboard.", n=10):
+def _column(sentence="The Bears flattened the Eagles 31-7 and the whole afternoon played like a long nap with a scoreboard.", n=6):
     return {"title": "The Bears are a problem and the Eagles are a mystery",
             "paragraphs": [" ".join([sentence] * (n // 2)), " ".join([sentence] * (n - n // 2))]}
 
@@ -809,7 +809,7 @@ def test_a_weekend_column_is_written_checked_and_returned(model):
 def test_a_weekend_column_with_a_wrong_length_is_rewritten(model):
     calls = model([_column(n=2), _column()])
     assert writer.write_weekend(_weekend_facts())["status"] == "ready"
-    assert "words: write about 150" in calls[1]
+    assert "words: write about 115" in calls[1]
 
 
 @pytest.mark.parametrize("bad, why", [

@@ -88,8 +88,8 @@ Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `ph
   (upset, ranked vs ranked, one-score game, blowout, overtime) with a `key` spelling them out, and for the 6 most interesting
   games the stored recap's first sentences plus ESPN's top passer/rusher/receiver lines (`summary.leaders`), and 5 news items
   (fantasy and listicles dropped). `writer.write_weekend`: ONE write at **low reasoning** (`WEEKEND_REASONING`: at medium the
-  3,000-token allowance went on thinking and Groq cut the JSON off), up to **3 drafts** (`WEEKEND_TRIES`), asked for ~150
-  words (accepted 120-260), no examples in the prompt (the model lifted their phrases; the copy check against the
+  3,000-token allowance went on thinking and Groq cut the JSON off), up to **3 drafts** (`WEEKEND_TRIES`), asked for ~115
+  words, never over 145 (Oct 7, Adam: 25% shorter; accepted 80-200, 2-5 paragraphs), no examples in the prompt (the model lifted their phrases; the copy check against the
   one-liner examples stays). Code checks: every number in the facts; **every capitalized name in the paragraphs in the facts**
   (`unknown_names`: no invented venue, day or show; acronyms pass, the title is not checked); no betting words; no
   history/record/streak words; then a game-facts-only fact-check (`prompts.WEEKEND_FACT_CHECK`; Qwen is jumpy about
