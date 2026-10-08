@@ -1020,6 +1020,8 @@ def write_headlines(news: list[dict]) -> dict:
         def check_extract(x):
             if not numbers_ok(json.dumps(x, ensure_ascii=False), inputs):
                 raise CheckFailed("extract has numbers not in the inputs")
+            if PLACEHOLDER.search(json.dumps(x, ensure_ascii=False)):
+                raise CheckFailed("the extract has a bracketed placeholder: copy each person's name from the story")
 
         facts = _step(prompts.EXTRACT_HEADLINES.format(news=nj), check_extract, stats, light=True, tries=HEADLINES_TRIES)
         fj = json.dumps(facts, ensure_ascii=False)
@@ -1034,6 +1036,10 @@ def write_headlines(news: list[dict]) -> dict:
                 raise CheckFailed(f"every league needs coverage: write at least {LEAGUE_MIN_ITEMS} {', '.join(short)} "
                                   "items from the FACTS tagged with that league")
             _texts_ok([i.get("text") for i in items], fj)
+            invented = unknown_names([i.get("text") for i in items], inputs + " " + fj)
+            if invented:
+                raise CheckFailed(f"names that are in none of the stories: {invented}; use only the people, teams and places "
+                                  "the stories name")
             holes = [t for t in (i.get("text") for i in items) if PLACEHOLDER.search(t)]
             if holes:
                 raise CheckFailed(f"a bracketed placeholder in {holes[0]!r}: write the person's name as the story gives it")

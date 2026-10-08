@@ -933,3 +933,25 @@ def test_headlines_get_three_drafts_before_failing(model, checker):
     calls = model([{"items": [{"fact": "a story", "news": 1, "league": "NFL"}]}, ok, ok, ok])
     res = writer.write_headlines(news)
     assert res["status"] == "failed" and len(calls) == 4          # one extract and three writes
+
+
+def test_a_headline_naming_someone_no_story_names_is_rewritten(model):
+    from datetime import datetime, timezone
+    news = [{"league": "nfl", "published_at": datetime(2026, 10, 7, tzinfo=timezone.utc), "headline": "Cam Jurgens traded to Ravens",
+             "description": "", "url": f"https://www.espn.com/nfl/story/_/id/{i}/x"} for i in range(1, 4)]
+    made_up = {"items": [{"text": f"Cam Jurgens and Tom Brady move again {c}", "news": 1 + i % 3} for i, c in enumerate("ABCDEF")]}
+    good = {"items": [{"text": f"Cam Jurgens moves again {c}", "news": 1 + i % 3} for i, c in enumerate("ABCDEF")]}
+    calls = model([{"items": [{"fact": "Cam Jurgens was traded to the Ravens", "news": 1, "league": "NFL"}]}, made_up, good])
+    assert writer.write_headlines(news)["status"] == "ready"
+    assert "names that are in none of the stories" in calls[2] and "Brady" in calls[2]
+
+
+def test_an_extract_with_a_placeholder_is_redone(model):
+    from datetime import datetime, timezone
+    news = [{"league": "nfl", "published_at": datetime(2026, 10, 7, tzinfo=timezone.utc), "headline": "Cam Jurgens traded to Ravens",
+             "description": "", "url": "https://www.espn.com/nfl/story/_/id/1/x"}]
+    ok = {"items": [{"text": f"Cam Jurgens moves again {c}", "news": 1} for c in "ABCDEF"]}
+    calls = model([{"items": [{"fact": "[PERSON_NAME] was traded", "news": 1, "league": "NFL"}]},
+                   {"items": [{"fact": "Cam Jurgens was traded", "news": 1, "league": "NFL"}]}, ok])
+    assert writer.write_headlines(news)["status"] == "ready"
+    assert "bracketed placeholder" in calls[1]
