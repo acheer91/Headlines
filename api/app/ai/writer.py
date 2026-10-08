@@ -19,10 +19,12 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections import Counter
 from typing import Callable
 
-from . import client, facts, prompts, sources
+from . import client, facts, live_facts, prompts
 from .sources import mentions, team_terms
+from .sources import outlet as outlet_of
 
 COPY_WORDS = 8
 RECAP_VOICE = True          # Adam's house style and example recaps in the recap prompt; False = the plain prompt (Oct 1)
@@ -41,10 +43,16 @@ BET_PUSH = re.compile(r"\bpush\b(?=.*\b(?:line|total|odds|wager|bets?|spread)\b)
                       r"\b(?:line|total|odds|wager|bets?|spread)\b.*\bpush\b", re.I | re.S)
 
 
-def bet_talk(texts: list[str]) -> str | None:
+# The live one-liner is allowed the idioms ("nobody can cover him"): cover/covered/covering count only with the spread.
+BET_TALK_LIVE = re.compile(r"\b(spread|moneyline|over/under|the (over|under)|bets?|"
+                           r"cover(?:s|ed|ing)? the (?:spread|number|line|points))\b", re.I)
+LIVE_ADVICE = re.compile(r"\b(you should|should bet|take the (over|under|points)|best bet|lock of|bet on|we like)\b", re.I)
+
+
+def bet_talk(texts: list[str], live: bool = False) -> str | None:
     """The first betting word in the prose, or None."""
     for t in texts:
-        m = BET_TALK.search(t)
+        m = (BET_TALK_LIVE if live else BET_TALK).search(t)
         if m:
             return m[0]
         if BET_PUSH.search(t):
@@ -81,6 +89,15 @@ UNSUPPORTED = re.compile(
     # Inside a quarter: "a late field goal", "controlled the early minutes", "scored first".
     r"(?:late|early) (?:field goals?|touchdowns?|scores?|points?|drives?|rally|surge|push|run|minutes|moments|"
     r"stages|going)|(?:scored|struck) first)\b", re.I)
+# The live one-liner is a take with play-by-play behind it (Adam, Oct 4): momentum, causes and "all game" are opinion
+# or checkable in FACTS now. What is still unprovable is a record, streak or history from before this game.
+LIVE_UNSUPPORTED = re.compile(
+    r"\b(winless|unbeaten|undefeated|(?:scored|struck) first|(?:winning|losing|win|loss)[\s\-‐-—]streak|franchise|all[\s\-‐-—]time|"
+    r"in (?:team|franchise|league|nfl|college football|school) history|since (?:19|20)\d\d|worst (?:loss|start)|"
+    r"best (?:win|start)|"
+    # A player's experience or pedigree is not in FACTS (CAR-DET, Oct 4: "a rookie miscue" about a kicker, rejected twice).
+    r"rookies?|veterans?|sophomore|(?:first|second|third)[\s\-‐-—]year|undrafted|journeyman|draft(?:ed)? (?:pick|class)|"
+    r"first[\s\-‐-—]round(?:er)?)\b", re.I)
 HYPHEN = "[\\s\\-‐-—]"      # the model writes U+2011 non-breaking hyphens
 TEAM_WORDS = r"[A-Z][\w.'’]*(?:\s[A-Z0-9][\w.'’]*)*"
 CLAUSE = re.compile(r"[,;–—]|:(?!\d)|\b(?:and|while|as|but|with|whereas|despite|after|before)\b")
@@ -180,9 +197,9 @@ def copied(text: str, articles: list[dict], n: int = COPY_WORDS) -> str | None:
     return None
 
 
-def _json(prompt: str, light: bool = False) -> dict:
+def _json(prompt: str, light: bool = False, reasoning: str | None = None) -> dict:
     try:
-        out = json.loads(client.write(prompt, json_out=True, light=light))
+        out = json.loads(client.write(prompt, json_out=True, light=light, **({"reasoning": reasoning} if reasoning else {})))
     except (ValueError, client.BadReply):
         raise CheckFailed("reply was not JSON") from None
     if not isinstance(out, dict):
@@ -190,14 +207,15 @@ def _json(prompt: str, light: bool = False) -> dict:
     return out
 
 
-def _step(prompt: str, check: Callable[[dict], None], stats: dict, light: bool = False) -> dict:
-    """One writer JSON call plus its check, rerun once if the check fails, told what was wrong. light: a short
-    structured reply (client.write's low-reasoning mode). RateLimited/AIError propagate."""
+def _step(prompt: str, check: Callable[[dict], None], stats: dict, light: bool = False, tries: int = 2,
+          reasoning: str | None = None) -> dict:
+    """One writer JSON call plus its check, rerun (once; a weekend column twice) if the check fails, told what was
+    wrong. light: a short structured reply (client.write's low-reasoning mode). RateLimited/AIError propagate."""
     ask = prompt
-    for attempt in (1, 2):
+    for attempt in range(1, tries + 1):
         stats["calls"] += 1
         try:
-            out = _json(ask, light)
+            out = _json(ask, light, reasoning)
             try:
                 check(out)
             except (AttributeError, KeyError, TypeError):    # JSON of the wrong shape, e.g. an edge that's a string
@@ -205,19 +223,20 @@ def _step(prompt: str, check: Callable[[dict], None], stats: dict, light: bool =
             return out
         except CheckFailed as exc:
             stats.setdefault("rejected", []).append(str(exc))
-            if attempt == 2:
+            if attempt == tries:
                 raise
             ask = f"{prompt}\n\nYour previous draft was rejected: {exc}. Write it again without that problem."
 
 
-def _fact_check(texts: list[str], facts_json: str, stats: dict) -> None:
+def _fact_check(texts: list[str], facts_json: str, stats: dict, prompt: str | None = None) -> None:
     """A second model (client.check_model) lists every claim the facts don't support. Any -> CheckFailed, so the
     writer rewrites once with the problems quoted. On 23 known cases (python -m app.ai.check_eval, 2026-09-30) it
     caught 11 of 15 errors with no false alarms; claims_ok catches the commonest kinds first. If the checker can't
     be reached the text fails: never unchecked."""
     stats["checks"] = stats.get("checks", 0) + 1
     try:
-        probs = checker_problems(client.check(prompts.FACT_CHECK.format(facts=facts_json, text="\n\n".join(texts))))
+        probs = checker_problems(client.check((prompt or prompts.FACT_CHECK).format(
+            facts=facts_json, text="\n\n".join(texts))))
     except client.BadReply:
         probs = None
     if probs is None:
@@ -256,7 +275,7 @@ def _rounded(t: str, facts: str) -> set[str]:
             if any(abs(v - float(m[1])) <= max(1.0, 0.03 * float(m[1])) for v in vals)}
 
 
-def _texts_ok(texts: list[str], facts: str, articles: list[dict] = ()) -> None:
+def _texts_ok(texts: list[str], facts: str, articles: list[dict] = (), live: bool = False) -> None:
     for t in texts:
         if not isinstance(t, str) or not t.strip():
             raise CheckFailed("empty text")
@@ -265,8 +284,9 @@ def _texts_ok(texts: list[str], facts: str, articles: list[dict] = ()) -> None:
             raise CheckFailed(f"numbers not in the facts: {bad}")
         if BAD_PERIOD.search(t):
             raise CheckFailed(f"no such quarter: {BAD_PERIOD.search(t)[0]!r}")
-        if ADVICE.search(t):
-            raise CheckFailed(f"advice wording: {ADVICE.search(t)[0]!r}")
+        advice = (LIVE_ADVICE if live else ADVICE).search(t)       # "I expect this to get weird" is a take, live
+        if advice:
+            raise CheckFailed(f"advice wording: {advice[0]!r}")
         c = copied(t, list(articles))
         if c:
             raise CheckFailed(f"copied from an article: {c!r}")
@@ -446,19 +466,39 @@ def _timing_problems(sent: str, game: dict, sheet: dict, pats: dict, ppats: list
     return out
 
 
-def claims_ok(texts: list[str], game: dict, sheet: dict, final: bool = True) -> None:
-    probs = claim_problems(texts, game, sheet, final)
+YARDS = re.compile(r"(\d+) yards?\b", re.I)
+
+
+def _play_yards(who: list[dict], fact_lines: list[str]) -> set[str]:
+    """The yardage of the plays that name these players ('Recent play' lines only), the one number besides a
+    player's own line that may sit beside his name: 'Darnold hit a 6 yard pass'. A scoring line's distance is not
+    his total ('23 Yd pass from Sam Darnold' is one throw), so those lines don't count. Whole-word name match."""
+    out: set[str] = set()
+    for p in who:
+        last = NAME_SUFFIX.sub("", p.get("last_name") or p["name"]).split()[-1]
+        name = re.compile(rf"\b{re.escape(last)}\b")
+        for line in fact_lines:
+            if line.startswith("Recent play") and name.search(line):
+                out.update(YARDS.findall(line))
+    return out
+
+
+def claims_ok(texts: list[str], game: dict, sheet: dict, final: bool = True, live: bool = False) -> None:
+    probs = claim_problems(texts, game, sheet, final, live)
     if probs:
         raise CheckFailed("; ".join(msg for _, msg in probs))
 
 
-def claim_problems(texts: list[str], game: dict, sheet: dict, final: bool = True) -> list[tuple[str, str]]:
+def claim_problems(texts: list[str], game: dict, sheet: dict, final: bool = True,
+                   live: bool = False) -> list[tuple[str, str]]:
     """(the words flagged, what's wrong) for every box-score claim the code refuses, before the model checker (2026-09-30
     eval, 24 errors in 14 texts): a player's numbers come from that player's line (three recaps gave team totals
     to the leading rusher and passer); "X favored / outgained / held the ball longer" names the team that really
     had more; home and road are right; and phrases a box score can't support are refused. `final` is False for the
     live one-liner: the order, lead and tie rules (_timing_problems) are about a finished game's quarter breaks, and
-    "tied 14-14 early in the third" is a true statement of a game in progress."""
+    "tied 14-14 early in the third" is a true statement of a game in progress. `live` (the one-liner) swaps the
+    box-score-only word list for LIVE_UNSUPPORTED and lets a player's line carry the numbers of the FACTS lines that
+    name them (a play's yards, a scoring play's distance)."""
     pats = _team_patterns(sheet["teams"])
     ppats = _player_patterns(sheet.get("players") or [], pats)
     st = sheet.get("stats") or {}
@@ -471,11 +511,15 @@ def claim_problems(texts: list[str], game: dict, sheet: dict, final: bool = True
     for text in texts:
         text = _norm(text)
         for sent in SENTENCE.split(text):
-            probs += [(m[0], f"{m[0]!r}: a box score can't show that; leave it out") for m in UNSUPPORTED.finditer(sent)]
+            why = "FACTS has no record or history from before this game" if live else "a box score can't show that"
+            probs += [(m[0], f"{m[0]!r}: {why}; leave it out")
+                      for m in (LIVE_UNSUPPORTED if live else UNSUPPORTED).finditer(sent)]
             for clause in CLAUSE.split(sent):
                 who = [p for pt, p in ppats if pt.search(clause)]
                 if who:
                     allowed = shared.union(*(NUM.findall(p["value"]) for p in who))
+                    if live:
+                        allowed |= _play_yards(who, sheet.get("facts") or [])
                     extra = [n for n in NUM.findall(clause) if n not in allowed]
                     if extra:
                         lines = "; ".join(f"{p['name']}: {p['value']}" for p in who)
@@ -840,101 +884,246 @@ def recap_fallback(game: dict) -> str:
 
 # ---------------------------------------------------------------- live one-liner
 
-ONE_LINER_MAX_WORDS = 30       # the prompt asks for two sentences under 20
+ONE_LINER_MAX_CHARS = prompts.ONE_LINER_MAX_CHARS      # Adam, Oct 4: 225
+TENS = {"twenty": 20, "thirty": 30, "forty": 40}
+_COUNT = (r"((?:twenty|thirty|forty)(?:[\s\-](?:one|two|three|four|five|six|seven|eight|nine))?|\d+|"
+          + "|".join(WORD_NUM) + r")")
+# "up 7", "leading by seven", "trails by twenty-one" (a bare "by 3" is not enough: "picked apart by three straight
+# punts"), and "a 7-point lead" / "seven-point game". Not "gave up 7 yards", "third down 3", "up 3 times".
+_NOT_A_MARGIN_BEFORE = r"(?<!gave )(?<!give )(?<!giving )(?<!picked )(?<!third )(?<!fourth )(?<!first )(?<!second )"
+_NOT_A_MARGIN_AFTER = r"(?!\s+(?:yards?|yds?|times|plays|drives|straight|possessions|punts))"
+MARGIN_LEAD = re.compile(
+    rf"\b{_NOT_A_MARGIN_BEFORE}(?:up|down|leads?|leading|trail(?:s|ing)?|ahead|behind)\s+(?:by\s+)?{_COUNT}\b"
+    rf"{_NOT_A_MARGIN_AFTER}|\b{_COUNT}[\s\-]point\s+(?:lead|game|deficit|margin|edge|cushion|win|loss)\b", re.I)
 
 
-def write_one_liner(game: dict) -> dict:
-    """One checked sentence on the live game (Adam, Oct 1: back after the CTO cut it). Failure: the app shows the
-    box-score template (summary.one_liner), never unchecked text."""
+def _count_value(word: str) -> int | None:
+    """'7', 'seven', 'twenty-one' -> the number; None for anything else."""
+    if word.isdigit():
+        return int(word)
+    parts = re.split(r"[\s\-]+", word.lower())
+    vals = [TENS.get(p, WORD_NUM.get(p)) for p in parts]
+    return None if None in vals else sum(vals)
+
+
+def restates_score(line: str, game: dict) -> str | None:
+    """The score or the margin said again, or None: the app shows both right above the line (the addendum: lead with
+    the take, not the score). '17-10' or 'Chargers 10, Seahawks 17' in either order, or 'up 7' / 'a seven-point lead'
+    when 7 is the margin."""
+    a, h = game["away"].get("score"), game["home"].get("score")
+    if a is None or h is None:
+        return None
+    text = _norm(line)
+    pair = (rf"(?<![\d:])(?:{a}|{h})\s*(?:[-–—]|,|\bto\b)\s*(?:[A-Za-z.']+\s+)?(?:{a}|{h})(?![\d:])")
+    for m in re.finditer(pair, text):
+        if {int(x) for x in NUM.findall(m[0])} == {a, h}:
+            return m[0]
+    margin = abs(a - h)
+    for m in MARGIN_LEAD.finditer(text):
+        n = _count_value(m[1] or m[2])
+        if margin and n == margin:
+            return m[0]
+    return None
+
+
+def same_side_leads(basis: str | None, game: dict) -> bool:
+    """True when the score a line was written at (a stored basis, 'away-home') has the same side ahead as now, or
+    both tied: a take about "Seattle is up" is still about the game. False when the basis can't be read."""
+    m = re.fullmatch(r"\s*(\d+)-(\d+)\s*", basis or "")
+    a, h = game["away"].get("score"), game["home"].get("score")
+    if not m or a is None or h is None:
+        return False
+    sign = lambda x, y: (x > y) - (x < y)           # noqa: E731
+    return sign(int(m[1]), int(m[2])) == sign(a, h)
+
+
+def write_one_liner(game: dict, previous: str | None = None, previous_basis: str | None = None) -> dict:
+    """The live game's take: at most ONE_LINER_MAX_CHARS characters, or {"line": None} when the writer has nothing
+    to say (the app shows no line). `previous` is the last line written for this game, so the take is a new one;
+    when the writer says there is nothing new, the previous line stays if the same side still leads as at its
+    `previous_basis` (the score it was written at) and the code checks still pass it against today's facts (a stale
+    "up 4" is dropped), so a quiet minute doesn't blank a line a fan is reading. Failure
+    (rate limit, a check that fails twice): no line, never unchecked text; the box-score template is no longer
+    the fallback (Adam, Oct 4: a bare score and a QB's yards read as awkward)."""
     def go(stats):
-        # One sheet, trimmed to the prompt's hooks (M4): the writer and the fact-checker see the same facts. claims_ok
-        # knows every leader on the box score, trimmed or not: "Swift has 128 rushing yards" (the team's total, in
-        # FACTS) is still a team total given to a player, and more players can only add refusals.
-        sheet = facts.live_facts(game)
+        # One sheet: the writer and the fact-checker see the same facts. claims_ok knows every leader on the box
+        # score, trimmed or not: "Swift has 128 rushing yards" (the team's total, in FACTS) is still a team total
+        # given to a player, and more players can only add refusals.
+        sheet = live_facts.live_facts(game)
         fj = json.dumps(sheet["facts"], ensure_ascii=False)
         claims_sheet = dict(sheet, players=facts.players(game))
 
+        def code_checks(line):
+            _texts_ok([line], fj, live=True)
+            claims_ok([line], game, claims_sheet, final=False, live=True)
+            if len(line) > ONE_LINER_MAX_CHARS:
+                raise CheckFailed(f"one-liner is {len(line)} characters; the limit is {ONE_LINER_MAX_CHARS}")
+            said = restates_score(line, game)
+            if said:
+                raise CheckFailed(f"it restates the score or margin ({said!r}); the app shows both: lead with the take")
+            bet = bet_talk([line], live=True)
+            if bet:
+                raise CheckFailed(f"bet talk in the line: {bet!r}")
+
         def check(x):
-            line = x.get("line")
-            _texts_ok([line], fj)
-            claims_ok([line], game, claims_sheet, final=False)
-            if isinstance(line, str) and len(line.split()) > ONE_LINER_MAX_WORDS:
-                raise CheckFailed(f"one-liner is {len(line.split())} words")
+            if "line" not in x:
+                raise CheckFailed("reply had no line")
+            line = x["line"]
+            if line is None:
+                return
+            if isinstance(line, str) and len(line) > ONE_LINER_MAX_CHARS:
+                # Two sentences, the second over the limit: keep the first. A rewrite would cost a whole prompt.
+                first = SENTENCE.split(line.strip())[0]
+                if first != line.strip() and len(first) <= ONE_LINER_MAX_CHARS:
+                    x["line"] = line = first
+            code_checks(line)
             copy = copied(line, [{"text": ex} for ex in prompts.ONE_LINER_EXAMPLES], EXAMPLE_COPY_WORDS)
             if copy:
                 raise CheckFailed(f"reused an example: {copy!r}; write your own line")
-            bet = bet_talk([line])
-            if bet:
-                raise CheckFailed(f"bet talk in the line: {bet!r}")
-            _fact_check([line], fj, stats)
+            _fact_check([line], fj, stats, prompts.LIVE_FACT_CHECK)
 
-        out = _step(prompts.ONE_LINER.format(facts=fj, examples="\n".join(f"- {ex}" for ex in prompts.ONE_LINER_EXAMPLES)),
-                    check, stats, light=True)
-        return {"status": "ready", "body": {"line": out["line"]}}
+        last = prompts.ONE_LINER_LAST.format(last_line=previous) if previous else ""
+        live = game.get("live") or {}
+        phase = live_facts.game_phase(live.get("period"), live.get("clock"))
+        out = _step(prompts.ONE_LINER.format(
+            facts=fj, max_chars=ONE_LINER_MAX_CHARS, last=last,
+            examples="\n".join(f"- {ex}" for ex in prompts.one_liner_examples(phase))), check, stats, light=True)
+        line = out["line"]
+        if line is None and previous and same_side_leads(previous_basis, game):
+            try:
+                code_checks(previous)
+                line = previous
+            except CheckFailed:
+                pass
+        return {"status": "ready", "body": {"line": line}}
 
     return _run("one_liner", go)
 
 
 # ---------------------------------------------------------------- headlines
 
-HEADLINE_MAX_WORDS = 24        # the prompt asks for 8 to 20; the golden set's longest is 20
+HEADLINES_MIN, HEADLINES_MAX = 6, 12     # asked for 8 to 12; a thin news day may give fewer
+LEAGUE_FLOOR = 3                         # a league with this many stories in the input must show up in the set...
+LEAGUE_MIN_ITEMS = 2                     # ...at least this many times
 
 
-def _news_outlet(n: dict) -> str:
-    return sources.outlet(n.get("url") or "") or "other"
-
-
-def write_headlines(news: list[dict], finals: list[str]) -> dict:
-    """news: stored news_items rows (any outlet: headline, description, url, published_at, league); finals: score
-    lines. Each item comes back as {text, url, league, outlet, final}: the story it was written from, if any."""
+def write_headlines(news: list[dict]) -> dict:
+    """Home headlines: news only, across every league in `news` (rows carry `league`)."""
     def go(stats):
         ids = {i + 1: n for i, n in enumerate(news)}
-        nj = "\n".join(f"[{i}] {n.get('league') or ''} | {n['published_at']:%Y-%m-%d} | {_news_outlet(n)} (tier {prompts.outlet_tier(_news_outlet(n))}) | "
+        nj = "\n".join(f"[{i}] {n['league'].upper()} | {outlet_of(n['url'] or '') or 'other'} | {n['published_at']:%Y-%m-%d} | "
                        f"{n['headline']} | {n.get('description') or ''}" for i, n in ids.items())
-        fin = "\n".join(finals)
-        inputs = nj + "\n" + fin
-        leagues = {n.get("league") for n in news} | {f.split(":")[0].lower() for f in finals}
-        # What the stories say, for the copy check: a headline must not lift a run of words from one.
-        source_text = [{"text": f"{n['headline']} {n.get('description') or ''}"} for n in news]
+        inputs = nj
+        stories = Counter(n["league"] for n in news)
 
         def check_extract(x):
             if not numbers_ok(json.dumps(x, ensure_ascii=False), inputs):
                 raise CheckFailed("extract has numbers not in the inputs")
 
-        facts = _step(prompts.EXTRACT_HEADLINES.format(news=nj, finals=fin, tiers=prompts.headline_tiers(leagues)),
-                      check_extract, stats, light=True)
+        facts = _step(prompts.EXTRACT_HEADLINES.format(news=nj), check_extract, stats, light=True)
         fj = json.dumps(facts, ensure_ascii=False)
 
         def check_write(x):
             items = x.get("items") or []
-            if not 5 <= len(items) <= 8:
-                raise CheckFailed(f"{len(items)} headlines")
-            texts = [i.get("text") for i in items]
-            _texts_ok(texts, fj, source_text)
-            used = [i.get("news") for i in items if i.get("news") in ids]
-            if len(used) != len(set(used)):
-                raise CheckFailed("two lines for one story: one line per story")
-            for t in texts:
-                if len(t.split()) > HEADLINE_MAX_WORDS:
-                    raise CheckFailed(f"a headline of {len(t.split())} words: keep each under 20")
-                copy = copied(t, [{"text": ex} for ex in prompts.HEADLINE_EXAMPLES], EXAMPLE_COPY_WORDS)
-                if copy:
-                    raise CheckFailed(f"reused an example: {copy!r}; write your own words")
-            bet = bet_talk(texts)
-            if bet:
-                raise CheckFailed(f"bet talk in a headline: {bet!r}")
-            _fact_check(texts, fj, stats)
+            if not HEADLINES_MIN <= len(items) <= HEADLINES_MAX:
+                raise CheckFailed(f"{len(items)} headlines; write 8 to 12")
+            shown = Counter(ids[i["news"]]["league"] for i in items if i.get("news") in ids)
+            short = [lg.upper() for lg, n in stories.items() if n >= LEAGUE_FLOOR and shown[lg] < LEAGUE_MIN_ITEMS]
+            if short:
+                raise CheckFailed(f"every league needs coverage: write at least {LEAGUE_MIN_ITEMS} {', '.join(short)} "
+                                  "items from the FACTS tagged with that league")
+            _texts_ok([i.get("text") for i in items], fj)
+            _fact_check([i.get("text") for i in items], fj, stats)
 
-        style = prompts.HEADLINE_STYLE.format(examples="\n".join(f"- {ex}" for ex in prompts.HEADLINE_EXAMPLES))
-        out = _step(prompts.WRITE_HEADLINES.format(facts=fj, style=style, guardrails=prompts.GUARDRAILS),
+        out = _step(prompts.WRITE_HEADLINES.format(facts=fj, voice=prompts.VOICE, guardrails=prompts.GUARDRAILS),
                     check_write, stats)
-        items = []
-        for i in out["items"]:
-            src = ids.get(i.get("news"))
-            items.append({"text": i["text"], "url": src["url"] if src else None,
-                          "league": src.get("league") if src else None,
-                          "outlet": _news_outlet(src) if src and src.get("url") else None,
-                          "final": src is None and i.get("final") is True})
+        items = [{"text": i["text"], "url": ids[i["news"]]["url"] if i.get("news") in ids else None,
+                  "league": ids[i["news"]]["league"] if i.get("news") in ids else None}
+                 for i in out["items"]]
         return {"status": "ready", "body": {"items": items}}
 
     return _run("headlines", go)
+
+
+# ---------------------------------------------------------------- weekend columns
+
+WEEKEND_TITLE_CHARS = 80      # asked for 70
+WEEKEND_REASONING = "low"     # medium spent the 3,000-token reply allowance thinking and cut the JSON off (Oct 6, live); the
+                              # code checks and the fact-check, not the model's care, are what keep the facts straight
+PARAGRAPH_MIN_WORDS = 15      # the first NFL column had a lone ")" for a fourth paragraph
+WEEKEND_TRIES = 3             # one column a week per league: a third draft costs little and a failure shows nothing
+# History and standings no fact sheet gives (the one-liner's rule): a column riffs on the weekend, not on the record book.
+HISTORY = re.compile(r"\b(streaks?|undefeated|unbeaten|winless|all-time|franchise (?:record|best|worst)|"
+                     r"(?:career|season)[- ]high|record[- ](?:setting|breaking)|first (?:win|loss|time) since|since \d{4})\b",
+                     re.I)
+
+
+# Ranking the weekend's games against each other: the prompt forbids it and the checker is jumpy about it, so code refuses
+# it (the first NFL column called a 21-point margin "the weekend's loudest statement").
+RANKING = re.compile(r"\b(biggest|loudest|closest|stunners?|shockers?|only (?:\w+ )?(?:blowout|upset|game|team|one))\b", re.I)
+
+WORD = re.compile(r"[A-Za-z][A-Za-z'’]*")
+KNOWN_CAPS = {"I", "NFL", "NCAAF", "AP", "CFP", "SEC", "ACC", "OT"}
+
+
+def unknown_names(texts: list[str], facts_json: str) -> list[str]:
+    """Capitalized words (not a sentence's first; not acronyms) that FACTS never uses: an invented venue, day, player or show. A column
+    may riff, but every name in it comes from FACTS (the first weekend column set a game in a stadium FACTS never named)."""
+    known = {w.lower() for w in WORD.findall(facts_json)} | {k.lower() for k in KNOWN_CAPS}
+    out: list[str] = []
+    for t in texts:
+        for sentence in SENTENCE.split(_norm(t)):
+            for w in WORD.findall(sentence)[1:]:
+                base = re.sub(r"['’]s?$", "", w)
+                acronym = base.isupper() or (base.endswith("s") and base[:-1].isupper())        # TD, TDs, BBQ
+                if base[:1].isupper() and not acronym and base.lower() not in known and base not in out:
+                    out.append(base)
+    return out
+
+
+def write_weekend(facts: dict) -> dict:
+    """A league's weekend column from weekend_facts.build: {title, paragraphs}. One write call, then the code checks
+    and a fact-check that judges game facts only; a failure is rewritten once, told why."""
+    def go(stats):
+        fj = json.dumps(facts, ensure_ascii=False)
+
+        def check(x):
+            title, paras = x.get("title"), x.get("paragraphs")
+            if not isinstance(title, str) or not title.strip():
+                raise CheckFailed("no title")
+            if len(title) > WEEKEND_TITLE_CHARS:
+                raise CheckFailed(f"the title is {len(title)} characters: at most 70")
+            if not isinstance(paras, list) or not 2 <= len(paras) <= 6 or not all(isinstance(p, str) and p.strip() for p in paras):
+                raise CheckFailed("write two or three paragraphs, each one a plain string")
+            short = [p for p in paras if len(p.split()) < PARAGRAPH_MIN_WORDS]
+            if short:
+                raise CheckFailed(f"{short[0][:30]!r} is not a paragraph: each is a few sentences")
+            words = sum(len(p.split()) for p in paras)
+            lo, hi = prompts.WEEKEND_WORDS
+            if not lo <= words <= hi:
+                raise CheckFailed(f"{words} words: write about 115, never over 145")
+            texts = [title, *paras]
+            _texts_ok(texts, fj, live=True)
+            ranking = RANKING.search(" ".join(texts))
+            if ranking:
+                raise CheckFailed(f"ranking games against each other ({ranking[0]!r}): describe the games, don't rank them")
+            invented = unknown_names(paras, fj)          # not the title: it is in Title Case
+            if invented:
+                raise CheckFailed(f"names FACTS never gives: {invented}; use only the teams, players and places in FACTS "
+                                  "(no stadiums, days of the week, shows or brands)")
+            bet = bet_talk(texts, live=True)
+            if bet:
+                raise CheckFailed(f"bet talk: {bet!r}")
+            history = HISTORY.search(" ".join(texts))
+            if history:
+                raise CheckFailed(f"history or a record the facts don't give: {history[0]!r}")
+            copy = copied(" ".join(texts), [{"text": ex} for ex in prompts.ONE_LINER_EXAMPLES], EXAMPLE_COPY_WORDS)
+            if copy:
+                raise CheckFailed(f"reused an example: {copy!r}; write your own words")
+            _fact_check(texts, fj, stats, prompts.WEEKEND_FACT_CHECK)
+
+        out = _step(prompts.WRITE_WEEKEND.format(league=facts["league"], facts=fj), check, stats, tries=WEEKEND_TRIES,
+                    reasoning=WEEKEND_REASONING)
+        return {"status": "ready", "body": {"title": out["title"].strip(), "paragraphs": [p.strip() for p in out["paragraphs"]]}}
+
+    return _run("weekend", go)

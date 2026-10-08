@@ -151,7 +151,7 @@ export type AiText = {
   body:
     | { preview: string; edges: { home: Edge[]; away: Edge[] }; picks: Pick[] }
     | { recap: string; bets: string; home: string; away: string }
-    | { line: string }
+    | { line: string | null }
     | null;
   sources: Source[] | null;
   updated_at: string | null;
@@ -162,7 +162,9 @@ export type AiText = {
 /** The AI text that fits the game now. The server may write it on the spot (up to ~20 s for a preview). */
 export const getAi = (id: number) => get<AiText>(`/api/games/${id}/ai`);
 
-// league / outlet / final come with the story an item was written from (any outlet); sets stored before Oct 2 lack them.
-export type HeadlineItem = { text: string; url: string | null; league?: string | null; outlet?: string | null; final?: boolean };
-export type Headlines = { items: HeadlineItem[]; updated_at: string } | null;
+export type Headlines = { items: { text: string; url: string | null; league?: string | null }[]; updated_at: string } | null;
 export const getHeadlines = () => get<Headlines>("/api/headlines");
+
+// The weekend columns (Ringer-style, one per league, written Tuesday for the NFL and Sunday for NCAAF); [] when none is fresh.
+export type WeekendColumn = { league: string; title: string; paragraphs: string[]; written_at: string };
+export const getWeekend = () => get<WeekendColumn[]>("/api/weekend");

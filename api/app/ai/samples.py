@@ -11,14 +11,14 @@ import os
 import sys
 import tempfile
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
 import psycopg
 from psycopg.rows import dict_row
 
-from . import client, facts, jobs, sources, writer
+from . import client, facts, sources, writer
 
 ROOT = Path(__file__).resolve().parents[3]
 API = os.environ.get("SAMPLES_API", "http://127.0.0.1:8000")
@@ -66,22 +66,12 @@ def _game(gid: int) -> dict:
     return r.json()
 
 
-def _news(conn, league: str, before: datetime | None = None, limit: int = 60, espn_only: bool = False) -> list[dict]:
+def _news(conn, league: str, before: datetime | None = None, limit: int = 60) -> list[dict]:
     return conn.execute("""
         SELECT league, headline, description, url, published_at FROM news_items
         WHERE league = ANY(%s) AND published_at IS NOT NULL AND (%s::timestamptz IS NULL OR published_at < %s)
-          AND (NOT %s OR espn_id NOT LIKE 'x:%%')
-        ORDER BY published_at DESC, url LIMIT %s""",
-                        ([league] if isinstance(league, str) else league, before, before, espn_only, limit)).fetchall()
-
-
-def _finals(conn, since: datetime, before: datetime) -> list[str]:
-    rows = conn.execute("""
-        SELECT g.league, a.name AS away, g.away_score, h.name AS home, g.home_score FROM games g
-        JOIN teams h ON h.id = g.home_team_id JOIN teams a ON a.id = g.away_team_id
-        WHERE g.state = 'post' AND g.start_time BETWEEN %s AND %s ORDER BY g.start_time""",
-                        (since, before)).fetchall()
-    return [f"{r['league'].upper()}: {r['away']} {r['away_score']}, {r['home']} {r['home_score']} (final)" for r in rows]
+        ORDER BY published_at DESC LIMIT %s""",
+                        ([league] if isinstance(league, str) else league, before, before, limit)).fetchall()
 
 
 def _timed(fn, *args):
@@ -108,7 +98,7 @@ def main() -> None:
         for league, away, home in PREVIEWS if "previews" in only else []:
             game = _game(_game_id(conn, league, away, home))
             try:
-                (arts, trail), t_src = _timed(sources.find_articles, game, _news(conn, league, espn_only=True))
+                (arts, trail), t_src = _timed(sources.find_articles, game, _news(conn, league))
             except client.AIError as exc:        # search unavailable and no ESPN articles: the app would retry
                 arts, trail, t_src = [], [{"via": "search", "url": "-", "result": f"search unavailable: {exc}"}], 0.0
             res, t_write = _timed(writer.write_preview, game, arts)
@@ -124,8 +114,8 @@ def main() -> None:
         now = datetime.now(timezone.utc)
         runs = (("Now", now), ("As of Sep 28, 11:00 AM PT", datetime(2026, 9, 28, 18, tzinfo=timezone.utc)))
         for label, before in runs if "headlines" in only else []:
-            news = jobs.balanced(_news(conn, ["nfl", "ncaaf"], before, jobs.HEADLINE_POOL), jobs.HEADLINE_NEWS)
-            res, t = _timed(writer.write_headlines, news, _finals(conn, before - timedelta(days=4), before))
+            news = _news(conn, ["nfl", "ncaaf"], before, 30)
+            res, t = _timed(writer.write_headlines, news)
             raw.append({"kind": "headlines", "as_of": label, "result": res})
             md += _headlines_md(label, res, t)
     out_path.write_text("\n".join(md), encoding="utf-8", newline="\n")
@@ -198,8 +188,7 @@ def _headlines_md(label, res, t) -> list[str]:
     out = [f"### {label}\n", _status(res, f"{t}s")]
     if res["status"] != "ready":
         return out + [f"> No headlines ({res.get('reason')})\n"]
-    return out + [f"- {i['text']}" + (f" ([{i.get('outlet') or 'link'}]({i['url']}))" if i["url"] else "")
-                  for i in res["body"]["items"]] + [""]
+    return out + [f"- {i['text']}" + (f" ([ESPN]({i['url']}))" if i["url"] else "") for i in res["body"]["items"]] + [""]
 
 
 if __name__ == "__main__":

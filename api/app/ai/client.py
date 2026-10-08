@@ -51,18 +51,22 @@ class Route(NamedTuple):
     overflow: str | None     # the checker's extra pool, only while the checker is cooling down or out of budget
 
 
-_120B, _QWEN, _QWEN_OR = "openai/gpt-oss-120b", "qwen/qwen3.8-27b", "or:qwen/qwen3.8-27b:free"
+# Overflow checker (Oct 6): OpenRouter retired the free Qwen ("unavailable for free": a 404 on every overflow call). Nemotron 3
+# Super is free, from a third family, and on check_eval's 23 cases it caught 15/15 errors with 0/8 false alarms (Groq's
+# Qwen: 11/15, 1/8). Free pool: 50 requests a day for the whole account, so it stays overflow, not the first checker.
+_120B, _QWEN, _NEMOTRON_OR = "openai/gpt-oss-120b", "qwen/qwen3.8-27b", "or:nvidia/nemotron-3-super-120b-a12b:free"
 # CTO, 2026-10-01. No backup writers: Qwen invents claims as a writer and 20b is untested as one, so with 120b out a
 # recap is the stats-only template, a preview "unavailable", and headlines keep the last set. Qwen on Groq checks
 # (its own quota, another family); OpenRouter's 50 a day is overflow. check_eval (2026-09-30): Qwen caught 11 of 15
 # errors and rejected 1 of 8 correct sentences: a false rejection costs a template, so watch the rejection rate.
 # Headlines move to Gemini (writer) and 20b (checker) once the Gemini key is replaced and the budgets are measured.
 ROUTES = {
-    "recap": Route(_120B, None, _QWEN, _QWEN_OR),
-    "preview": Route(_120B, None, _QWEN, _QWEN_OR),
-    "headlines": Route(_120B, None, _QWEN, _QWEN_OR),
+    "recap": Route(_120B, None, _QWEN, _NEMOTRON_OR),
+    "preview": Route(_120B, None, _QWEN, _NEMOTRON_OR),
+    "headlines": Route(_120B, None, _QWEN, _NEMOTRON_OR),
+    "weekend": Route(_120B, None, _QWEN, _NEMOTRON_OR),       # the weekend columns (Adam, Oct 6): same rules as recaps
     # Live one-liner: cut by the CTO (Oct 1), back on Adam's call the same day. Its fallback is the template.
-    "one_liner": Route(_120B, None, _QWEN, _QWEN_OR),
+    "one_liner": Route(_120B, None, _QWEN, _NEMOTRON_OR),
 }
 DEFAULT_KIND = "recap"      # for tools that call write()/check() outside a text (check_eval)
 
@@ -150,7 +154,7 @@ def write(prompt: str, *, json_out: bool = False, light: bool = False, reasoning
     live one-liner): low reasoning and a smaller reply allowance (LIGHT_MAX_OUT), so it holds less of the minute.
     reasoning: a gpt-oss writer's effort for this call instead of REASONING (only outline_eval's T3 arms, M3); the
     reply allowance stays MAX_OUT."""
-    text, used = _failover(route(_kind())[0], prompt, json_out, LIGHT_MAX_OUT if light else MAX_OUT,
+    text, used = _failover(route(_kind())[0], prompt, json_out, _write_cap(light),
                            avoid=None, low_effort=light, kind=call_kind(_write_step(prompt, light)),
                            reasoning=reasoning)
     _last.writer = used
@@ -159,7 +163,7 @@ def write(prompt: str, *, json_out: bool = False, light: bool = False, reasoning
 
 def check(prompt: str) -> str:
     """One fact check, by a model from another family than the one that wrote the text. Returns a JSON string."""
-    text, used = _failover(route(_kind())[1], prompt, True, CHECK_MAX_OUT, avoid=last_writer(), checker=True,
+    text, used = _failover(route(_kind())[1], prompt, True, _check_cap(), avoid=last_writer(), checker=True,
                            kind=call_kind("check"))
     _last.checker = used
     return text
@@ -444,7 +448,7 @@ def _sizing(name: str, prompt: str, max_out: int) -> tuple[int, int]:
     if _is_openrouter(name) or _is_gemini(name):
         return pt, max_out
     out = min(max_out, GROQ_TPM - pt - MARGIN)
-    if out < MIN_OUT:
+    if out < min(MIN_OUT, max_out):         # a caller that asked for less than MIN_OUT (the one-liner) is owed what it asked
         raise TooLarge(f"prompt of ~{pt} tokens leaves no room for a reply in {GROQ_TPM} a minute")
     return pt, out
 
@@ -650,6 +654,27 @@ CHECK_MAX_OUT = 2000     # the fact-check reply is a short JSON list (plus the m
 # reasoning, PIT @ CLE, Oct 1) spent its whole 3,000 and a medium one-liner 4,391 in all; 1,500 is a first setting,
 # to tighten once low-reasoning replies are measured.
 LIGHT_MAX_OUT = int(os.environ.get("AI_LIGHT_MAX_OUT", "1500"))
+# The live one-liner's replies are measured (server ai_calls, Oct 3-4): a write used 864-977 tokens in all with a
+# ~740-token prompt, so ~150-240 of reply plus reasoning, and its fact check ~90 over a ~580-token prompt. Groq counts
+# the whole allowance against the minute, so 1,500 and 2,000 held two thirds of it for nothing; these keep 2.5 times
+# the largest reply seen (the checker's, Qwen with hidden reasoning, more: a reply cut off by the cap comes back as an
+# empty reply, an AIError the worker retries with a whole prompt). Those figures are from the old prompts: after the
+# first live game read ai_calls' used tokens for one_liner:write / one_liner:check, and AI_ONE_LINER_MAX_OUT /
+# AI_ONE_LINER_CHECK_MAX_OUT move them without a deploy.
+ONE_LINER_MAX_OUT = int(os.environ.get("AI_ONE_LINER_MAX_OUT", "600"))
+ONE_LINER_CHECK_MAX_OUT = int(os.environ.get("AI_ONE_LINER_CHECK_MAX_OUT", "800"))
+
+
+def _check_cap() -> int:
+    """The reply allowance for a fact check: the one-liner's own, else CHECK_MAX_OUT."""
+    return ONE_LINER_CHECK_MAX_OUT if _kind() == "one_liner" else CHECK_MAX_OUT
+
+
+def _write_cap(light: bool) -> int:
+    """The reply allowance for a writer call: the one-liner's own, else LIGHT_MAX_OUT (a light step) or MAX_OUT."""
+    if light and _kind() == "one_liner":
+        return ONE_LINER_MAX_OUT
+    return LIGHT_MAX_OUT if light else MAX_OUT
 MARGIN = 200             # slack on top of the prompt count (an estimate, for models we can't count exactly)
 MIN_OUT = 600            # less room than this for a reply isn't worth a call
 REASONING = os.environ.get("GROQ_REASONING", "medium")   # "low" made factual slips (wrong team, wrong bet result)

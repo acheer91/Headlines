@@ -16,6 +16,7 @@ page quiet for 30 minutes.
 
 The rejection cap counts a failure for one set of inputs: the game day or score and, for the worker, the fingerprint
 of the fact sheet and the kept articles. Another article set (a search that returned different links) is new inputs.
+A live one-liner's fingerprint is its turnovers and win probability (one_liner_fingerprint), for the api too.
 
 No database connection is held while a model writes (seconds, sometimes a minute of waiting for quota).
 """
@@ -24,22 +25,23 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from datetime import datetime, timedelta
+import re
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from .. import db, espn, favorites, games, ncaaf
-from . import client, facts, scope, sources, store, writer
+from .. import db, espn, favorites, games, ncaaf, summary
+from . import client, facts, scope, sources, store, weekend_facts, writer
 
 log = logging.getLogger(__name__)
 PACIFIC = ZoneInfo("America/Los_Angeles")
 STATE_FOR = {"preview": "pre", "recap": "post", "one_liner": "in"}
 HEADLINE_POOL = 150      # stories read from the table for the headlines: every outlet's last two days
-HEADLINE_NEWS = 30       # stories the extract sees (Phase 4: the writer's minute holds ~30 headlines and snippets)
+HEADLINE_NEWS = 30       # stories the extract sees (the writer's minute holds ~30 headlines and snippets)
 
 
-def _page(game_id: int, base_url: str) -> dict | None:
+def _page(game_id: int, base_url: str, live: bool = False) -> dict | None:
     with db.connect() as conn:
-        return games.page(conn, game_id, base_url=base_url, favorites=favorites.load())
+        return games.page(conn, game_id, base_url=base_url, favorites=favorites.load(), live=live)
 
 
 def basis(kind: str, page: dict) -> str:
@@ -75,6 +77,45 @@ def fingerprint(page: dict, articles: list[dict]) -> str:
     return hashlib.sha1(json.dumps(data, sort_keys=True, default=str).encode()).hexdigest()[:16]
 
 
+LIVE_WIN_SWING = 10          # points of the home side's win probability that make a new line worth writing (Adam, Oct 4)
+LIVE_SWING_MIN_AGE = timedelta(minutes=4)    # ... but not within this long of the last claim (review, Oct 4)
+_MARK = re.compile(r"t(-|\d+)\|w(-|\d+)")
+
+
+def one_liner_fingerprint(before: dict | None, mark: dict | None) -> str | None:
+    """What a live one-liner is written under besides the score: "t<turnovers in all>|w<home win %>" from the
+    stored summary (summary.live_mark). The stored line is reused while nothing material happened (store.current,
+    the 30-minute TTL): a new turnover, or the win probability 10 points from where the last attempt left it, makes
+    this a different fingerprint, so a rewrite. While quiet it IS the last claim's, so a drifting percentage is not
+    new inputs (the rejection cap and the failed-quiet window key on it). None: ESPN sent neither."""
+    if not mark:
+        return None
+    now = f"t{'-' if mark['turnovers'] is None else mark['turnovers']}|w{'-' if mark['win'] is None else mark['win']}"
+    last = (before or {}).get("claim_fingerprint") or ""
+    then = _MARK.fullmatch(last)
+    if not then:
+        return now
+    old_t, old_w = (None if g == "-" else int(g) for g in then.groups())
+    # A number ESPN had not sent before counts as new, so the baseline gets set.
+    if mark["turnovers"] is not None and mark["turnovers"] != old_t:
+        return now
+    # A swing counts only once the last claim is a few minutes old: a late game's win probability can swing 10 points
+    # back and forth every play, and each swing would be a rewrite (a turnover is rare enough to go straight through).
+    updated = (before or {}).get("updated_at")
+    settled = updated is None or datetime.now(timezone.utc) - updated >= LIVE_SWING_MIN_AGE
+    if mark["win"] is not None and (old_w is None or (settled and abs(mark["win"] - old_w) >= LIVE_WIN_SWING)):
+        return now
+    return last
+
+
+def live_fingerprint(game_id: int, before: dict | None) -> str | None:
+    """one_liner_fingerprint from the stored summary (a page pull refreshed it just before). None when there is
+    none to read: the basis and the TTL decide, as before."""
+    with db.connect() as conn:
+        stored = db.get_summary_mark(conn, game_id)
+    return one_liner_fingerprint(before, summary.live_mark(stored["payload"])) if stored else None
+
+
 def _unavailable(what: str, wait: float) -> dict:
     log.info("ai %s: models limited for another %.0fs, nothing built", what, wait)
     return {"status": "failed", "id": None, "retry_after": wait}
@@ -99,17 +140,19 @@ def write_for_game(kind: str, game_id: int, reason: str, base_url: str = espn.BA
     if store.being_written(held):
         # Someone holds a live claim: don't rebuild the page or fetch articles only to find that out.
         return {"status": "busy", "id": held["id"]}
-    page = _page(game_id, base_url)
+    page = _page(game_id, base_url, live=kind == "one_liner")     # the one-liner reads the play-by-play too
     if page is None:
         return {"status": "missing", "id": None}
+    with db.connect() as conn:
+        game_row = db.game_by_id(conn, game_id)
     if (page["state"] != STATE_FOR[kind] or (kind == "recap" and not page.get("completed"))
-            or not scope.ai_league(page["league"])):
+            or not scope.ai_game(game_row)):
         return {"status": "skipped", "id": None}
     b = basis(kind, page)
     articles, fp = [], None
     if kind == "preview":
         with db.connect() as conn:
-            news = store.news(conn, [page["league"]], espn_only=True)   # previews: ESPN first, as before
+            news = store.news(conn, [page["league"]], espn_only=True)
         try:
             articles, _trail = sources.find_articles(page, news)
         except client.AIError as exc:
@@ -120,6 +163,8 @@ def write_for_game(kind: str, game_id: int, reason: str, base_url: str = espn.BA
         fp = fingerprint(page, articles)
     with db.connect() as conn:
         before = store.get(conn, game_id, kind)
+    if kind == "one_liner":
+        fp = live_fingerprint(game_id, before)
     if store.current(before, b, fp):
         return {"status": "current", "id": before["id"]}
     if reason != "manual" and store.rejected_out(before, b, fp):
@@ -143,7 +188,9 @@ def write_for_game(kind: str, game_id: int, reason: str, base_url: str = espn.BA
         elif kind == "recap":
             result = writer.write_recap(page)
         else:
-            result = writer.write_one_liner(page)
+            body = (before or {}).get("body")
+            result = writer.write_one_liner(page, body.get("line") if isinstance(body, dict) else None,
+                                            (before or {}).get("basis"))
     except Exception as exc:  # noqa: BLE001 — a bug must not leave the row stuck at 'writing'
         log.exception("ai %s game %s crashed", kind, game_id)
         result = {"status": "failed", "reason": f"crashed: {type(exc).__name__}"}
@@ -157,22 +204,15 @@ def write_for_game(kind: str, game_id: int, reason: str, base_url: str = espn.BA
     return {"status": result["status"], "id": c.id, "retry_after": result.get("retry_after")}
 
 
-def headlines_fingerprint(news: list[dict], lines: list[str]) -> str:
-    """What a headline set is written from: the stored news it reads and the finals it lists."""
-    data = {"news": sorted(n["url"] or n["headline"] for n in news), "finals": lines}
-    return hashlib.sha1(json.dumps(data, sort_keys=True).encode()).hexdigest()[:16]
-
-
 def is_video(url: str | None) -> bool:
-    """A video clip page (ESPN's Paul Finebaum Show clips, AP's video pages): no article to read, so never the link
-    under a headline."""
+    """A video clip page (ESPN's show clips, AP's video pages): no article to read, so never the link under a headline."""
     return "/video/" in (url or "").lower()
 
 
 def balanced(news: list[dict], n: int) -> list[dict]:
     """The n stories the headlines are written from: newest first within each (league, outlet), taken in turn across
-    them. A plain newest-first cut would be whichever outlet posts most (Yahoo's feed alone is 50 items a day), and
-    the extract is sized to ~30 stories. Deterministic: the headlines fingerprint reads the result."""
+    them. A plain newest-first cut would be whichever feed posts most (ESPN's NFL news alone is ~50 stories a day, Yahoo's
+    feed as many), and the extract is sized to ~30 stories. Deterministic: the headlines fingerprint reads the result."""
     groups: dict[tuple, list[dict]] = {}
     for item in news:                                        # already newest first
         groups.setdefault((item.get("league"), sources.outlet(item.get("url") or "")), []).append(item)
@@ -185,6 +225,12 @@ def balanced(news: list[dict], n: int) -> list[dict]:
     return sorted(out, key=lambda i: (i["published_at"], i["url"] or ""), reverse=True)
 
 
+def headlines_fingerprint(news: list[dict]) -> str:
+    """What a headline set is written from: the stored news it reads."""
+    data = {"news": sorted(n["url"] or n["headline"] for n in news)}
+    return hashlib.sha1(json.dumps(data, sort_keys=True).encode()).hexdigest()[:16]
+
+
 def featured_final(row: dict, favs: dict[str, list[str]]) -> bool:
     """Which finals the headlines may list: NCAAF follows the board filter (a Saturday stores every FBS final,
     ~60 games; the feed should see the board's, favorites included), every other league passes."""
@@ -194,31 +240,20 @@ def featured_final(row: dict, favs: dict[str, list[str]]) -> bool:
 
 
 def write_headlines(leagues: list[str], reason: str, preflight: bool = False) -> dict:
-    """The Home headlines (HEADLINE_LEAGUES: wider than the per-game texts' AI_LEAGUES). Nothing new since the
-    last ready set (same news, same finals) means nothing to write: a run with the same inputs would only spend
-    the writer's tokens on the same feed. A manual run always writes."""
+    """The Home headlines (HEADLINE_LEAGUES: wider than the per-game texts' AI_LEAGUES): news only, every league
+    (Adam, 2026-10-06: no final-score lines; scores live on the sport tabs). Nothing new since the last ready set
+    (same news) means nothing to write: a run with the same inputs would only spend the writer's tokens on the same
+    feed. A manual run always writes."""
     leagues = [lg for lg in leagues if scope.headline_league(lg)]
     if not leagues:
         return {"status": "skipped", "id": None}
     with db.connect() as conn:
         news = balanced([n for n in store.news(conn, leagues, days=2, limit=HEADLINE_POOL) if not is_video(n["url"])],
                         HEADLINE_NEWS)
-        finals = conn.execute("""
-            SELECT g.league, a.name AS away, g.away_score, h.name AS home, g.home_score,
-                   g.home_conf, g.away_conf, g.home_rank, g.away_rank,
-                   h.espn_id AS home_espn_id, a.espn_id AS away_espn_id, h.abbr AS home_abbr, a.abbr AS away_abbr
-            FROM games g
-            JOIN teams h ON h.id = g.home_team_id JOIN teams a ON a.id = g.away_team_id
-            WHERE g.state = 'post' AND g.completed IS TRUE AND g.league = ANY(%s)
-              AND g.start_time > now() - interval '2 days'
-            ORDER BY g.start_time, g.espn_id""", (leagues,)).fetchall()
         last = store.latest_headlines(conn)
-    favs = favorites.load()
-    lines = [f"{r['league'].upper()}: {r['away']} {r['away_score']}, {r['home']} {r['home_score']} (final)"
-             for r in finals if featured_final(r, favs)]
-    if not news and not lines:
+    if not news:
         return {"status": "skipped", "id": None}
-    fp = headlines_fingerprint(news, lines)
+    fp = headlines_fingerprint(news)
     if reason != "manual" and last and last["fingerprint"] == fp:
         return {"status": "current", "id": last["id"]}
     if reason != "manual":
@@ -228,10 +263,84 @@ def write_headlines(leagues: list[str], reason: str, preflight: bool = False) ->
                 return {"status": "capped", "id": None}
     if preflight and (wait := client.unavailable_for("headlines")) is not None:
         return _unavailable("headlines", wait)
-    result = writer.write_headlines(news, lines)
+    result = writer.write_headlines(news)
     with db.connect() as conn:
         rid = store.save_headlines(conn, result, reason, fp)
     log.info("ai headlines (%s): %s by %s", reason, result["status"], result.get("model"))
+    return {"status": result["status"], "id": rid, "retry_after": result.get("retry_after")}
+
+
+# Weekend columns (Adam, 2026-10-06): the NFL weekend is Thursday night to Monday night (written Tuesday morning), the
+# NCAAF one Thursday to Saturday (written Sunday morning).
+WEEKEND_WINDOW = {"nfl": timedelta(days=5), "ncaaf": timedelta(days=3)}
+WEEKEND_MIN_GAMES = 3          # a bye week or a holiday gap has no weekend to write about
+WEEKEND_NEWS_DAYS = 5
+
+
+def weekend_fingerprint(facts_: dict) -> str:
+    return hashlib.sha1(json.dumps(facts_, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:16]
+
+
+def _game_leader_lines(conn, row: dict) -> list[str]:
+    """The game's top passer, rusher and receiver per team from the stored summary (a final's is kept); [] if it has none."""
+    stored = db.get_summary_view(conn, row["id"])
+    if not stored or not stored.get("payload"):
+        return []
+    return weekend_facts.leader_lines(summary.leaders(stored["payload"], "game"), row["home"], row["away"])
+
+
+def build_weekend_facts(league: str, window: timedelta | None = None) -> dict | None:
+    """The league's weekend fact sheet (weekend_facts.build) from what is stored, or None when there is no weekend to
+    write about: not a weekend league, not a headline league, or fewer than WEEKEND_MIN_GAMES finals in the window.
+    window: a wider look back than WEEKEND_WINDOW, for a first column written mid-week (the launch's NCAAF one)."""
+    if league not in WEEKEND_WINDOW or not scope.headline_league(league):
+        return None
+    with db.connect() as conn:
+        rows = conn.execute("""
+            SELECT g.id, g.league, a.name AS away, g.away_score, h.name AS home, g.home_score, g.status_detail, g.start_time,
+                   g.home_conf, g.away_conf, g.home_rank, g.away_rank,
+                   h.espn_id AS home_espn_id, a.espn_id AS away_espn_id, h.abbr AS home_abbr, a.abbr AS away_abbr,
+                   t.body ->> 'recap' AS recap
+            FROM games g
+            JOIN teams h ON h.id = g.home_team_id JOIN teams a ON a.id = g.away_team_id
+            LEFT JOIN ai_texts t ON t.game_id = g.id AND t.kind = 'recap' AND t.status = 'ready'
+            WHERE g.state = 'post' AND g.completed IS TRUE AND g.league = %s AND g.start_time > now() - %s
+              AND g.home_score IS NOT NULL AND g.away_score IS NOT NULL
+            ORDER BY g.start_time, g.espn_id""", (league, window or WEEKEND_WINDOW[league])).fetchall()
+        news = store.news(conn, [league], days=WEEKEND_NEWS_DAYS, limit=weekend_facts.NEWS_ITEMS, espn_only=True)
+    favs = favorites.load()
+    rows = [r for r in rows if featured_final(r, favs)]
+    if len(rows) < WEEKEND_MIN_GAMES:
+        return None
+    with db.connect() as conn:
+        leaders = {r["id"]: _game_leader_lines(conn, r) for r in weekend_facts.featured(rows)}
+    return weekend_facts.build(league, rows, news, leaders)
+
+
+def write_weekend(league: str, reason: str, preflight: bool = False) -> dict:
+    """The league's weekend column, written from build_weekend_facts: the finals of the window (NCAAF follows the board
+    filter), the stored recaps and leaders of the most interesting of them, and a few news items. The same facts as
+    the last ready column mean nothing to write; a manual run always writes."""
+    facts_ = build_weekend_facts(league)
+    if facts_ is None:
+        return {"status": "skipped", "id": None}
+    with db.connect() as conn:
+        last = store.latest_weekend(conn, league)
+    fp = weekend_fingerprint(facts_)
+    if reason != "manual" and last and last["fingerprint"] == fp:
+        return {"status": "current", "id": last["id"]}
+    if reason != "manual":
+        with db.connect() as conn:
+            if store.weekend_rejected_out(conn, league, fp):
+                log.info("ai weekend %s: rejected %d times for these facts, waiting for new ones", league,
+                         store.REJECTION_CAP)
+                return {"status": "capped", "id": None}
+    if preflight and (wait := client.unavailable_for("weekend")) is not None:
+        return _unavailable(f"weekend {league}", wait)
+    result = writer.write_weekend(facts_)
+    with db.connect() as conn:
+        rid = store.save_weekend(conn, league, result, reason, fp)
+    log.info("ai weekend %s (%s): %s by %s", league, reason, result["status"], result.get("model"))
     return {"status": result["status"], "id": rid, "retry_after": result.get("retry_after")}
 
 

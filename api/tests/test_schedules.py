@@ -41,6 +41,7 @@ class FakeClient:
 def nfl_only(monkeypatch):
     monkeypatch.setattr(schedules, "LEAGUES", ["nfl", "ncaaf"])
     monkeypatch.setattr(scope, "AI_LEAGUES", {"nfl"})
+    monkeypatch.setattr(scope, "HEADLINE_LEAGUES", {"nfl"})
     monkeypatch.setattr(schedules, "SCHEDULES", schedules._schedules())
 
 

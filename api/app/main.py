@@ -13,7 +13,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeout
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
@@ -202,20 +202,26 @@ def game(game_id: int):
 # (_hand_to_worker), and the app says it is being written. A preview's extract and write are two calls that don't
 # fit one minute of the writer's quota together, so an opened preview usually finishes there.
 AI_WAIT = {"preview": 20.0, "recap": 10.0, "one_liner": 10.0}
-HAND_OFF = {"preview", "recap"}     # a one-liner isn't handed to the worker: by then the score has moved on
+# A live one-liner is handed over too (Oct 4): the worker builds the page afresh when it gets to it, so the line is
+# written from the game as it is then, not as it was at the open; the next pull shows it.
+HAND_OFF = {"preview", "recap", "one_liner"}
 _ai_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="ai-open")
 TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS")     # unset: no hand-off (the app never depends on Temporal)
 TEMPORAL_NAMESPACE = os.environ.get("TEMPORAL_NAMESPACE", "default")
 
 
-def _ai_out(kind: str | None, row: dict | None) -> dict:
+def _ai_out(kind: str | None, row: dict | None, game_row: dict | None = None) -> dict:
     """The response for a stored row. While a preview is being refreshed its last good text is served as ready
-    (the 8 AM refresh must not blank a good midweek preview; audit, 2026-09-29)."""
+    (the 8 AM refresh must not blank a good midweek preview; audit, 2026-09-29). A live one-liner whose rewrite
+    failed or is under way keeps its last good line while it is honest (store.kept_line, needs the game's score)."""
     if not row:
         return {"kind": kind, "status": "missing", "body": None, "sources": None, "updated_at": None,
                 "written_at": None}
     shown = ai_store.showable(row)
     status = row["status"] if shown is None or row["status"] != "writing" else "ready"
+    if (shown is None and game_row
+            and ai_store.kept_line(row, game_row["away_score"], game_row["home_score"])):
+        shown, status = row, "ready"
     if status == "failed" and row["reason"] == ai_store.QUEUED:
         status = "queued"                       # handed to the worker after a page open ran out of quota
     return {"kind": kind, "status": status, "body": row["body"] if shown else None,
@@ -261,8 +267,8 @@ def _write_on_open(kind: str, game_row: dict) -> dict:
 
 @app.get("/api/games/{game_id}/ai")
 def game_ai(game_id: int):
-    """The AI text that fits the game now (handoff 2.6): preview (pre), one-liner (live; the app falls back to the
-    box-score template), recap (played final); none in a league without AI text (AI_LEAGUES).
+    """The AI text that fits the game now (handoff 2.6): preview (pre), one-liner (live; the app shows nothing until
+    there is a line), recap (played final); none in a league without AI text (AI_LEAGUES).
     status: ready | no_sources ("No fresh previews") | writing or queued (being written: the next pull may have it)
     | failed (the app shows fallback text) | missing.
     Current text comes back at once, and so does a text that failed for the same inputs in the last 30 minutes
@@ -274,16 +280,22 @@ def game_ai(game_id: int):
         if not game_row:
             raise HTTPException(404, "game not found")
         kind = ai_jobs.kind_for(game_row)
-        if kind is None or not ai_scope.ai_league(game_row["league"]):
+        if kind is None or not ai_scope.ai_game(game_row):
             return _ai_out(None, None) | {"status": "none"}
         stored = ai_store.get(conn, game_id, kind)
     basis = ai_jobs.row_basis(kind, game_row)
-    # The api doesn't recompute a preview's fingerprint (that fetches articles): the 8 AM refresh does.
-    if (ai_store.current(stored, basis) or ai_store.failed_recently(stored, basis)
-            or ai_store.rejected_out(stored, basis)):       # rejected REJECTION_CAP times for this game day or score
-        return _ai_out(kind, stored)
-    if ai_store.being_written(stored) and ai_store.showable(stored):
-        return _ai_out(kind, stored)            # a preview mid-refresh: its last good text, at once
+    # The api doesn't recompute a preview's fingerprint (that fetches articles): the 8 AM refresh does. A live
+    # one-liner's is cheap (the stored summary's turnovers and win probability), so a new turnover or a big swing
+    # asks for a new line even at the same score.
+    fp = ai_jobs.live_fingerprint(game_id, stored) if kind == "one_liner" else None
+    known = fp if fp is not None else ai_store.UNKNOWN
+    if (ai_store.current(stored, basis, fp) or ai_store.failed_recently(stored, basis, known)
+            or ai_store.rejected_out(stored, basis, known)):    # rejected REJECTION_CAP times for these inputs
+        return _ai_out(kind, stored, game_row)
+    if ai_store.being_written(stored) and (ai_store.showable(stored) or kind == "one_liner"):
+        # A preview mid-refresh: its last good text, at once. A one-liner the worker is writing (it may wait a minute
+        # for quota): "writing" at once, not ten seconds of polling a claim that isn't ours.
+        return _ai_out(kind, stored, game_row)
     job = _ai_pool.submit(_write_on_open, kind, game_row)
     deadline = time.monotonic() + AI_WAIT[kind]
     try:
@@ -299,7 +311,7 @@ def game_ai(game_id: int):
             row = ai_store.get(conn, game_id, kind)
         settled = row is not None and (row["status"] != "writing" or ai_store.showable(row) is not None)
         if settled or (job.done() and row is None) or time.monotonic() >= deadline:
-            out = _ai_out(kind, row)
+            out = _ai_out(kind, row, game_row)
             if row is None and job.done() and not job.exception() and job.result().get("queued"):
                 out["status"] = "queued"        # handed off before a row existed (a preview's article search)
             return out
@@ -314,6 +326,22 @@ def headlines():
     if not row:
         return None
     return {"items": row["body"]["items"], "updated_at": row["updated_at"].isoformat()}
+
+
+WEEKEND_SHOWN = timedelta(days=8)       # last weekend's column is hidden once the next one is due
+
+
+@app.get("/api/weekend")
+def weekend():
+    """The Home weekend columns: each headline league's newest ready column from the last 8 days (a list, maybe empty)."""
+    out = []
+    with db.connect() as conn:
+        for league in (lg for lg in ("nfl", "ncaaf") if ai_scope.headline_league(lg)):
+            row = ai_store.latest_weekend(conn, league, within=WEEKEND_SHOWN)
+            if row and row["body"]:
+                out.append({"league": league, "title": row["body"]["title"], "paragraphs": row["body"]["paragraphs"],
+                            "written_at": row["written_at"].isoformat()})
+    return out
 
 
 # Serve the built web app from the same origin (one server, one HTTPS name, no CORS).

@@ -21,7 +21,7 @@ def fake(replies):
     it = iter(replies)
     calls = []
 
-    def write(prompt, json_out=False, light=False):
+    def write(prompt, json_out=False, light=False, reasoning=None):
         calls.append(prompt)
         return json.dumps(next(it))
     return write, calls
@@ -196,22 +196,23 @@ def test_edge_with_unknown_article_fails(model):
 
 def test_one_liner_from_live_facts(model):
     live = dict(GAME, state="in", status_detail="Q3 4:12")
-    calls = model([{"line": "Chicago leads by 20 in the third."}])
+    calls = model([{"line": "Chicago has this one in a headlock, and it is only the third quarter."}])
     res = writer.write_one_liner(live)
     assert res["status"] == "ready" and "Live, Q3 4:12" in calls[0]
 
 
 def test_one_liner_too_long(model):
-    long = {"line": " ".join(["word"] * 45)}
+    long = {"line": "word " * 46}          # 230 characters: over the 225 limit
     model([long, long])
-    assert writer.write_one_liner(dict(GAME, state="in"))["status"] == "failed"
+    res = writer.write_one_liner(dict(GAME, state="in"))
+    assert res["status"] == "failed" and "characters" in res["rejected"][0]
 
 
 def test_live_one_liner_may_say_tied_inside_a_quarter(model):
     g = {"league": "nfl", "state": "in", "status_detail": "3rd 12:00", "home": {"name": "Chicago Bears", "short": "Bears",
          "score": 14}, "away": {"name": "Philadelphia Eagles", "short": "Eagles", "score": 14},
          "header": {"home": {"linescores": [7, 7, 0]}, "away": {"linescores": [7, 7, 0]}}}
-    model([{"line": "The Eagles responded in the second quarter and it is tied 14-14."}])
+    model([{"line": "The Eagles responded in the second quarter, and the third is starting dead even."}])
     assert writer.write_one_liner(g)["status"] == "ready"
 
 
@@ -230,7 +231,7 @@ def test_one_liner_writer_and_checker_see_the_same_trimmed_facts(model, monkeypa
     assert writer.write_one_liner(_live_phi_chi())["status"] == "ready"
     facts_in = lambda p: p.split("FACTS:\n", 1)[1].split("\n\nTEXT:", 1)[0].strip()
     assert facts_in(calls[0]) == facts_in(seen[0])
-    assert "Passing leader" in facts_in(calls[0])
+    assert "Game phase: " in facts_in(calls[0])
     assert not any(w in facts_in(calls[0]) for w in ("Rushing leader", "possession", "over/under", "penalties"))
 
 
@@ -244,15 +245,23 @@ def test_one_liner_refuses_what_the_trimmed_sheet_left_out(model):
 
 
 def test_one_liner_code_checks_know_the_leaders_the_trimmed_sheet_left_out(model, checker):
-    # 128 is Chicago's rushing so far (in FACTS), not Swift's: the trimmed sheet has no Swift, so only the full list
-    # of leaders lets claims_ok refuse it (review of M4, Oct 2). The writer's FACTS still leave him out.
+    # 128 is Chicago's rushing so far, not Swift's. The sheet no longer carries the rushing line (a hook only when the
+    # yardage gap is big), so the draft is refused as a number not in the facts; and claims_ok, given a sheet that does
+    # carry it, still refuses it as a team total handed to a player, because it knows every leader on the box score
+    # (review of M4, Oct 2). The writer's FACTS leave Swift out.
+    from app.ai import facts, live_facts
     g = _live_phi_chi()
-    from app.ai import facts
-    assert "So far, rushing: Eagles 107, Bears 128." in facts.live_facts(g)["facts"]
-    calls = model([{"line": "Swift has 128 rushing yards already."}, {"line": "Chicago leads by 20 right now."}])
+    assert facts.stats(g)["rushingYards"] == {"home": "128", "away": "107"}     # Chicago's team total, not Swift's
+    sheet = dict(live_facts.live_facts(g), players=facts.players(g),
+                 facts=["So far, rushing: Eagles 107, Bears 128."])
+    with pytest.raises(writer.CheckFailed) as exc:
+        writer.claims_ok(["Swift has 128 rushing yards already."], g, sheet, final=False, live=True)
+    assert "isn't on the player's line" in str(exc.value) and "D'Andre Swift" in str(exc.value)
+    calls = model([{"line": "Swift has 128 rushing yards already."},
+                   {"line": "Chicago is cruising and nobody on the other sideline looks surprised."}])
     res = writer.write_one_liner(g)
     assert res["status"] == "ready" and len(calls) == 2
-    assert "isn't on the player's line" in res["rejected"][0] and "D'Andre Swift" in res["rejected"][0]
+    assert "numbers not in the facts" in res["rejected"][0]
     assert "Swift" not in calls[0].split("FACTS:", 1)[1]
 
 
@@ -738,7 +747,7 @@ def test_only_the_extraction_steps_ask_for_extract_mode(monkeypatch):
     flags = []
     replies = iter([PREVIEW_FACTS, {"preview": WORDS, "edges": {"home": [], "away": []}},
                     {"items": [{"fact": "Bears won 27-7", "news": 1}]},
-                    {"items": [{"text": f"Headline {c}", "news": None} for c in "ABCDEF"]}])
+                    {"items": [{"text": f"Headline {c}", "news": 1} for c in "ABCDEF"]}])
 
     def write(prompt, json_out=False, light=False):
         flags.append(light)
@@ -746,87 +755,159 @@ def test_only_the_extraction_steps_ask_for_extract_mode(monkeypatch):
     monkeypatch.setattr(client, "write", write)
     assert writer.write_preview(dict(GAME, state="pre"), [ARTICLE])["status"] == "ready"
     from datetime import datetime, timezone
-    news = [{"published_at": datetime(2026, 9, 28, tzinfo=timezone.utc), "headline": "Bears beat Eagles",
+    news = [{"published_at": datetime(2026, 9, 28, tzinfo=timezone.utc), "headline": "Bears beat Eagles 27-7", "league": "nfl",
              "description": "", "url": "https://www.espn.com/nfl/story/_/id/2/y"}]
-    assert writer.write_headlines(news, ["NFL: Eagles 7, Bears 27 (final)"])["status"] == "ready"
+    assert writer.write_headlines(news)["status"] == "ready"
     assert flags == [True, False, True, False]          # preview: extract, write; headlines: extract, write
 
 
-# ---------- headlines from every outlet, in the golden set's style (Oct 2) ----------
+def test_headlines_must_cover_every_league_with_news(monkeypatch):
+    # Adam, 2026-10-06: the feed is every sport we load, not three NFL lines. A set with no college stories is rewritten.
+    from datetime import datetime, timezone
+    news = [{"league": lg, "published_at": datetime(2026, 10, 5, tzinfo=timezone.utc), "headline": f"{lg} story {i}",
+             "description": "", "url": f"https://www.espn.com/{lg}/story/{i}"} for lg in ("nfl", "ncaaf") for i in range(3)]
+    nfl_only = {"items": [{"text": f"NFL line {c}", "news": 1 + i % 3} for i, c in enumerate("ABCDEFGH")]}
+    both = {"items": [{"text": f"Line {c}", "news": n} for c, n in zip("ABCDEFGH", (1, 2, 3, 4, 5, 6, 1, 4))]}
+    prompts, replies = [], iter([{"items": [{"fact": "a story", "news": 1, "league": "NFL"}]}, nfl_only, both])
 
-from datetime import datetime, timezone  # noqa: E402
-from app.ai import prompts  # noqa: E402
-
-HL_NEWS = [
-    {"league": "nfl", "published_at": datetime(2026, 10, 2, 22, 30, tzinfo=timezone.utc), "headline": "Patriots make decision on starting right guard vs. Bills",
-     "description": "Ben Brown is slated to fill the vacant spot", "url": "https://sports.yahoo.com/articles/patriots-guard-1.html"},
-    {"league": "nfl", "published_at": datetime(2026, 10, 2, 20, 58, tzinfo=timezone.utc), "headline": "Dasha Smith is leaving NFL",
-     "description": None, "url": "https://www.nytimes.com/athletic/7653792/2026/10/02/dasha-smith-nfl-executive/"},
-    {"league": "ncaaf", "published_at": datetime(2026, 10, 2, 19, 0, tzinfo=timezone.utc), "headline": "Florida put on upset alert before Mizzou",
-     "description": "", "url": "https://www.cbssports.com/college-football/news/florida-mizzou/"},
-]
-HL_FACTS = {"items": [{"fact": "Patriots name a starting right guard against the Bills", "news": 1, "final": False},
-                      {"fact": "Dasha Smith is leaving the NFL", "news": 2, "final": False},
-                      {"fact": "Florida is on upset alert before Missouri", "news": 3, "final": False},
-                      {"fact": "Eagles 7, Bears 27", "news": None, "final": True}]}
-
-
-def hl_items(*texts, ids=(1, 2, 3, None, None, None)):
-    return {"items": [{"text": t, "news": ids[i], "final": ids[i] is None} for i, t in enumerate(texts)]}
+    def write(prompt, json_out=False, light=False):
+        prompts.append(prompt)
+        return json.dumps(next(replies))
+    monkeypatch.setattr(client, "write", write)
+    out = writer.write_headlines(news)
+    assert out["status"] == "ready" and len(out["body"]["items"]) == 8
+    assert len(prompts) == 3 and "every league needs coverage" in prompts[2] and "NCAAF" in prompts[2]
+    assert "NCAAF | ESPN | 2026-10-05" in prompts[0] and "FINALS" not in prompts[0]      # each story is tagged; no scores in
+    assert {i["url"].split("/")[3] for i in out["body"]["items"]} == {"nfl", "ncaaf"}
+    assert {i["league"] for i in out["body"]["items"]} == {"nfl", "ncaaf"}          # each line carries its league for the chip
 
 
-GOOD = ("Patriots Settle Their Right Guard Question, and Bill Belichick Is Not Even Here", "Dasha Smith Leaves the NFL, and the League Office Shrugs",
-        "Florida Is on Upset Alert, and Gator Fans Are Counting Things", "Bears Beat the Eagles 27-7, and Chicago Is Entitled to a Smirk",
-        "Eagles Get Smoked in Chicago, and the Panic Is Real")
+# ---------- weekend columns (Adam, 2026-10-06) ----------
+
+def _weekend_facts():
+    from datetime import datetime, timezone
+    from app.ai import weekend_facts
+    rows = [{"league": "nfl", "away": "Philadelphia Eagles", "away_score": 7, "home": "Chicago Bears", "home_score": 31,
+             "status_detail": "Final", "start_time": datetime(2026, 10, 4, 17, tzinfo=timezone.utc), "home_rank": None,
+             "away_rank": None, "recap": "The Bears won 31-7. Their defense set the tone."}]
+    return weekend_facts.build("nfl", rows, [{"headline": "Eagles lose again", "description": ""}])
 
 
-def test_headlines_come_back_with_the_story_outlet_league_and_final_flag(model):
-    calls = model([HL_FACTS, hl_items(*GOOD)])
-    res = writer.write_headlines(HL_NEWS, ["NFL: Eagles 7, Bears 27 (final)"])
-    assert res["status"] == "ready", res
-    items = res["body"]["items"]
-    assert items[0] == {"text": GOOD[0], "url": HL_NEWS[0]["url"], "league": "nfl", "outlet": "Yahoo Sports", "final": False}
-    assert (items[1]["outlet"], items[2]["outlet"], items[2]["league"]) == ("The Athletic", "CBS Sports", "ncaaf")
-    assert items[3] == {"text": GOOD[3], "url": None, "league": None, "outlet": None, "final": True}
-    # The extract sees every outlet, tagged, and the PM tiers for the leagues in play; the writer sees the golden style.
-    assert "| Yahoo Sports (tier 3) | Patriots make decision" in calls[0] and "| The Athletic (tier 3) | Dasha Smith" in calls[0]
-    assert (prompts.outlet_tier("The Ringer"), prompts.outlet_tier("ESPN"), prompts.outlet_tier("AP")) == (1, 2, 3)
-    assert "a nudge, not a rule" in calls[0] and "a take is a headline too" in calls[0]
-    assert "a starting quarterback's injury" in calls[0] and "College football. Top" in calls[0] and "NBA. Top" not in calls[0]
-    assert "Title Case" in calls[1] and prompts.HEADLINE_EXAMPLES[0] in calls[1]
+def _column(sentence="The Bears flattened the Eagles 31-7 and the whole afternoon played like a long nap with a scoreboard.", n=6):
+    return {"title": "The Bears are a problem and the Eagles are a mystery",
+            "paragraphs": [" ".join([sentence] * (n // 2)), " ".join([sentence] * (n - n // 2))]}
 
 
-def test_a_headline_may_not_lift_words_from_a_story_or_an_example(model):
-    reuse_story = ("Patriots Make Decision on Starting Right Guard vs. Bills, and I Need a Moment",) + GOOD[1:]
-    reuse_example = ("The Broncos Stun the Chiefs in Arrowhead, and Everyone Notices",) + GOOD[1:]
-    for bad, why in ((reuse_story, "copied from an article"), (reuse_example, "reused an example")):
-        model([HL_FACTS, hl_items(*bad), hl_items(*bad)])                 # rewritten once, the same again: refused
-        res = writer.write_headlines(HL_NEWS, ["NFL: Eagles 7, Bears 27 (final)"])
-        assert res["status"] == "failed" and why in res["reason"]
+def test_a_weekend_column_is_written_checked_and_returned(model):
+    calls = model([_column()])
+    res = writer.write_weekend(_weekend_facts())
+    assert res["status"] == "ready" and res["checks"] == 1
+    assert res["body"]["title"].startswith("The Bears") and len(res["body"]["paragraphs"]) == 2
+    assert '"league": "NFL"' in calls[0] and "Chicago Bears 31, Philadelphia Eagles 7" in calls[0]
+    assert "Ringer-style" in calls[0] and "FACTS" in calls[0]
 
 
-def test_headline_rules_are_checked_in_code(model):
-    # (text list, expected rejection) — each is rejected on the first draft, fixed on the rewrite.
-    cases = [
-        (GOOD[:4] + ("A " + "very " * 25 + "long headline",), "words"),
-        (("Bills Cover as Favorites, and I Need a Moment",) + GOOD[1:], "bet talk"),
-        (GOOD[:4] + ("Eagles Lose 99-7, and Philadelphia Needs a Moment",), "numbers not in the facts"),
-    ]
-    for texts, why in cases:
-        calls = model([HL_FACTS, hl_items(*texts), hl_items(*GOOD)])
-        res = writer.write_headlines(HL_NEWS, ["NFL: Eagles 7, Bears 27 (final)"])
-        assert res["status"] == "ready"
-        if why:
-            assert why in calls[2] and "rejected" in calls[2]
+def test_a_weekend_column_with_a_wrong_length_is_rewritten(model):
+    calls = model([_column(n=2), _column()])
+    assert writer.write_weekend(_weekend_facts())["status"] == "ready"
+    assert "words: write about 115" in calls[1]
 
 
-def test_two_lines_for_one_story_are_rejected(model):
-    calls = model([HL_FACTS, hl_items(*GOOD, ids=(1, 1, 3, None, None)), hl_items(*GOOD)])
-    assert writer.write_headlines(HL_NEWS, ["NFL: Eagles 7, Bears 27 (final)"])["status"] == "ready"
-    assert "two lines for one story" in calls[2]
+@pytest.mark.parametrize("bad, why", [
+    ("The Bears are on a three-game winning streak after beating the Eagles 31-7 on a nap of an afternoon.", "history or a record"),
+    ("The Bears covered the spread against the Eagles 31-7 on a nap of an afternoon.", "bet talk"),
+    ("The Bears beat the Eagles 31-9 on a nap of an afternoon, and the Eagles will be sad.", "numbers not in the facts"),
+])
+def test_a_weekend_column_with_history_betting_or_a_made_up_number_is_rewritten(model, bad, why):
+    calls = model([_column(sentence=bad), _column()])
+    assert writer.write_weekend(_weekend_facts())["status"] == "ready"
+    assert why in calls[1]
 
 
-def test_an_item_that_names_a_story_is_never_a_final(model):
-    model([HL_FACTS, {"items": [{"text": t, "news": i + 1 if i < 3 else None, "final": True} for i, t in enumerate(GOOD)]}])
-    items = writer.write_headlines(HL_NEWS, ["NFL: Eagles 7, Bears 27 (final)"])["body"]["items"]
-    assert [i["final"] for i in items] == [False, False, False, True, True]
+def test_a_weekend_column_that_reuses_an_example_is_rewritten(model):
+    from app.ai import prompts
+    copied_line = prompts.ONE_LINER_EXAMPLES[10].split("] ", 1)[1]
+    calls = model([_column(sentence=copied_line), _column()])
+    assert writer.write_weekend(_weekend_facts())["status"] == "ready"
+    assert "reused an example" in calls[1]
+
+
+def test_a_weekend_column_the_fact_checker_rejects_three_times_fails(model, checker):
+    checker.extend([[{"quote": "x", "why": "not in FACTS"}]] * 3)
+    calls = model([_column(), _column(), _column()])
+    res = writer.write_weekend(_weekend_facts())
+    assert res["status"] == "failed" and "fact check" in res["reason"] and len(calls) == 3      # a third draft is tried
+
+
+def test_a_weekend_column_the_third_draft_can_pass(model, checker):
+    checker.extend([[{"quote": "x", "why": "not in FACTS"}]] * 2)
+    model([_column(), _column(), _column()])
+    assert writer.write_weekend(_weekend_facts())["status"] == "ready"
+
+
+def test_the_weekend_fact_check_prompt_is_the_weekend_one(model, monkeypatch):
+    prompts_seen = []
+    monkeypatch.setattr(client, "check", lambda p: (prompts_seen.append(p), json.dumps({"problems": []}))[1])
+    model([_column()])
+    writer.write_weekend(_weekend_facts())
+    assert "weekend sports column" in prompts_seen[0]
+
+
+def test_the_weekend_column_is_written_at_low_reasoning_and_other_texts_are_not(monkeypatch):
+    seen = []
+
+    def write(prompt, json_out=False, light=False, reasoning=None):
+        seen.append(reasoning)
+        return json.dumps(_column())
+    monkeypatch.setattr(client, "write", write)
+    assert writer.write_weekend(_weekend_facts())["status"] == "ready"
+    assert seen == ["low"]
+
+
+def test_a_weekend_column_may_not_invent_a_venue_a_day_or_a_show(model):
+    bad = "The Bears flattened the Eagles 31-7 at Soldier Field on Sunday and it felt like a Netflix finale."
+    calls = model([_column(sentence=bad), _column()])
+    assert writer.write_weekend(_weekend_facts())["status"] == "ready"
+    assert "names FACTS never gives" in calls[1] and "Soldier" in calls[1] and "Sunday" in calls[1] and "Netflix" in calls[1]
+
+
+def test_unknown_names_skips_sentence_starts_possessives_and_names_in_the_facts():
+    facts = '{"results": ["Atlanta Falcons 45, New Orleans Saints 24"], "notes": [{"leaders": ["Falcons passing: Michael Penix 20/30"]}]}'
+    ok = ["Meanwhile the Falcons' offense and the Saints’ defense met. Penix did the rest, and NFL fans noticed."]
+    assert writer.unknown_names(ok, facts) == []
+    assert writer.unknown_names(["The Falcons beat Chicago in the Superdome."], facts) == ["Chicago", "Superdome"]
+
+
+def test_unknown_names_lets_acronyms_through_and_the_title_is_not_checked(model):
+    assert writer.unknown_names(["Nine TDs and a BBQ later, the NFL shrugged."], '{"x": "NFL"}') == []
+    title_case = {"title": "Bears Flatten Eagles In Cold", "paragraphs": _column()["paragraphs"]}
+    model([title_case])
+    assert writer.write_weekend(_weekend_facts())["status"] == "ready"
+
+
+def test_a_weekend_column_that_ranks_games_is_rewritten(model):
+    ranky = "The Bears flattened the Eagles 31-7 in the biggest statement of the afternoon, a nap with a scoreboard."
+    calls = model([_column(sentence=ranky), _column()])
+    assert writer.write_weekend(_weekend_facts())["status"] == "ready"
+    assert "ranking games" in calls[1] and "biggest" in calls[1]
+
+
+def test_the_checker_prompts_guard_roles_and_winners():
+    from app.ai import prompts
+    assert "an analyst called a player" in prompts.FACT_CHECK
+    assert "A name before a colon" in prompts.EXTRACT_HEADLINES
+    assert "The team listed first in a" in prompts.WEEKEND_FACT_CHECK
+
+
+def test_a_weekend_column_with_a_junk_paragraph_is_rewritten(model):
+    junk = _column()
+    junk["paragraphs"].append(")")
+    calls = model([junk, _column()])
+    assert writer.write_weekend(_weekend_facts())["status"] == "ready"
+    assert "is not a paragraph" in calls[1]
+
+
+def test_ranking_words_catch_an_adjective_in_between():
+    assert writer.RANKING.search("The Falcons were the only true blowout of the day.")
+    assert writer.RANKING.search("Just the only upset.")
+    assert not writer.RANKING.search("There were no surprises, and one blowout.")

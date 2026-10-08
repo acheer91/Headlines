@@ -126,14 +126,17 @@ export function GamePage() {
 
 function Detail({ g, ai, aiLoading }: { g: GameDetail; ai: AiText | null; aiLoading: boolean }) {
   const noData = g.summary_available ? "ESPN didn't send this" : "Not available yet";
-  // Live: the AI one-liner when it's ready (checked), else the box-score template (the PRD's fallback).
-  const aiLine = ai?.kind === "one_liner" && ai.status === "ready" && ai.body && "line" in ai.body ? ai.body.line : null;
-  const oneLiner = aiLine ?? g.one_liner;
+  // Live: the AI one-liner when it's ready (checked) and has something to say. No box-score template any more
+  // (Adam, Oct 4: a bare score and a QB's yards read as awkward): a failed or empty line shows nothing.
+  const oneLiner = ai?.kind === "one_liner" && ai.status === "ready" && ai.body && "line" in ai.body ? ai.body.line : null;
   return (
     <main className="list">
       <Matchup g={g} />
       {g.screen === "C2" && oneLiner && <p className="oneliner">{oneLiner}</p>}
       {g.screen !== "C1" && <Linescore g={g} />}
+
+      {/* Adam, Oct 3: the preview and edges lead the pre-game page, above the line and the stats. */}
+      {g.screen === "C1" && <PreviewSections g={g} ai={ai} loading={aiLoading} />}
 
       {g.screen === "C1" && (
         <Section title="Line">
@@ -155,7 +158,6 @@ function Detail({ g, ai, aiLoading }: { g: GameDetail; ai: AiText | null; aiLoad
         </Section>
       )}
 
-      {g.screen === "C1" && <PreviewSections g={g} ai={ai} loading={aiLoading} />}
       {g.screen === "D" && g.completed !== false && <RecapSections g={g} ai={ai} loading={aiLoading} />}
     </main>
   );

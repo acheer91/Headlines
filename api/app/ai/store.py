@@ -8,6 +8,7 @@ overwrite newer work (audit, 2026-09-29).
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
 from typing import NamedTuple
 
@@ -17,7 +18,13 @@ from psycopg.types.json import Jsonb
 # a worker writer can wait minutes for quota while holding its claim.
 WRITING_TIMEOUT = timedelta(minutes=16)
 FAILED_QUIET = timedelta(minutes=30)    # a page open doesn't retry a text that failed this recently (same basis)
-ONE_LINER_TTL = timedelta(minutes=15)   # Adam, 2026-09-29: reused until the score changes or 15 minutes pass
+# Adam, 2026-09-29: reused until the score changes or 15 minutes pass. Oct 4 (token churn): 30 minutes, and only a new
+# turnover or a big win-probability swing also asks for a new line (jobs.one_liner_fingerprint).
+ONE_LINER_TTL = timedelta(minutes=30)
+# A live game moves on: a failed one-liner is tried again after 2 minutes, not 30 (the same-inputs cap of
+# REJECTION_CAP failed writes still holds per score and event). Found on CAR-DET, Oct 4: one rejected rewrite blanked the line.
+ONE_LINER_FAILED_QUIET = timedelta(minutes=2)
+KEEP_LINE = timedelta(minutes=45)       # how long a failed or pending rewrite may keep showing the last good line
 QUEUED = "queued"                       # reason on a failed row a page open handed to the worker (main._hand_to_worker)
 # A text that failed this many times for reasons retrying won't fix (check failed twice, a non-retryable error) is
 # not written again for the same inputs (Adam, 2026-10-01): it waits for new ones. Rate limits and 5xx never count.
@@ -66,10 +73,12 @@ def being_written(row: dict | None) -> bool:
     return bool(row) and row["status"] == "writing" and _age(row) < WRITING_TIMEOUT
 
 
-def failed_recently(row: dict | None, basis: str) -> bool:
-    """Failed for the same inputs within FAILED_QUIET: a page open shows the fallback instead of paying again."""
+def failed_recently(row: dict | None, basis: str, fingerprint: object = UNKNOWN) -> bool:
+    """Failed for the same inputs within FAILED_QUIET: a page open shows the fallback instead of paying again.
+    A fingerprint (a live one-liner's turnovers and win probability) must match the failed claim's too."""
     return (bool(row) and row["status"] == "failed" and row["claim_basis"] == basis
-            and _age(row) < FAILED_QUIET)
+            and (fingerprint is UNKNOWN or row["claim_fingerprint"] == fingerprint)
+            and _age(row) < (ONE_LINER_FAILED_QUIET if row["kind"] == "one_liner" else FAILED_QUIET))
 
 
 def showable(row: dict | None) -> dict | None:
@@ -81,6 +90,20 @@ def showable(row: dict | None) -> dict | None:
     if row["status"] == "writing" and row["kind"] == "preview" and row["body"] is not None:
         return row
     return None
+
+
+def kept_line(row: dict | None, away: int | None, home: int | None) -> bool:
+    """A live one-liner whose rewrite failed or is under way still shows its last good line while it is honest:
+    written under KEEP_LINE ago, and the same side leads as at its basis (a stale "up 4" is hidden)."""
+    body = row and row["body"]
+    m = re.fullmatch(r"\s*(\d+)-(\d+)\s*", (row and row["basis"]) or "")
+    if (not row or row["kind"] != "one_liner" or row["status"] not in ("failed", "writing") or not m
+            or not isinstance(body, dict) or not body.get("line") or not row["written_at"]
+            or away is None or home is None):
+        return False
+    sign = lambda x, y: (x > y) - (x < y)           # noqa: E731
+    return (datetime.now(timezone.utc) - row["written_at"] < KEEP_LINE
+            and sign(int(m[1]), int(m[2])) == sign(away, home))
 
 
 def claim(conn, game_id: int, kind: str, basis: str, fingerprint: str | None = None,
@@ -177,8 +200,8 @@ def latest_headlines(conn) -> dict | None:
 
 
 def news(conn, leagues: list[str], days: int = 8, limit: int = 60, espn_only: bool = False) -> list[dict]:
-    """Stored news, newest first: ESPN's and the other outlets' (headlines: the input). `espn_only` is for previews,
-    which still read ESPN first and search only to fill gaps (the other outlets' rows start "x:", app.outlet_news).
+    """Stored news, newest first: ESPN's and the other outlets' (headlines: the input; app.outlet_news stores the others
+    with an espn_id that starts "x:"). espn_only is for previews and the weekend columns, which read ESPN's rows only.
     The URL breaks a tie so the same rows always come back in the same order."""
     return conn.execute("""
         SELECT league, headline, description, url, published_at FROM news_items
