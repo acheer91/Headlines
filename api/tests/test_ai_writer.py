@@ -911,3 +911,25 @@ def test_ranking_words_catch_an_adjective_in_between():
     assert writer.RANKING.search("The Falcons were the only true blowout of the day.")
     assert writer.RANKING.search("Just the only upset.")
     assert not writer.RANKING.search("There were no surprises, and one blowout.")
+
+
+def test_a_headline_with_a_bracketed_placeholder_is_rewritten(model):
+    from datetime import datetime, timezone
+    news = [{"league": "nfl", "published_at": datetime(2026, 10, 7, tzinfo=timezone.utc), "headline": "Cam Jurgens traded to Ravens",
+             "description": "", "url": f"https://www.espn.com/nfl/story/_/id/{i}/x"} for i in range(1, 4)]
+    bad = {"items": [{"text": f"[PERSON_NAME] moves again {c}", "news": 1 + i % 3} for i, c in enumerate("ABCDEF")]}
+    good = {"items": [{"text": f"Cam Jurgens moves again {c}", "news": 1 + i % 3} for i, c in enumerate("ABCDEF")]}
+    calls = model([{"items": [{"fact": "Cam Jurgens was traded to the Ravens", "news": 1, "league": "NFL"}]}, bad, good])
+    assert writer.write_headlines(news)["status"] == "ready"
+    assert "bracketed placeholder" in calls[2] and "[PERSON_NAME]" in calls[2]
+
+
+def test_headlines_get_three_drafts_before_failing(model, checker):
+    from datetime import datetime, timezone
+    news = [{"league": "nfl", "published_at": datetime(2026, 10, 7, tzinfo=timezone.utc), "headline": "Story",
+             "description": "", "url": "https://www.espn.com/nfl/story/_/id/1/x"}]
+    ok = {"items": [{"text": f"Story line {c}", "news": 1} for c in "ABCDEF"]}
+    checker.extend([[{"quote": "x", "why": "not in FACTS"}]] * 3)
+    calls = model([{"items": [{"fact": "a story", "news": 1, "league": "NFL"}]}, ok, ok, ok])
+    res = writer.write_headlines(news)
+    assert res["status"] == "failed" and len(calls) == 4          # one extract and three writes

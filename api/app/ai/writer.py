@@ -1002,6 +1002,7 @@ def write_one_liner(game: dict, previous: str | None = None, previous_basis: str
 
 # ---------------------------------------------------------------- headlines
 
+HEADLINES_TRIES = 3                      # twice a day, and a stray quote mark or placeholder is the commonest failure
 HEADLINES_MIN, HEADLINES_MAX = 6, 12     # asked for 8 to 12; a thin news day may give fewer
 LEAGUE_FLOOR = 3                         # a league with this many stories in the input must show up in the set...
 LEAGUE_MIN_ITEMS = 2                     # ...at least this many times
@@ -1020,7 +1021,7 @@ def write_headlines(news: list[dict]) -> dict:
             if not numbers_ok(json.dumps(x, ensure_ascii=False), inputs):
                 raise CheckFailed("extract has numbers not in the inputs")
 
-        facts = _step(prompts.EXTRACT_HEADLINES.format(news=nj), check_extract, stats, light=True)
+        facts = _step(prompts.EXTRACT_HEADLINES.format(news=nj), check_extract, stats, light=True, tries=HEADLINES_TRIES)
         fj = json.dumps(facts, ensure_ascii=False)
 
         def check_write(x):
@@ -1033,10 +1034,13 @@ def write_headlines(news: list[dict]) -> dict:
                 raise CheckFailed(f"every league needs coverage: write at least {LEAGUE_MIN_ITEMS} {', '.join(short)} "
                                   "items from the FACTS tagged with that league")
             _texts_ok([i.get("text") for i in items], fj)
+            holes = [t for t in (i.get("text") for i in items) if PLACEHOLDER.search(t)]
+            if holes:
+                raise CheckFailed(f"a bracketed placeholder in {holes[0]!r}: write the person's name as the story gives it")
             _fact_check([i.get("text") for i in items], fj, stats)
 
         out = _step(prompts.WRITE_HEADLINES.format(facts=fj, voice=prompts.VOICE, guardrails=prompts.GUARDRAILS),
-                    check_write, stats)
+                    check_write, stats, tries=HEADLINES_TRIES)
         items = [{"text": i["text"], "url": ids[i["news"]]["url"] if i.get("news") in ids else None,
                   "league": ids[i["news"]]["league"] if i.get("news") in ids else None}
                  for i in out["items"]]
@@ -1061,6 +1065,8 @@ HISTORY = re.compile(r"\b(streaks?|undefeated|unbeaten|winless|all-time|franchis
 # Ranking the weekend's games against each other: the prompt forbids it and the checker is jumpy about it, so code refuses
 # it (the first NFL column called a 21-point margin "the weekend's loudest statement").
 RANKING = re.compile(r"\b(biggest|loudest|closest|stunners?|shockers?|only (?:\w+ )?(?:blowout|upset|game|team|one))\b", re.I)
+
+PLACEHOLDER = re.compile(r"\[[A-Za-z_ ]{3,}\]")        # "[PERSON_NAME]": the model hid a name it should have written
 
 WORD = re.compile(r"[A-Za-z][A-Za-z'’]*")
 KNOWN_CAPS = {"I", "NFL", "NCAAF", "AP", "CFP", "SEC", "ACC", "OT"}

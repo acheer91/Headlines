@@ -330,7 +330,9 @@ Return {{"items": [{{"fact": "what happened, in plain words, numbers exactly as 
 with the 12 most important stories: injuries, trades, firings and coaching changes, suspensions, records, rankings
 moves, big upsets and storylines. Cover every league in NEWS: at least 4 items from each league that has that many.
 No bare final-score lines (scores have their own screens); a result is fine when it is part of the story.
-Skip fantasy advice, betting odds and listicles. Only what NEWS says, one story per item.
+Skip fantasy advice, betting odds and listicles. Only what NEWS says, one story per item. Write every person's name
+as the story gives it, never a bracketed placeholder; never use double quotation marks inside a fact (they break the
+JSON): single quotes or none.
 Never give a person a position, team or title that NEWS doesn't state beside their name. A name before a colon in a
 headline is the person being quoted (often an analyst or reporter), not a player: "Dan Orlovsky: Johnson's retirement is
 a significant loss" is an analyst's opinion, not an Eagles player's.
@@ -344,7 +346,8 @@ WRITE_HEADLINES = """You write the headline list for a sports app's home screen.
 
 Write 8 to 12 items from FACTS, most important first, one line each, same ids. Each line tells exactly one
 item's story; never join two items into one line. Use a person's position or team only as FACTS gives it. Mix the leagues (NFL and NCAAF) through the list; never write a
-line that is only a final score.
+line that is only a final score. Write every person's name as FACTS gives it, never a bracketed placeholder like
+[PERSON_NAME]. Never use double quotation marks inside a line (they break the JSON): single quotes or none.
 
 {voice}
 
