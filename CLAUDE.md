@@ -280,6 +280,13 @@ change deployed mid-week), 3 real game histories as replay fixtures.
   (`preview` for a preview). Lift every cap: `UPDATE ai_texts SET rejections = 0 WHERE rejections > 0;` (psql in `db`).
 - Beyond saving: `workflow terminate -w nfl-<espn_id> --reason ...`, then trigger ScheduleSync (starts a fresh one)
 - Failures: UI filter `ExecutionStatus='Failed'`, every Monday after the weekend
+- A Failed GameWorkflow (grading gave up after 5 attempts) is not restarted by ScheduleSync: the game is final, so
+  it is no longer listed. The pull path still grades a final when its page is pulled. To grade through Temporal, fix
+  the cause, then start a fresh one (tried 2026-10-02 on a final game; it fetched, graded, then waited the 1-hour
+  regrade, results unchanged): `workflow start --type GameWorkflow --task-queue scores --workflow-id nfl-<espn_id>
+  --input '{"league":"nfl","espn_id":"<espn_id>","start_iso":"<kickoff UTC with offset>","preview_iso":"<same>"}'`
+  (a Failed ID can be reused). Use a throwaway ID (`validate-...`) and terminate it afterwards if the original is
+  still Running.
 - Save a real history for the replay test: `workflow show -w nfl-<espn_id> -o json > api/tests/fixtures/histories/<name>.json`
 
 ## Phase 2 — Game screens and bet grading (built 2026-09-27; Sunday checks passed 2026-09-28)
@@ -315,6 +322,10 @@ write-only pre-authenticated request in `~/.backup_url` (mode 600, never in the 
 make a new one before then (edit `BACKUP_URL` in `.env`, restart the worker). Old cron log: `~/backup.log`. Restore (tested 2026-09-28): the PAR can't read, so download with
 `~/.local/oci-cli/bin/oci os object get --auth instance_principal --bucket-name scores-backups --name <file> --file <file>`,
 then `gunzip -c <file> | docker exec -i <empty postgres:16 container> psql -U postgres` and check `select count(*) from games`.
+Re-checked 2026-10-02: the newest uploaded dump downloaded and passed `gzip -t`; a fresh `pg_dumpall` restored into a
+scratch `postgres:16` container (`-e POSTGRES_USER=scores`, no published port, 512 MB) gave all four databases back,
+and every `scores` table matched live row for row (Temporal's `executions` 93 = 93, visibility 87 = 87). Two
+harmless errors on restore: the `scores` role and database already exist in a fresh container.
 OS security updates install daily (Ubuntu unattended-upgrades). The laptop stack runs again for Phase 3 testing (its own data).
 
 ## Stack
