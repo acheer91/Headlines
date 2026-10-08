@@ -354,7 +354,7 @@ FACTS:
 
 # ---------------------------------------------------------------- weekend columns (Home, Adam 2026-10-06)
 
-WEEKEND_WORDS = (80, 200)       # what code accepts; the prompt asks for about 115 (never over 145) and the model runs long
+WEEKEND_WORDS = (80, 150)       # what code accepts; the prompt asks for about 115 (never over 145); a 197-word draft passed a 200 cap
 
 # FACTS and the league first-to-last fixed text: everything that never changes comes before FACTS (Groq's prefix cache).
 WRITE_WEEKEND = """You write the weekend column for a personal sports app: how the {league} weekend went, in about 115 words,
