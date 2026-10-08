@@ -777,8 +777,9 @@ def test_headlines_must_cover_every_league_with_news(monkeypatch):
     out = writer.write_headlines(news)
     assert out["status"] == "ready" and len(out["body"]["items"]) == 8
     assert len(prompts) == 3 and "every league needs coverage" in prompts[2] and "NCAAF" in prompts[2]
-    assert "NCAAF | 2026-10-05" in prompts[0] and "FINALS" not in prompts[0]      # each story is tagged; no scores in
+    assert "NCAAF | ESPN | 2026-10-05" in prompts[0] and "FINALS" not in prompts[0]      # each story is tagged; no scores in
     assert {i["url"].split("/")[3] for i in out["body"]["items"]} == {"nfl", "ncaaf"}
+    assert {i["league"] for i in out["body"]["items"]} == {"nfl", "ncaaf"}          # each line carries its league for the chip
 
 
 # ---------- weekend columns (Adam, 2026-10-06) ----------

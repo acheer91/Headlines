@@ -162,7 +162,7 @@ export type AiText = {
 /** The AI text that fits the game now. The server may write it on the spot (up to ~20 s for a preview). */
 export const getAi = (id: number) => get<AiText>(`/api/games/${id}/ai`);
 
-export type Headlines = { items: { text: string; url: string | null }[]; updated_at: string } | null;
+export type Headlines = { items: { text: string; url: string | null; league?: string | null }[]; updated_at: string } | null;
 export const getHeadlines = () => get<Headlines>("/api/headlines");
 
 // The weekend columns (Ringer-style, one per league, written Tuesday for the NFL and Sunday for NCAAF); [] when none is fresh.

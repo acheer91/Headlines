@@ -24,6 +24,7 @@ from typing import Callable
 
 from . import client, facts, live_facts, prompts
 from .sources import mentions, team_terms
+from .sources import outlet as outlet_of
 
 COPY_WORDS = 8
 RECAP_VOICE = True          # Adam's house style and example recaps in the recap prompt; False = the plain prompt (Oct 1)
@@ -1010,8 +1011,8 @@ def write_headlines(news: list[dict]) -> dict:
     """Home headlines: news only, across every league in `news` (rows carry `league`)."""
     def go(stats):
         ids = {i + 1: n for i, n in enumerate(news)}
-        nj = "\n".join(f"[{i}] {n['league'].upper()} | {n['published_at']:%Y-%m-%d} | {n['headline']} | "
-                       f"{n.get('description') or ''}" for i, n in ids.items())
+        nj = "\n".join(f"[{i}] {n['league'].upper()} | {outlet_of(n['url'] or '') or 'other'} | {n['published_at']:%Y-%m-%d} | "
+                       f"{n['headline']} | {n.get('description') or ''}" for i, n in ids.items())
         inputs = nj
         stories = Counter(n["league"] for n in news)
 
@@ -1036,7 +1037,8 @@ def write_headlines(news: list[dict]) -> dict:
 
         out = _step(prompts.WRITE_HEADLINES.format(facts=fj, voice=prompts.VOICE, guardrails=prompts.GUARDRAILS),
                     check_write, stats)
-        items = [{"text": i["text"], "url": ids[i["news"]]["url"] if i.get("news") in ids else None}
+        items = [{"text": i["text"], "url": ids[i["news"]]["url"] if i.get("news") in ids else None,
+                  "league": ids[i["news"]]["league"] if i.get("news") in ids else None}
                  for i in out["items"]]
         return {"status": "ready", "body": {"items": items}}
 

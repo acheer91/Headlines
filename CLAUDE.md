@@ -76,8 +76,8 @@ Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `ph
   own wider list** (Adam, 2026-10-02): `HEADLINE_LEAGUES` (compose: `nfl,ncaaf`; unset it follows `AI_LEAGUES`), and
   college news is in the feed. The Home screen also got a `Home` tab (first tab, `main.tsx`) the same day.
   **Oct 6 (Adam): headlines are news only, every league we load, NCAAF included.** No final-score lines: the writer's
-  input is `store.news_balanced` (newest 14 stories per league, so one busy league can't crowd out the other), each
-  story tagged with its league; 8-12 lines asked (6-12 accepted), and a league with 3+ stories in the input must show
+  input is a balanced pool of the last two days' stories (`jobs.balanced`, see the outlets entry below: round-robin across
+  league and outlet, so one busy feed can't crowd out the rest), each story tagged with its league; 8-12 lines asked (6-12 accepted), and a league with 3+ stories in the input must show
   at least 2 times or the set is rewritten once (`writer.LEAGUE_FLOOR`). The fingerprint is the news alone. The app
   (`Home.tsx`) also drops any line that reads as a final score, so an older stored set renders as news. Kept for the
   weekend columns: `jobs.featured_final` (the NCAAF board filter for finals).
@@ -195,6 +195,19 @@ Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `ph
   OpenRouter models as one pool), then per model and day the calls, tokens, peak 60 s and unreported calls; texts by outcome; the rejection rate and top reasons; who wrote and checked.
   `ai_calls` is kept 14 days (`quota.KEEP`; it was 2) so a week of real numbers exists. First-deploy steps and the
   first-week reading guide: `docs/phase4-deploy-checklist.md`.
+- **Headlines from every outlet (Adam, 2026-10-02; reworked 2026-10-07 on top of the news-only pipeline, PR #10):**
+  `app/outlet_news.py` stores Yahoo, CBS, FOX, The Athletic (their own league RSS) and AP, SI, The Ringer (Bing News RSS
+  limited to the site: they have no feed a script can read) in `news_items` beside ESPN's, inside the `fetch_news` activity
+  (activity-only change, no workflow patch): keyless, no tokens, best effort (ESPN failing still raises; an outlet failing is
+  logged). Dedupe key (`espn_id` column) is `x:` + hash of the canonical URL. Betting promos, off-sport and undated items are
+  dropped; a Bing story must name the league or a team. `store.news(..., espn_only=True)` leaves the other outlets out
+  (previews and the weekend columns read ESPN's rows only). The headlines read `jobs.balanced`: 30 of the last two days'
+  stories (`HEADLINE_POOL` 150), newest first within each (league, outlet) and taken in turn across them, video pages out
+  (`jobs.is_video`), so no single feed crowds out the rest; each story reaches the extract tagged `LEAGUE | outlet | date`.
+  A headline is `{text, url, league}`: the link is the stored URL of the story it was written from (never the model's) and
+  `league` is that story's, which Home shows as the chip; the kicker names the outlet (`Home.tsx` `OUTLETS`). The old
+  branch's golden-set headline style, outlet tiers and Final chips were dropped: Oct 6 made headlines news only, in the
+  existing voice. Not yet seen with a real model before the deploy: read the first set.
 - **Prep layer (2026-10-02, branch `phase-4-prep-layer`; code only, no local model):** M1 logs each call's
   `ai_calls.kind` (`<text>:<step>`, `client.call_kind`), Groq's cached prompt tokens and its per-minute rate-limit
   headers (migration 010, log only: budgets still count every token until T1, the log-only week, passes; the usage

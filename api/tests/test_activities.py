@@ -46,6 +46,9 @@ def acts(monkeypatch):
     monkeypatch.setattr(activities.espn, "fetch_scoreboard", fake_scoreboard)
     monkeypatch.setattr(activities.espn, "fetch_summary", fake_summary)
     monkeypatch.setattr(activities.espn, "fetch_news", lambda league, base_url=None, **kw: copy.deepcopy(calls["news"]))
+    # The other outlets' feeds: nothing by default (no network in tests); a test sets calls["outlets"].
+    calls["outlets"] = []
+    monkeypatch.setattr(activities.outlet_news, "fetch_league", lambda league, nicknames=(), **kw: list(calls["outlets"]))
     env = ActivityEnvironment()
     run = lambda fn, *a: env.run(fn, *a)          # noqa: E731
     run.calls = calls
@@ -183,6 +186,47 @@ def test_fetch_news_dedupes(acts):
     acts.calls["news"] = more
     assert acts(a.fetch_news, "nfl") == 1
     assert q("select count(*), count(distinct espn_id) from news_items")[0] == (5, 5)
+
+
+def _outlet(url, headline="Eagles RB out for the season", outlet="Yahoo Sports"):
+    from datetime import datetime, timezone
+    from app import outlet_news
+    return {"key": outlet_news.item_key(url), "headline": headline, "description": "A snippet", "url": url,
+            "outlet": outlet, "published_at": datetime(2026, 10, 2, 20, 0, tzinfo=timezone.utc)}
+
+
+def test_fetch_news_stores_the_other_outlets_too_and_dedupes_them(acts):
+    from app.temporal import activities as a
+    acts.calls["outlets"] = [_outlet("https://sports.yahoo.com/articles/eagles-rb-out-1.html"),
+                             _outlet("https://www.cbssports.com/nfl/news/eagles-rb-out/", outlet="CBS Sports")]
+    assert acts(a.fetch_news, "nfl") == 4 + 2
+    assert acts(a.fetch_news, "nfl") == 0                                   # both ESPN's and the outlets' dedupe
+    rows = q("select headline, url, description from news_items where espn_id like 'x:%%' order by url")
+    assert [r[1] for r in rows] == ["https://sports.yahoo.com/articles/eagles-rb-out-1.html",
+                                    "https://www.cbssports.com/nfl/news/eagles-rb-out/"]
+    assert rows[0][2] == "A snippet"
+
+
+def test_fetch_news_survives_the_outlets_failing(acts, monkeypatch):
+    from app.temporal import activities as a
+
+    def boom(*args, **kw):
+        raise RuntimeError("outlet code bug")
+    monkeypatch.setattr(a.outlet_news, "fetch_league", boom)
+    assert acts(a.fetch_news, "nfl") == 4                                   # ESPN's news is stored, nothing raised
+    assert q("select count(*) from news_items")[0][0] == 4
+
+
+def test_fetch_news_still_raises_when_espn_fails(acts, monkeypatch):
+    from app.temporal import activities as a
+
+    def down(league, base_url=None, **kw):
+        raise RuntimeError("espn down")
+    monkeypatch.setattr(a.espn, "fetch_news", down)
+    acts.calls["outlets"] = [_outlet("https://sports.yahoo.com/articles/x-1.html")]
+    with pytest.raises(RuntimeError):
+        acts(a.fetch_news, "nfl")                                           # Temporal retries it, as before
+    assert q("select count(*) from news_items")[0][0] == 0
 
 
 def test_generate_preview_is_a_no_op(acts):

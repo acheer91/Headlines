@@ -322,7 +322,9 @@ still true.
 
 EXTRACT_HEADLINES = """You pick the news for a sports app's home screen. Return JSON only.
 
-NEWS is recent ESPN news (id, league, date, headline, description), NFL and college football (NCAAF) together.
+NEWS is recent news from ESPN, Yahoo, CBS, FOX, The Athletic, AP, SI and The Ringer (id, league, outlet, date, headline,
+description), NFL and college football (NCAAF) together. When two outlets carry the same story, pick it once (the
+fuller one).
 
 Return {{"items": [{{"fact": "what happened, in plain words, numbers exactly as in the source", "news": <id>, "league": "NFL or NCAAF, as tagged"}}]}}
 with the 12 most important stories: injuries, trades, firings and coaching changes, suspensions, records, rankings
