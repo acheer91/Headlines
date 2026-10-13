@@ -40,6 +40,8 @@ export type GameCard = {
   away: TeamSide;
   line: Line | null;
   screen?: "C1" | "C2" | "D";
+  /** true: ESPN failed on this refresh; score and status_detail are from a backup source (live games only) */
+  backup?: boolean;
 };
 
 export type Scoreboard = {
