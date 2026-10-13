@@ -39,8 +39,9 @@ def saved_output(ref: str) -> str:
 
 
 def fixtures() -> dict[str, dict]:
-    return {p.stem: json.loads(p.read_text(encoding="utf-8")) for p in sorted(FIX.glob("*.json"))
-            if p.stem != "known_errors"}
+    """The saved games (final_* and pre_*); the folder also holds live and golden-set files that are not games."""
+    return {p.stem: json.loads(p.read_text(encoding="utf-8")) for pre in ("final_", "pre_")
+            for p in sorted(FIX.glob(f"{pre}*.json"))}
 
 
 def parse(md: str) -> list[dict]:
