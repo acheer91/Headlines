@@ -322,13 +322,17 @@ still true.
 
 EXTRACT_HEADLINES = """You pick the news for a sports app's home screen. Return JSON only.
 
-NEWS is recent ESPN news (id, league, date, headline, description), NFL and college football (NCAAF) together.
+NEWS is recent news from ESPN, Yahoo, CBS, FOX, The Athletic, AP, SI and The Ringer (id, league, outlet, date, headline,
+description), NFL and college football (NCAAF) together. When two outlets carry the same story, pick it once (the
+fuller one).
 
 Return {{"items": [{{"fact": "what happened, in plain words, numbers exactly as in the source", "news": <id>, "league": "NFL or NCAAF, as tagged"}}]}}
 with the 12 most important stories: injuries, trades, firings and coaching changes, suspensions, records, rankings
 moves, big upsets and storylines. Cover every league in NEWS: at least 4 items from each league that has that many.
 No bare final-score lines (scores have their own screens); a result is fine when it is part of the story.
-Skip fantasy advice, betting odds and listicles. Only what NEWS says, one story per item.
+Skip fantasy advice, betting odds and listicles. Only what NEWS says, one story per item. Write every person's name
+as the story gives it, never a bracketed placeholder; never use double quotation marks inside a fact (they break the
+JSON): single quotes or none.
 Never give a person a position, team or title that NEWS doesn't state beside their name. A name before a colon in a
 headline is the person being quoted (often an analyst or reporter), not a player: "Dan Orlovsky: Johnson's retirement is
 a significant loss" is an analyst's opinion, not an Eagles player's.
@@ -342,7 +346,8 @@ WRITE_HEADLINES = """You write the headline list for a sports app's home screen.
 
 Write 8 to 12 items from FACTS, most important first, one line each, same ids. Each line tells exactly one
 item's story; never join two items into one line. Use a person's position or team only as FACTS gives it. Mix the leagues (NFL and NCAAF) through the list; never write a
-line that is only a final score.
+line that is only a final score. Write every person's name as FACTS gives it, never a bracketed placeholder like
+[PERSON_NAME]. Never use double quotation marks inside a line (they break the JSON): single quotes or none.
 
 {voice}
 
@@ -354,17 +359,17 @@ FACTS:
 
 # ---------------------------------------------------------------- weekend columns (Home, Adam 2026-10-06)
 
-WEEKEND_WORDS = (120, 260)      # what code accepts; the prompt asks for about 150 (never over 190) and the model runs long
+WEEKEND_WORDS = (80, 150)       # what code accepts; the prompt asks for about 115 (never over 145); a 197-word draft passed a 200 cap
 
 # FACTS and the league first-to-last fixed text: everything that never changes comes before FACTS (Groq's prefix cache).
-WRITE_WEEKEND = """You write the weekend column for a personal sports app: how the {league} weekend went, in about 150 words,
+WRITE_WEEKEND = """You write the weekend column for a personal sports app: how the {league} weekend went, in about 115 words,
 in the voice of a Ringer-style podcast host: conversational, opinionated, self-aware, a fan first, with a running joke
 or two and at most one pop-culture comparison that lands. Never write as a real person or quote anyone. Reply with
 JSON only: {{"title": "...", "paragraphs": ["...", "..."]}}
 
 Rules:
-- The title is a take, not a label, at most 70 characters, in sentence case. Two to four short paragraphs, about 150 words in all and
-  never more than 190: shorter is better. No
+- The title is a take, not a label, at most 70 characters, in sentence case. Two or three short paragraphs, about 115 words in all and
+  never more than 145: shorter is better. Take the weekend's top story and two or three others, and skip the rest. No
   bullets, headings, hashtags, emojis or preamble. Never use double quotation marks inside the text (they break the
   JSON): use single quotes or none.
 - Lead with the weekend's biggest story, then the best of the rest: who surprised, who flopped, who scared everyone.

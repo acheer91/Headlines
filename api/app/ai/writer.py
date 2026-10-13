@@ -24,6 +24,7 @@ from typing import Callable
 
 from . import client, facts, live_facts, prompts
 from .sources import mentions, team_terms
+from .sources import outlet as outlet_of
 
 COPY_WORDS = 8
 RECAP_VOICE = True          # Adam's house style and example recaps in the recap prompt; False = the plain prompt (Oct 1)
@@ -1001,6 +1002,7 @@ def write_one_liner(game: dict, previous: str | None = None, previous_basis: str
 
 # ---------------------------------------------------------------- headlines
 
+HEADLINES_TRIES = 3                      # twice a day, and a stray quote mark or placeholder is the commonest failure
 HEADLINES_MIN, HEADLINES_MAX = 6, 12     # asked for 8 to 12; a thin news day may give fewer
 LEAGUE_FLOOR = 3                         # a league with this many stories in the input must show up in the set...
 LEAGUE_MIN_ITEMS = 2                     # ...at least this many times
@@ -1010,16 +1012,18 @@ def write_headlines(news: list[dict]) -> dict:
     """Home headlines: news only, across every league in `news` (rows carry `league`)."""
     def go(stats):
         ids = {i + 1: n for i, n in enumerate(news)}
-        nj = "\n".join(f"[{i}] {n['league'].upper()} | {n['published_at']:%Y-%m-%d} | {n['headline']} | "
-                       f"{n.get('description') or ''}" for i, n in ids.items())
+        nj = "\n".join(f"[{i}] {n['league'].upper()} | {outlet_of(n['url'] or '') or 'other'} | {n['published_at']:%Y-%m-%d} | "
+                       f"{n['headline']} | {n.get('description') or ''}" for i, n in ids.items())
         inputs = nj
         stories = Counter(n["league"] for n in news)
 
         def check_extract(x):
             if not numbers_ok(json.dumps(x, ensure_ascii=False), inputs):
                 raise CheckFailed("extract has numbers not in the inputs")
+            if PLACEHOLDER.search(json.dumps(x, ensure_ascii=False)):
+                raise CheckFailed("the extract has a bracketed placeholder: copy each person's name from the story")
 
-        facts = _step(prompts.EXTRACT_HEADLINES.format(news=nj), check_extract, stats, light=True)
+        facts = _step(prompts.EXTRACT_HEADLINES.format(news=nj), check_extract, stats, light=True, tries=HEADLINES_TRIES)
         fj = json.dumps(facts, ensure_ascii=False)
 
         def check_write(x):
@@ -1032,11 +1036,19 @@ def write_headlines(news: list[dict]) -> dict:
                 raise CheckFailed(f"every league needs coverage: write at least {LEAGUE_MIN_ITEMS} {', '.join(short)} "
                                   "items from the FACTS tagged with that league")
             _texts_ok([i.get("text") for i in items], fj)
+            invented = unknown_names([i.get("text") for i in items], inputs + " " + fj)
+            if invented:
+                raise CheckFailed(f"names that are in none of the stories: {invented}; use only the people, teams and places "
+                                  "the stories name")
+            holes = [t for t in (i.get("text") for i in items) if PLACEHOLDER.search(t)]
+            if holes:
+                raise CheckFailed(f"a bracketed placeholder in {holes[0]!r}: write the person's name as the story gives it")
             _fact_check([i.get("text") for i in items], fj, stats)
 
         out = _step(prompts.WRITE_HEADLINES.format(facts=fj, voice=prompts.VOICE, guardrails=prompts.GUARDRAILS),
-                    check_write, stats)
-        items = [{"text": i["text"], "url": ids[i["news"]]["url"] if i.get("news") in ids else None}
+                    check_write, stats, tries=HEADLINES_TRIES)
+        items = [{"text": i["text"], "url": ids[i["news"]]["url"] if i.get("news") in ids else None,
+                  "league": ids[i["news"]]["league"] if i.get("news") in ids else None}
                  for i in out["items"]]
         return {"status": "ready", "body": {"items": items}}
 
@@ -1059,6 +1071,8 @@ HISTORY = re.compile(r"\b(streaks?|undefeated|unbeaten|winless|all-time|franchis
 # Ranking the weekend's games against each other: the prompt forbids it and the checker is jumpy about it, so code refuses
 # it (the first NFL column called a 21-point margin "the weekend's loudest statement").
 RANKING = re.compile(r"\b(biggest|loudest|closest|stunners?|shockers?|only (?:\w+ )?(?:blowout|upset|game|team|one))\b", re.I)
+
+PLACEHOLDER = re.compile(r"\[[A-Za-z_ ]{3,}\]")        # "[PERSON_NAME]": the model hid a name it should have written
 
 WORD = re.compile(r"[A-Za-z][A-Za-z'’]*")
 KNOWN_CAPS = {"I", "NFL", "NCAAF", "AP", "CFP", "SEC", "ACC", "OT"}
@@ -1092,14 +1106,14 @@ def write_weekend(facts: dict) -> dict:
             if len(title) > WEEKEND_TITLE_CHARS:
                 raise CheckFailed(f"the title is {len(title)} characters: at most 70")
             if not isinstance(paras, list) or not 2 <= len(paras) <= 6 or not all(isinstance(p, str) and p.strip() for p in paras):
-                raise CheckFailed("write two to four paragraphs, each one a plain string")
+                raise CheckFailed("write two or three paragraphs, each one a plain string")
             short = [p for p in paras if len(p.split()) < PARAGRAPH_MIN_WORDS]
             if short:
                 raise CheckFailed(f"{short[0][:30]!r} is not a paragraph: each is a few sentences")
             words = sum(len(p.split()) for p in paras)
             lo, hi = prompts.WEEKEND_WORDS
             if not lo <= words <= hi:
-                raise CheckFailed(f"{words} words: write about 150, never over 190")
+                raise CheckFailed(f"{words} words: write about 115, never over 145")
             texts = [title, *paras]
             _texts_ok(texts, fj, live=True)
             ranking = RANKING.search(" ".join(texts))

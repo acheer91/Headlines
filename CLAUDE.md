@@ -27,7 +27,7 @@ bowl games are confirmed with the handoff's December checklist by Dec 12.
   1, 4, 5, 8, 9, 12, 15, 17, 18, 37, 151; every other id seen (20, 21, 24, 25, 27, 29, 30, 31, 32, 48, 177, 179) is FCS.
   Texas is `TEX`.
 
-## Phase 4 — AI text (Stage 2 built 2026-09-29 on branch `phase-4-ai-text`; deployed 2026-10-02, later work through 2026-10-06; production runs this branch, PR #11)
+## Phase 4 — AI text (Stage 2 built 2026-09-29 on branch `phase-4-ai-text`; deployed 2026-10-02, later work through 2026-10-06; merged to `main` as PR #11 on 2026-10-07; production runs `main`)
 Scope: previews (preview, edges, writers' picks), recaps and team summaries, the live one-liner, Home headlines.
 The CTO cut the AI one-liner on Oct 1; **Adam put it back the same day** (his call outranks the CTO's): written on
 open. **Oct 4 (Adam): reuse and hand-off.** A line stands while the score is unchanged and 30 minutes (`store.ONE_LINER_TTL`)
@@ -76,8 +76,8 @@ Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `ph
   own wider list** (Adam, 2026-10-02): `HEADLINE_LEAGUES` (compose: `nfl,ncaaf`; unset it follows `AI_LEAGUES`), and
   college news is in the feed. The Home screen also got a `Home` tab (first tab, `main.tsx`) the same day.
   **Oct 6 (Adam): headlines are news only, every league we load, NCAAF included.** No final-score lines: the writer's
-  input is `store.news_balanced` (newest 14 stories per league, so one busy league can't crowd out the other), each
-  story tagged with its league; 8-12 lines asked (6-12 accepted), and a league with 3+ stories in the input must show
+  input is a balanced pool of the last two days' stories (`jobs.balanced`, see the outlets entry below: round-robin across
+  league and outlet, so one busy feed can't crowd out the rest), each story tagged with its league; 8-12 lines asked (6-12 accepted), and a league with 3+ stories in the input must show
   at least 2 times or the set is rewritten once (`writer.LEAGUE_FLOOR`). The fingerprint is the news alone. The app
   (`Home.tsx`) also drops any line that reads as a final score, so an older stored set renders as news. Kept for the
   weekend columns: `jobs.featured_final` (the NCAAF board filter for finals).
@@ -88,8 +88,8 @@ Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `ph
   (upset, ranked vs ranked, one-score game, blowout, overtime) with a `key` spelling them out, and for the 6 most interesting
   games the stored recap's first sentences plus ESPN's top passer/rusher/receiver lines (`summary.leaders`), and 5 news items
   (fantasy and listicles dropped). `writer.write_weekend`: ONE write at **low reasoning** (`WEEKEND_REASONING`: at medium the
-  3,000-token allowance went on thinking and Groq cut the JSON off), up to **3 drafts** (`WEEKEND_TRIES`), asked for ~150
-  words (accepted 120-260), no examples in the prompt (the model lifted their phrases; the copy check against the
+  3,000-token allowance went on thinking and Groq cut the JSON off), up to **3 drafts** (`WEEKEND_TRIES`), asked for ~115
+  words, never over 145 (Oct 7, Adam: 25% shorter; accepted 80-150, 2-5 paragraphs), no examples in the prompt (the model lifted their phrases; the copy check against the
   one-liner examples stays). Code checks: every number in the facts; **every capitalized name in the paragraphs in the facts**
   (`unknown_names`: no invented venue, day or show; acronyms pass, the title is not checked); no betting words; no
   history/record/streak words; then a game-facts-only fact-check (`prompts.WEEKEND_FACT_CHECK`; Qwen is jumpy about
@@ -195,6 +195,19 @@ Free tiers only, billing off (Adam). Stage 1 notes: `docs/phase4-status.md`, `ph
   OpenRouter models as one pool), then per model and day the calls, tokens, peak 60 s and unreported calls; texts by outcome; the rejection rate and top reasons; who wrote and checked.
   `ai_calls` is kept 14 days (`quota.KEEP`; it was 2) so a week of real numbers exists. First-deploy steps and the
   first-week reading guide: `docs/phase4-deploy-checklist.md`.
+- **Headlines from every outlet (Adam, 2026-10-02; reworked 2026-10-07 on top of the news-only pipeline, PR #10):**
+  `app/outlet_news.py` stores Yahoo, CBS, FOX, The Athletic (their own league RSS) and AP, SI, The Ringer (Bing News RSS
+  limited to the site: they have no feed a script can read) in `news_items` beside ESPN's, inside the `fetch_news` activity
+  (activity-only change, no workflow patch): keyless, no tokens, best effort (ESPN failing still raises; an outlet failing is
+  logged). Dedupe key (`espn_id` column) is `x:` + hash of the canonical URL. Betting promos, off-sport and undated items are
+  dropped; a Bing story must name the league or a team. `store.news(..., espn_only=True)` leaves the other outlets out
+  (previews and the weekend columns read ESPN's rows only). The headlines read `jobs.balanced`: 30 of the last two days'
+  stories (`HEADLINE_POOL` 150), newest first within each (league, outlet) and taken in turn across them, video pages out
+  (`jobs.is_video`), so no single feed crowds out the rest; each story reaches the extract tagged `LEAGUE | outlet | date`.
+  A headline is `{text, url, league}`: the link is the stored URL of the story it was written from (never the model's) and
+  `league` is that story's, which Home shows as the chip; the kicker names the outlet (`Home.tsx` `OUTLETS`). The old
+  branch's golden-set headline style, outlet tiers and Final chips were dropped: Oct 6 made headlines news only, in the
+  existing voice. Not yet seen with a real model before the deploy: read the first set.
 - **Prep layer (2026-10-02, branch `phase-4-prep-layer`; code only, no local model):** M1 logs each call's
   `ai_calls.kind` (`<text>:<step>`, `client.call_kind`), Groq's cached prompt tokens and its per-minute rate-limit
   headers (migration 010, log only: budgets still count every token until T1, the log-only week, passes; the usage
@@ -280,6 +293,13 @@ change deployed mid-week), 3 real game histories as replay fixtures.
   (`preview` for a preview). Lift every cap: `UPDATE ai_texts SET rejections = 0 WHERE rejections > 0;` (psql in `db`).
 - Beyond saving: `workflow terminate -w nfl-<espn_id> --reason ...`, then trigger ScheduleSync (starts a fresh one)
 - Failures: UI filter `ExecutionStatus='Failed'`, every Monday after the weekend
+- A Failed GameWorkflow (grading gave up after 5 attempts) is not restarted by ScheduleSync: the game is final, so
+  it is no longer listed. The pull path still grades a final when its page is pulled. To grade through Temporal, fix
+  the cause, then start a fresh one (tried 2026-10-02 on a final game; it fetched, graded, then waited the 1-hour
+  regrade, results unchanged): `workflow start --type GameWorkflow --task-queue scores --workflow-id nfl-<espn_id>
+  --input '{"league":"nfl","espn_id":"<espn_id>","start_iso":"<kickoff UTC with offset>","preview_iso":"<same>"}'`
+  (a Failed ID can be reused). Use a throwaway ID (`validate-...`) and terminate it afterwards if the original is
+  still Running.
 - Save a real history for the replay test: `workflow show -w nfl-<espn_id> -o json > api/tests/fixtures/histories/<name>.json`
 
 ## Phase 2 — Game screens and bet grading (built 2026-09-27; Sunday checks passed 2026-09-28)
@@ -315,6 +335,10 @@ write-only pre-authenticated request in `~/.backup_url` (mode 600, never in the 
 make a new one before then (edit `BACKUP_URL` in `.env`, restart the worker). Old cron log: `~/backup.log`. Restore (tested 2026-09-28): the PAR can't read, so download with
 `~/.local/oci-cli/bin/oci os object get --auth instance_principal --bucket-name scores-backups --name <file> --file <file>`,
 then `gunzip -c <file> | docker exec -i <empty postgres:16 container> psql -U postgres` and check `select count(*) from games`.
+Re-checked 2026-10-02: the newest uploaded dump downloaded and passed `gzip -t`; a fresh `pg_dumpall` restored into a
+scratch `postgres:16` container (`-e POSTGRES_USER=scores`, no published port, 512 MB) gave all four databases back,
+and every `scores` table matched live row for row (Temporal's `executions` 93 = 93, visibility 87 = 87). Two
+harmless errors on restore: the `scores` role and database already exist in a fresh container.
 OS security updates install daily (Ubuntu unattended-upgrades). The laptop stack runs again for Phase 3 testing (its own data).
 
 ## Stack
@@ -444,7 +468,7 @@ web/src/                  Scoreboard.tsx (B), GamePage.tsx (C1 / C2 / D), GameCa
 ## Next phases (don't start without Adam's go-ahead)
 3. (Built, see above.) The nightly backup moved from cron into Temporal on Oct 6 (Adam, 2026-09-28). Nothing alerts on a failed
    backup beyond the UI's Failed filter: look at it, and the bucket, every Monday.
-4. AI text: built on `phase-4-ai-text` (Groq free tier; see the Phase 4 section). In production; lands on `main` with PR #11.
+4. AI text: built on `phase-4-ai-text` (Groq free tier; see the Phase 4 section). In production; merged to `main` (PR #11, 2026-10-07).
 5. 5a NCAAF built (see the top). 5b: NBA, EPL, MLS (scores only).
    Needs a date-window query: NBA and soccer have no weeks.
 6. Deploy to Oracle Cloud always-free, Tailscale only.

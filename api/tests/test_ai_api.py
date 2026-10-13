@@ -813,20 +813,6 @@ def test_headlines_are_written_again_when_the_news_changes(client, fake, monkeyp
     assert jobs.write_headlines(["nfl"], "schedule")["status"] == "ready" and len(calls) == 2
 
 
-def test_headline_input_is_balanced_across_leagues(client, fake):  # noqa: F811
-    # NFL has the newest 20 stories; the newest-30 read would still show NCAAF, but 40 NFL stories would hide it.
-    from collections import Counter
-    from app import db
-    from app.ai import store
-    for i in range(20):
-        _sql("INSERT INTO news_items (league, espn_id, headline, published_at) VALUES ('nfl', %s, 'nfl', now() - %s * interval '1 minute')", str(i), i)
-    for i in range(3):
-        _sql("INSERT INTO news_items (league, espn_id, headline, published_at) VALUES ('ncaaf', %s, 'cfb', now() - interval '1 day')", str(i))
-    with db.connect() as conn:
-        rows = store.news_balanced(conn, ["nfl", "ncaaf"], per_league=14)
-    assert Counter(r["league"] for r in rows) == {"nfl": 14, "ncaaf": 3}
-    assert [r["published_at"] for r in rows] == sorted((r["published_at"] for r in rows), reverse=True)
-
 
 def test_a_manual_job_writes_any_game_and_lifts_the_cap(client, fake, monkeypatch, tmp_path):  # noqa: F811
     favorite(monkeypatch, tmp_path, "NE")                                  # DAL is not on the pre-write list
@@ -1092,3 +1078,13 @@ def test_an_old_weekend_column_is_not_served(client, fake, monkeypatch):  # noqa
     _sql("INSERT INTO ai_texts (kind, league, status, body, written_at, attempts) VALUES ('weekend', 'nfl', 'ready', "
          "'{\"title\": \"Old\", \"paragraphs\": [\"x\"]}', now() - interval '9 days', 1)")
     assert client.get("/api/weekend").json() == []
+
+
+def test_news_espn_only_leaves_out_the_other_outlets(client, fake):  # noqa: F811
+    from app import db
+    from app.ai import store
+    _sql("INSERT INTO news_items (league, espn_id, headline, url, published_at) VALUES ('nfl', '1', 'ESPN story', 'https://www.espn.com/nfl/story/1', now())")
+    _sql("INSERT INTO news_items (league, espn_id, headline, url, published_at) VALUES ('nfl', 'x:abc', 'Yahoo story', 'https://sports.yahoo.com/nfl/x', now())")
+    with db.connect() as conn:
+        assert {r["headline"] for r in store.news(conn, ["nfl"])} == {"ESPN story", "Yahoo story"}
+        assert {r["headline"] for r in store.news(conn, ["nfl"], espn_only=True)} == {"ESPN story"}

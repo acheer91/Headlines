@@ -199,24 +199,6 @@ def latest_headlines(conn) -> dict | None:
                            ORDER BY created_at DESC LIMIT 1""").fetchone()
 
 
-def news(conn, leagues: list[str], days: int = 8, limit: int = 60) -> list[dict]:
-    """Stored ESPN news, newest first (previews: the ESPN-first articles; headlines: the input)."""
-    return conn.execute("""
-        SELECT league, headline, description, url, published_at FROM news_items
-        WHERE league = ANY(%s) AND published_at > now() - make_interval(days => %s)
-        ORDER BY published_at DESC LIMIT %s""", (leagues, days, limit)).fetchall()
-
-
-def news_balanced(conn, leagues: list[str], days: int = 2, per_league: int = 14) -> list[dict]:
-    """The newest `per_league` stories of each league, merged newest first: a plain newest-N read lets one busy league
-    (NFL on a Tuesday) fill the whole input and the others never reach the headlines."""
-    return conn.execute("""
-        SELECT league, headline, description, url, published_at FROM (
-            SELECT *, row_number() OVER (PARTITION BY league ORDER BY published_at DESC) AS rn FROM news_items
-            WHERE league = ANY(%s) AND published_at > now() - make_interval(days => %s)) n
-        WHERE rn <= %s ORDER BY published_at DESC""", (leagues, days, per_league)).fetchall()
-
-
 def save_weekend(conn, league: str, result: dict, reason: str, fingerprint: str) -> int:
     """A weekend column, one row per run (like headlines); fingerprint: the facts it was written from."""
     row = conn.execute("""
@@ -246,3 +228,14 @@ def latest_weekend(conn, league: str, within: timedelta | None = None) -> dict |
     return conn.execute("""SELECT * FROM ai_texts WHERE kind = 'weekend' AND league = %s AND status = 'ready'
                              AND (%s::interval IS NULL OR written_at > now() - %s::interval)
                            ORDER BY created_at DESC LIMIT 1""", (league, within, within)).fetchone()
+
+
+def news(conn, leagues: list[str], days: int = 8, limit: int = 60, espn_only: bool = False) -> list[dict]:
+    """Stored news, newest first: ESPN's and the other outlets' (headlines: the input; app.outlet_news stores the others
+    with an espn_id that starts "x:"). espn_only is for previews and the weekend columns, which read ESPN's rows only.
+    The URL breaks a tie so the same rows always come back in the same order."""
+    return conn.execute("""
+        SELECT league, headline, description, url, published_at FROM news_items
+        WHERE league = ANY(%s) AND published_at > now() - make_interval(days => %s)
+          AND (NOT %s OR espn_id NOT LIKE 'x:%%')
+        ORDER BY published_at DESC, url LIMIT %s""", (leagues, days, espn_only, limit)).fetchall()

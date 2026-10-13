@@ -9,19 +9,29 @@ const looksLikeHeadlines = (v: unknown) => !!v && Array.isArray((v as NonNullabl
 const looksLikeColumns = (v: unknown) => Array.isArray(v);
 const LEAGUE_LABEL: Record<string, string> = { nfl: "NFL", ncaaf: "NCAAF" };
 
-const leagueOf = (url: string | null) =>
-  url?.includes("/nfl/") ? "NFL" : url?.includes("/college-football/") ? "CFB" : null;
-// "https://www.espn.com/..." -> "ESPN"
+const LEAGUE_TAG: Record<string, string> = { nfl: "NFL", ncaaf: "CFB" };
+// The headline's own league (set by the writer from the story it came from); older stored sets have none, so the
+// story's link says it when it can.
+const leagueOf = (league: string | null | undefined, url: string | null) =>
+  (league && LEAGUE_TAG[league]) || (url?.includes("/nfl/") ? "NFL" : url?.includes("/college-football/") ? "CFB" : null);
+// Outlet names for the kicker, by the story's host (the same outlets as app/ai/sources.py OUTLETS).
+const OUTLETS: [string, string][] = [
+  ["espn.com", "ESPN"], ["apnews.com", "AP"], ["si.com", "SI"], ["cbssports.com", "CBS"], ["theathletic.com", "The Athletic"],
+  ["nytimes.com", "The Athletic"], ["theringer.com", "The Ringer"], ["foxsports.com", "FOX"], ["sports.yahoo.com", "Yahoo"],
+];
 const sourceOf = (url: string | null) => {
   try {
-    return url ? new URL(url).hostname.replace(/^www\./, "").split(".")[0] : null;
+    if (!url) return null;
+    const host = new URL(url).hostname;
+    const known = OUTLETS.find(([d]) => host === d || host.endsWith("." + d));
+    return known ? known[1] : host.replace(/^www\./, "").split(".")[0];
   } catch {
     return null;
   }
 };
 
-// Headlines are news only (Adam, 2026-10-06): the scores live on the sport tabs. The worker still feeds finals to the
-// headline writer, so a final-score line is dropped here. The writer phrases one several ways: "Chiefs defeated Raiders
+// Headlines are news only (Adam, 2026-10-06): the scores live on the sport tabs. Sets stored before that still hold
+// final-score lines, so one is dropped here. The writer phrases one several ways: "Chiefs defeated Raiders
 // 30-27.", "Ravens lost to Titans 24-18.", "... 45-24 on Monday Night Football.", and the older "Steelers 24, Browns 27
 // (final)" / "NFL final: Steelers 24, Browns 27". A news sentence that merely mentions a score ("... 24-10 behind 300
 // yards from ...") is longer than a bare result, so it does not match and stays.
@@ -115,7 +125,7 @@ export function Home() {
             {news.length > 0 ? (
               <ul className="feed">
                 {news.map((item) => {
-                  const kicker = [leagueOf(item.url), sourceOf(item.url)].filter(Boolean).join(" · ");
+                  const kicker = [leagueOf(item.league, item.url), sourceOf(item.url)].filter(Boolean).join(" · ");
                   const body = (
                     <>
                       {(kicker || item.url) && (
