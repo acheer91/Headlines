@@ -46,6 +46,8 @@ export type GameCard = {
 
 export type Scoreboard = {
   league: string;
+  /** day boards only (NBA): the board's day, "YYYY-MM-DD" in US Eastern */
+  date?: string;
   season: number | null;
   week: number | null;
   /** 1 preseason, 2 regular season, 3 postseason */
@@ -76,8 +78,9 @@ async function get<T>(url: string): Promise<T> {
   return r.json();
 }
 
-export const getScoreboard = (league: string, week?: number, seasonType?: number, force = false) => {
+export const getScoreboard = (league: string, week?: number, seasonType?: number, force = false, date?: string) => {
   const q = new URLSearchParams();
+  if (date) q.set("date", date);
   if (week) q.set("week", String(week));
   if (seasonType) q.set("season_type", String(seasonType));
   if (force) q.set("force", "true");

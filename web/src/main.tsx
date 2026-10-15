@@ -7,11 +7,11 @@ import { Home } from "./Home";
 import { ErrorBoundary } from "./ErrorBoundary";
 import "./styles.css";
 
-// NFL (Phase 1) and NCAAF (Phase 5a); the other tabs are placeholders so the layout is final.
+// NFL (Phase 1), NCAAF (Phase 5a) and NBA scores (Phase 5b); the other tabs are placeholders so the layout is final.
 const TABS = [
   { id: "nfl", label: "NFL", enabled: true },
   { id: "ncaaf", label: "NCAAF", enabled: true },
-  { id: "nba", label: "NBA", enabled: false },
+  { id: "nba", label: "NBA", enabled: true },
   { id: "epl", label: "EPL", enabled: false },
   { id: "mls", label: "MLS", enabled: false },
 ];

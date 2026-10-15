@@ -21,7 +21,7 @@ services:
     build: .
     environment:
       DATABASE_URL: postgresql://scores:${POSTGRES_PASSWORD:-scores}@db:5432/scores
-      ENABLED_LEAGUES: nfl,ncaaf
+      ENABLED_LEAGUES: nfl,ncaaf,nba
       AI_LEAGUES: nfl             # AI text only for these (CTO, 2026-10-01: NFL first; college after real token numbers)
       HEADLINE_LEAGUES: nfl,ncaaf # the Home headlines alone also cover college news (Adam, 2026-10-02)
       AI_GAMES: ncaaf:401856708  # beta (Adam, 2026-10-03): Missouri-Florida gets every AI text; remove after the game
@@ -109,7 +109,7 @@ services:
     command: ["python", "-m", "app.temporal.worker"]
     environment:
       DATABASE_URL: postgresql://scores:${POSTGRES_PASSWORD:-scores}@db:5432/scores
-      ENABLED_LEAGUES: nfl,ncaaf
+      ENABLED_LEAGUES: nfl,ncaaf,nba
       AI_LEAGUES: nfl             # AI text only for these (CTO, 2026-10-01: NFL first; college after real token numbers)
       HEADLINE_LEAGUES: nfl,ncaaf # the Home headlines alone also cover college news (Adam, 2026-10-02)
       AI_GAMES: ncaaf:401856708  # beta (Adam, 2026-10-03): Missouri-Florida gets every AI text; remove after the game

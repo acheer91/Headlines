@@ -19,13 +19,16 @@ from temporalio.client import (Client, Schedule, ScheduleActionStartWorkflow, Sc
                                ScheduleCalendarSpec, ScheduleOverlapPolicy, SchedulePolicy, ScheduleRange,
                                ScheduleSpec, ScheduleUpdate)
 
+from .. import espn
 from ..ai import scope as ai_scope
 from .workflows import (TASK_QUEUE, BackupWorkflow, HeadlinesWorkflow, LeftoverWorkflow, PreviewBatchWorkflow,
                         ScheduleSyncWorkflow, WeekendWorkflow)
 from .worker import connect
 
 TZ = "America/Los_Angeles"
-LEAGUES = [x.strip() for x in os.environ.get("ENABLED_LEAGUES", "nfl").split(",") if x.strip()]
+# Scores-only leagues (NBA, a day board with no weeks) are on the app but not here: no game workflows, no news pull.
+LEAGUES = [x.strip() for x in os.environ.get("ENABLED_LEAGUES", "nfl").split(",")
+           if x.strip() and x.strip() not in espn.DATE_LEAGUES]
 
 SUN, TUE, WED, THU, FRI = 0, 2, 3, 4, 5      # Temporal's day_of_week: 0 = Sunday
 

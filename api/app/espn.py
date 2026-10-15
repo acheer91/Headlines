@@ -4,7 +4,7 @@ Unofficial and undocumented, so every field is read defensively: a missing field
 becomes None, never an exception. The only hard requirements per game are an id,
 a start time and two teams; anything else missing still yields a usable game.
 
-NFL (Phase 1) and NCAAF (Phase 5a) are on; the other leagues are mapped for Phase 5b.
+NFL (Phase 1), NCAAF (Phase 5a) and NBA scores (Phase 5b) are on; EPL and MLS are mapped for the rest of 5b.
 """
 from __future__ import annotations
 
@@ -29,7 +29,10 @@ LEAGUES: dict[str, dict[str, Any]] = {
     "epl":   {"path": "soccer/eng.1", "core": "soccer/leagues/eng.1", "params": {}},
     "mls":   {"path": "soccer/usa.1", "core": "soccer/leagues/usa.1", "params": {}},
 }
-BETTING_LEAGUES = {"nfl", "ncaaf", "nba"}  # soccer is scores only
+BETTING_LEAGUES = {"nfl", "ncaaf"}  # NBA lines and grading wait for a later phase; soccer is scores only
+# ESPN's NBA feed has no weeks: the board is one day, fetched with ?dates=YYYYMMDD and read by the game's Eastern
+# date (db.games_for_day). These leagues are scores only for now: no GameWorkflow, no news pull, no game page.
+DATE_LEAGUES = {"nba"}
 
 
 class ESPNError(Exception):
