@@ -393,7 +393,7 @@ def page(conn, game_id: int, *, base_url: str = espn.BASE, favorites: dict[str, 
     adds the play-by-play to a live game's payload: "live"."""
     favorites = favorites or {}
     row = db.game_by_id(conn, game_id)
-    if not row:
+    if not row or row["league"] in espn.DATE_LEAGUES:   # scores-only leagues (NBA) have no game screens yet
         return None
     # C1's team season stats (ranks, INTs leader) are fetched in parallel with the summary.
     team_jobs = start_team_season(conn, row, base_url=base_url) if row["state"] == "pre" else []

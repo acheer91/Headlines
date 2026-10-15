@@ -1,4 +1,4 @@
-"""FastAPI app: NFL and NCAAF scoreboards (Screen B) and game pages (C1 pre-game, C2 live, D post-game).
+"""FastAPI app: NFL, NCAAF and NBA scoreboards (Screen B) and game pages (C1 pre-game, C2 live, D post-game).
 
 Pull model: a scoreboard request refreshes from ESPN only if our last good fetch is older
 than CACHE_SECONDS; otherwise it serves Postgres. If ESPN fails, it serves the last stored
@@ -13,8 +13,9 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeout
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.gzip import GZipMiddleware
@@ -114,12 +115,105 @@ def _refresh(conn, league: str, week: int | None, season_type: int | None = None
 _card = games.card   # moved to games.py (Phase 4: the worker builds game pages too)
 
 
+def _backup_overlay(league: str, cards: list[dict], season: int | None, week: int | None,
+                    season_type: int | None) -> None:
+    """ESPN just failed: overlay live games' score and status from one backup source (backup.py).
+    Display-only: nothing is stored, and the card's state never changes."""
+    if league not in backup.SOURCES:
+        return
+    live = [c for c in cards if backup.is_live(c)]
+    if not live:
+        return
+    scores = backup.fetch(league, live, season, week, season_type)
+    for c in live:
+        b = backup.match({c["home"]["name"], c["home"]["short"] or ""},
+                         {c["away"]["name"], c["away"]["short"] or ""}, scores)
+        if b:
+            c["home"]["score"], c["away"]["score"] = b.home_score, b.away_score
+            c["status_detail"] = b.status
+            c["backup"] = True
+
+
 _STATE_ORDER = {"in": 0, "pre": 1, "post": 2}
 
 
 def _sort_key(card: dict):
     # Favorites pinned first; then live, upcoming, final; then kickoff time.
     return (0 if card["favorite"] else 1, _STATE_ORDER.get(card["state"], 3), card["start_time"])
+
+
+ET = ZoneInfo("America/New_York")
+
+
+def _payload_day(payload: dict) -> date:
+    """The day ESPN answered for when no date was asked: its own `day.date`, else today in US Eastern."""
+    try:
+        return date.fromisoformat(str(espn._get(payload, "day", "date"))[:10])
+    except ValueError:
+        return datetime.now(ET).date()
+
+
+def _refresh_day(conn, league: str, day: date | None) -> tuple[bool, str | None]:
+    """Fetch one day's scoreboard (day None = today, as ESPN sees it) and store it. Returns (ok, error)."""
+    try:
+        payload = espn.fetch_scoreboard(league, dates=day.strftime("%Y%m%d") if day else None, base_url=ESPN_BASE)
+        games_, errors = espn.parse_scoreboard(payload, league)
+        raw = len(payload.get("events") or [])
+        if raw and not games_:
+            # Same rule as the week board: games we can't read are a failed refresh, not a fresh one.
+            raise espn.ESPNError(f"ESPN answered but none of its {raw} games could be read: {'; '.join(errors[:3])}")
+        board = day or _payload_day(payload)
+        if not raw and db.games_for_day(conn, league, board):
+            raise espn.ESPNError(f"ESPN listed no games for {board}, which has games")
+        db.save_games(conn, games_)
+        err = f"{len(errors)} of {raw} games unreadable: " + "; ".join(errors[:5]) if errors else None
+        db.log_fetch(conn, league, "espn", True, games=len(games_), season=games_[0].season if games_ else None,
+                     season_type=games_[0].season_type if games_ else None, error=err,
+                     requested_date=day, board_date=board)
+    except Exception as exc:  # noqa: BLE001
+        conn.rollback()
+        db.log_fetch(conn, league, "espn", False, error=repr(exc)[:500], requested_date=day)
+        return False, repr(exc)
+    return True, None
+
+
+def _day_scoreboard(league: str, day: date | None, force: bool) -> dict:
+    """A day-based league's board (NBA): same pull, cache and stale rules as the week board. Scores only: no
+    lines, no grading, and nothing here asks for a week."""
+    with db.connect() as conn:
+        last = db.last_fetch(conn, league, requested_date=day)
+        age = _age_seconds(last["fetched_at"]) if last else None
+        stale, error = False, None
+
+        if force or age is None or age >= CACHE_SECONDS:
+            ok, error = _refresh_day(conn, league, day)
+            if not ok:
+                stale = True
+            last = db.last_fetch(conn, league, requested_date=day)
+            if last is None:
+                raise HTTPException(502, f"ESPN unreachable and nothing stored yet: {error}")
+
+        board = last["board_date"] or day
+        rows = db.games_for_day(conn, league, board)
+        favs = set(_favorites().get(league, []))
+        cards = sorted((_card(r, favs) for r in rows), key=_sort_key)
+        if stale:
+            _backup_overlay(league, cards, last.get("season"), None, last.get("season_type"))
+
+    return {
+        "league": league,
+        "date": board.isoformat(),
+        "season": last.get("season"),
+        "week": None,
+        "season_type": last.get("season_type"),
+        "calendar": [],
+        "updated_at": last["fetched_at"].isoformat(),
+        "stale": stale,
+        "error": error if stale else None,
+        "warning": "Some games couldn't be updated from ESPN; their scores may be out of date."
+        if not stale and last.get("error") else None,
+        "games": cards,
+    }
 
 
 @app.get("/api/health")
@@ -134,13 +228,21 @@ def health():
 
 @app.get("/api/scoreboard/{league}")
 def scoreboard(league: str, week: int | None = Query(None, ge=1, le=999),
-               season_type: int | None = Query(None, ge=1, le=3), force: bool = False):
+               season_type: int | None = Query(None, ge=1, le=3), force: bool = False,
+               day: str | None = Query(None, alias="date", pattern=r"^\d{4}-\d{2}-\d{2}$")):
     # week goes to 999: ESPN numbers the College Football Playoff week 999 (season type 3).
     if league not in ENABLED_LEAGUES:
         raise HTTPException(404, f"league '{league}' not enabled")
+    if league in espn.DATE_LEAGUES:
+        # NBA has no weeks: ?date=YYYY-MM-DD picks the day, none means today as ESPN sees it.
+        try:
+            asked = date.fromisoformat(day) if day else None
+        except ValueError:
+            raise HTTPException(422, f"'{day}' is not a date")
+        return _day_scoreboard(league, asked, force)
     if league not in ("nfl", "ncaaf"):
-        # Week-based lookup only fits football. Phase 5 adds a date-window query for NBA/soccer.
-        raise HTTPException(501, "only week-based leagues are wired in Phase 1")
+        # Week-based lookup only fits football. EPL and MLS wait for the rest of Phase 5b.
+        raise HTTPException(501, "only week-based and day-based leagues are wired so far")
 
     with db.connect() as conn:
         last = db.last_fetch(conn, league, week, requested_season_type=season_type)
@@ -162,19 +264,8 @@ def scoreboard(league: str, week: int | None = Query(None, ge=1, le=999),
             # Every FBS game is stored; the board shows the PRD's filtered set (ncaaf.py).
             rows = [r for r in rows if ncaaf.is_featured_row(r, favs)]
         cards = sorted((_card(r, favs) for r in rows), key=_sort_key)
-        if stale and league in backup.SOURCES:
-            # ESPN just failed: overlay live games' score and status from one backup source (backup.py).
-            # Display-only: nothing is stored, and the card's state never changes.
-            live = [c for c in cards if backup.is_live(c)]
-            if live:
-                scores = backup.fetch(league, live, season, wk, last.get("season_type"))
-                for c in live:
-                    b = backup.match({c["home"]["name"], c["home"]["short"] or ""},
-                                     {c["away"]["name"], c["away"]["short"] or ""}, scores)
-                    if b:
-                        c["home"]["score"], c["away"]["score"] = b.home_score, b.away_score
-                        c["status_detail"] = b.status
-                        c["backup"] = True
+        if stale:
+            _backup_overlay(league, cards, season, wk, last.get("season_type"))
         # ESPN's season stages (weeks, then Bowls / Playoffs), for Prev and Next across season types.
         calendar = [{"season_type": s["season_type"], "week": s["week"], "label": s["label"]}
                     for s in db.get_calendar(conn, league)]

@@ -14,8 +14,23 @@ export function updatedAt(iso: string) {
   return d.toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
 }
 
+/** Leagues whose board is one day, not a week (ESPN's NBA feed has no weeks). */
+const DAY_LEAGUES = new Set(["nba"]);
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** "2026-10-15" plus n days, as "YYYY-MM-DD" (UTC arithmetic: no time zone or daylight-saving surprises). */
+export function addDays(day: string, n: number) {
+  const d = new Date(`${day}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+const dayLabel = (day: string) =>
+  new Date(`${day}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+
 export function Scoreboard() {
   const { league = "nfl" } = useParams();
+  const isDay = DAY_LEAGUES.has(league);
   const nav = useNavigate();
   const [data, setData] = useState<SB | null>(null);
   // The browsed stage lives in the URL (?st=3&week=1), so opening a game and coming back keeps it.
@@ -23,11 +38,15 @@ export function Scoreboard() {
   const [params, setParams] = useSearchParams();
   const week = Number(params.get("week")) || undefined;
   const st = Number(params.get("st")) || undefined;
+  // A day board keeps its day in the URL too (?date=2026-10-15); none means today as ESPN sees it.
+  const asked = params.get("date");
+  const date = isDay && asked && DAY.test(asked) ? asked : undefined;
   const go = (s: { season_type: number; week: number }) =>
     setParams({ st: String(s.season_type), week: String(s.week) }, { replace: true });
+  const goDay = (d?: string) => setParams(d ? { date: d } : {}, { replace: true });
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const key = `sb:${league}:${st ?? "cur"}:${week ?? "current"}`;
+  const key = isDay ? `sb:${league}:${date ?? "today"}` : `sb:${league}:${st ?? "cur"}:${week ?? "current"}`;
   // Which board is on screen right now, and which one is being fetched. Opening the app can ask
   // twice for the same board (mount + foreground): skip the repeat. Switching weeks mid-load must
   // still fetch the new week, and a late answer for a week you've left must not overwrite the screen.
@@ -42,7 +61,7 @@ export function Scoreboard() {
       setLoading(true);
       setErr(null);
       try {
-        const fresh = await getScoreboard(league, week, st, force);
+        const fresh = await getScoreboard(league, week, st, force, date);
         remember(key, fresh);
         if (shownKey.current === key) setData(fresh);
       } catch (e) {
@@ -54,7 +73,7 @@ export function Scoreboard() {
         }
       }
     },
-    [league, week, st, key],
+    [league, week, st, date, key],
   );
 
   // Paint the last scoreboard we showed right away, then pull fresh data over it.
@@ -68,7 +87,8 @@ export function Scoreboard() {
   // Prev and Next walk ESPN's season calendar (weeks, then e.g. Bowls and CFP), across season types.
   const cal = data?.calendar ?? [];
   const i = cal.findIndex((s) => s.season_type === (st ?? data?.season_type) && s.week === (week ?? data?.week));
-  const label = i >= 0 ? cal[i].label : `Week ${week ?? data?.week ?? "–"}`;
+  const shownDay = date ?? data?.date;
+  const label = isDay ? (shownDay ? dayLabel(shownDay) : "–") : i >= 0 ? cal[i].label : `Week ${week ?? data?.week ?? "–"}`;
   const updated = data?.updated_at ? updatedAt(data.updated_at) : null;
 
   return (
@@ -76,15 +96,32 @@ export function Scoreboard() {
       {indicator}
       <header className="top">
         <h1>{league.toUpperCase()}</h1>
-        <div className="week">
-          <button aria-label="Previous week" disabled={i <= 0} onClick={() => go(cal[i - 1])}>
-            ‹
-          </button>
-          <span>{label}</span>
-          <button aria-label="Next week" disabled={i < 0 || i >= cal.length - 1} onClick={() => go(cal[i + 1])}>
-            ›
-          </button>
-        </div>
+        {isDay ? (
+          <div className="week">
+            <button aria-label="Previous day" disabled={!shownDay} onClick={() => shownDay && goDay(addDays(shownDay, -1))}>
+              ‹
+            </button>
+            <span>{label}</span>
+            <button aria-label="Next day" disabled={!shownDay} onClick={() => shownDay && goDay(addDays(shownDay, 1))}>
+              ›
+            </button>
+            {date && (
+              <button aria-label="Back to today" onClick={() => goDay()}>
+                Today
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="week">
+            <button aria-label="Previous week" disabled={i <= 0} onClick={() => go(cal[i - 1])}>
+              ‹
+            </button>
+            <span>{label}</span>
+            <button aria-label="Next week" disabled={i < 0 || i >= cal.length - 1} onClick={() => go(cal[i + 1])}>
+              ›
+            </button>
+          </div>
+        )}
         <button className="refresh" onClick={() => load(true)} disabled={loading} aria-label="Refresh">
           {loading ? "…" : "↻"}
         </button>
@@ -96,9 +133,9 @@ export function Scoreboard() {
 
       <main className="list">
         {data?.games.map((g) => (
-          <GameCardView key={g.id} g={g} onOpen={() => nav(`/game/${g.id}`, { state: { card: g } })} />
+          <GameCardView key={g.id} g={g} onOpen={isDay ? undefined : () => nav(`/game/${g.id}`, { state: { card: g } })} />
         ))}
-        {data && data.games.length === 0 && <p className="muted center">No games this week.</p>}
+        {data && data.games.length === 0 && <p className="muted center">{isDay ? "No games this day." : "No games this week."}</p>}
       </main>
       {updated && !data?.stale && <p className="muted center small">Updated {updated}</p>}
     </div>

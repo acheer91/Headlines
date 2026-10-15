@@ -27,6 +27,31 @@ bowl games are confirmed with the handoff's December checklist by Dec 12.
   1, 4, 5, 8, 9, 12, 15, 17, 18, 37, 151; every other id seen (20, 21, 24, 25, 27, 29, 30, 31, 32, 48, 177, 179) is FCS.
   Texas is `TEX`.
 
+## Phase 5b — NBA scores (built 2026-10-15 on branch `nba-scores`; scores only, not deployed)
+Scope (Adam, 2026-10-15): the NBA tab shows scores, nothing else. No lines or bet grading, no game page, no AI text, no
+workflows. EPL and MLS are still to do. ESPN's NBA feed has no weeks, so the board is one day.
+- **API:** `GET /api/scoreboard/nba?date=YYYY-MM-DD` (no date = today as ESPN sees it: its `day.date`). `espn.DATE_LEAGUES`
+  (`{"nba"}`) routes a league to `main._day_scoreboard`, which has the week board's pull, 30 s cache, stale and
+  "unreadable games are a failed refresh" rules. A fetch is cached per requested date (`fetch_log.requested_date`, and
+  `board_date` for the day ESPN answered for; migration 012). A response with `?dates=` has no top-level `season` or
+  `day`, so season and season type come from each event (the parser already did that).
+- **A day's games** are read by their US Eastern start date (`db.games_for_day`), which is how ESPN groups them (checked
+  on Oct 10-15: a 10 PM Eastern tip that falls on the next UTC day is still on its own day). `games.week` stays NULL.
+- **Scores only, in code:** `BETTING_LEAGUES` is `{"nfl","ncaaf"}`, so no line is parsed or stored even though ESPN sends
+  one. `games.page` returns nothing for a `DATE_LEAGUES` game (404 on `/api/games/{id}`). `schedules.LEAGUES` leaves
+  `DATE_LEAGUES` out, so ScheduleSync starts no GameWorkflow (about 1,200 games a season, nothing to grade) and the news
+  pull skips NBA. `ENABLED_LEAGUES` (api and worker, compose) is `nfl,ncaaf,nba`.
+- **Backup scores:** the Yahoo NBA source already takes a day; the stale path uses it (`main._backup_overlay`, shared
+  with the week board).
+- **Web:** the NBA tab is on. `Scoreboard.tsx` walks days (`?date=`, Prev / Next / Today); cards are not tappable and show
+  no line row (`GameCard.SCORES_ONLY`).
+- **Fixtures:** `tests/fixtures/nba_scoreboard_final.json` (Oct 13, five finals, one OT, one neutral site) and
+  `nba_scoreboard_today.json` (Oct 15, two games with a DraftKings line that must be ignored), real ESPN, trimmed.
+- **Deploy:** `git pull && docker compose up -d --build` on the server (the api applies migration 012 at startup; the
+  worker restarts with the new `ENABLED_LEAGUES`; no schedule changes, so no `schedules` rerun). Tuesday or Wednesday.
+- **Not covered:** the NBA All-Star Game (teams may not be home/away; it would show the "some games couldn't be updated"
+  banner), lines and grading (PRD: later), a game page, EPL and MLS.
+
 ## Phase 4 — AI text (Stage 2 built 2026-09-29 on branch `phase-4-ai-text`; deployed 2026-10-02, later work through 2026-10-06; merged to `main` as PR #11 on 2026-10-07; production runs `main`)
 Scope: previews (preview, edges, writers' picks), recaps and team summaries, the live one-liner, Home headlines.
 The CTO cut the AI one-liner on Oct 1; **Adam put it back the same day** (his call outranks the CTO's): written on
@@ -389,7 +414,7 @@ OS security updates install daily (Ubuntu unattended-upgrades). The laptop stack
 - **Lines are append-only.** `odds_snapshots` is never updated; a row is added only when the line changes.
 - **Spread convention:** `home_spread` is from the home team's side, negative = home favored. The UI shows the favorite ("SF -2.5").
 - **No custom User-Agent on site.api.espn.com.** Akamai returns 403 for it; httpx's default works.
-- **Soccer never gets odds.** `BETTING_LEAGUES` in `espn.py`.
+- **Soccer never gets odds, and NBA has none yet (scores only).** `BETTING_LEAGUES` in `espn.py`.
 - **Bet status reports, never advises.** "KC -3 covering by 4", never "take the over".
 - **No new signups or paid services** without asking Adam.
 - Favorites live in `config/favorites.json` (`{"nfl": ["NE"], "ncaaf": ["TEX"]}`, ESPN team abbreviations).
@@ -469,6 +494,6 @@ web/src/                  Scoreboard.tsx (B), GamePage.tsx (C1 / C2 / D), GameCa
 3. (Built, see above.) The nightly backup moved from cron into Temporal on Oct 6 (Adam, 2026-09-28). Nothing alerts on a failed
    backup beyond the UI's Failed filter: look at it, and the bucket, every Monday.
 4. AI text: built on `phase-4-ai-text` (Groq free tier; see the Phase 4 section). In production; merged to `main` (PR #11, 2026-10-07).
-5. 5a NCAAF built (see the top). 5b: NBA, EPL, MLS (scores only).
-   Needs a date-window query: NBA and soccer have no weeks.
+5. 5a NCAAF built (see the top). 5b: NBA scores built on `nba-scores` (day board, see its section); EPL and MLS (scores only)
+   still to do, on the same day-board path (add them to `espn.DATE_LEAGUES`; the news pull and workflows then skip them too).
 6. Deploy to Oracle Cloud always-free, Tailscale only.

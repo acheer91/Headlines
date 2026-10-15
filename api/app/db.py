@@ -5,6 +5,7 @@ import atexit
 import os
 import threading
 from contextlib import contextmanager
+from datetime import date
 from typing import Iterator
 
 import psycopg
@@ -164,27 +165,31 @@ def save_games(conn: psycopg.Connection, games: list[Game], source: str = "espn"
 def log_fetch(conn: psycopg.Connection, league: str, source: str, ok: bool, *,
               requested_week: int | None = None, games: int | None = None,
               season: int | None = None, week: int | None = None, season_type: int | None = None,
-              error: str | None = None, requested_season_type: int | None = None) -> None:
+              error: str | None = None, requested_season_type: int | None = None,
+              requested_date: date | None = None, board_date: date | None = None) -> None:
     conn.execute(
         """INSERT INTO fetch_log (league, source, ok, requested_week, games, season, week, season_type, error,
-                                  requested_season_type)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-        (league, source, ok, requested_week, games, season, week, season_type, error, requested_season_type),
+                                  requested_season_type, requested_date, board_date)
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+        (league, source, ok, requested_week, games, season, week, season_type, error, requested_season_type,
+         requested_date, board_date),
     )
     conn.commit()
 
 
 def last_fetch(conn: psycopg.Connection, league: str, requested_week: int | None = None,
-               ok_only: bool = True, requested_season_type: int | None = None) -> dict | None:
+               ok_only: bool = True, requested_season_type: int | None = None,
+               requested_date: date | None = None) -> dict | None:
     """Last fetch for this request. requested_week=None means the 'current week' request,
     which is cached separately from browsing a specific week; likewise per requested season type
-    (preseason, regular season and postseason each have a week 1)."""
+    (preseason, regular season and postseason each have a week 1). A day board (NBA) is cached per
+    requested_date; None is "today" as ESPN sees it."""
     sql = ("SELECT * FROM fetch_log WHERE league = %s AND requested_week IS NOT DISTINCT FROM %s"
-           " AND requested_season_type IS NOT DISTINCT FROM %s")
+           " AND requested_season_type IS NOT DISTINCT FROM %s AND requested_date IS NOT DISTINCT FROM %s")
     if ok_only:
         sql += " AND ok"
     sql += " ORDER BY fetched_at DESC, id DESC LIMIT 1"
-    return conn.execute(sql, (league, requested_week, requested_season_type)).fetchone()
+    return conn.execute(sql, (league, requested_week, requested_season_type, requested_date)).fetchone()
 
 
 def save_calendar(conn: psycopg.Connection, league: str, season: int | None, stages: list[dict]) -> None:
@@ -234,6 +239,16 @@ def games_for_week(conn: psycopg.Connection, league: str, season: int, week: int
         _GAMES_SQL + """ WHERE g.league = %s AND g.season = %s AND g.week = %s
                          AND g.season_type IS NOT DISTINCT FROM %s ORDER BY g.start_time""",
         (league, season, week, season_type),
+    ).fetchall()
+
+
+def games_for_day(conn: psycopg.Connection, league: str, day: date) -> list[dict]:
+    """One day's board (NBA): the games that start on that date in US Eastern time, which is how ESPN groups them
+    (checked against ESPN's own day lists for Oct 10-15, 2026)."""
+    return conn.execute(
+        _GAMES_SQL + """ WHERE g.league = %s AND (g.start_time AT TIME ZONE 'America/New_York')::date = %s
+                         ORDER BY g.start_time, g.id""",
+        (league, day),
     ).fetchall()
 
 
