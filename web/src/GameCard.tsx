@@ -24,7 +24,7 @@ function spreadText(line: Line, g: Game) {
     : `${g.away.abbr} ${fmtSigned(-line.home_spread)}`;
 }
 
-/** Leagues shown as scores only: no line, no bet grading, no game page (yet). */
+/** Leagues shown without lines, bet grading or AI text: the scoreboard and a box score. */
 export const SCORES_ONLY = new Set(["nba", "epl", "mls"]);
 
 export function LineRow({ g }: { g: Game }) {
@@ -79,7 +79,7 @@ function TeamRow({ side, g, isHome }: { side: Game["home"]; g: Game; isHome: boo
 export function GameCardView({ g, onOpen }: { g: Game; onOpen?: () => void }) {
   const status =
     g.backup ? g.status_detail ?? "Live" : g.state === "pre" ? kickoff(g.start_time, g.time_valid) : g.state === "in" ? g.status_detail ?? "Live" : g.status_detail ?? "Final";
-  const Tag = onOpen ? "button" : "div";   // a scores-only game has no page to open
+  const Tag = onOpen ? "button" : "div";
   return (
     <Tag className={`card ${g.state}${onOpen ? "" : " static"}`} onClick={onOpen}>
       <div className="card-head">

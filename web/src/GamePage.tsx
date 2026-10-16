@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { getAi, getGame, type AiText, type Bet, type GameCard, type GameDetail, type Injury, type Leader, type SideRow } from "./api";
-import { GameCardView, LineRow, tbdDate } from "./GameCard";
+import { getAi, getGame, type AiText, type Bet, type BoxSide, type GameCard, type GameDetail, type Injury, type Leader, type SideRow } from "./api";
+import { GameCardView, LineRow, SCORES_ONLY, tbdDate } from "./GameCard";
 import { recall, remember, touchGame } from "./lastSeen";
 import { updatedAt } from "./Scoreboard";
 import { usePull } from "./usePull";
@@ -51,6 +51,8 @@ export function GamePage() {
       touchGame(Number(id));
       if (shownId.current === id) setG(fresh);
       // Once per open or pull (never on a timer): the server returns stored text or writes it now.
+      // A league without AI text (NBA) has nothing to ask for.
+      if (SCORES_ONLY.has(fresh.league)) return;
       setAiLoading(true);
       getAi(Number(id))
         .then((a) => shownId.current === id && setAi(a))
@@ -129,6 +131,7 @@ function Detail({ g, ai, aiLoading }: { g: GameDetail; ai: AiText | null; aiLoad
   // Live: the AI one-liner when it's ready (checked) and has something to say. No box-score template any more
   // (Adam, Oct 4: a bare score and a QB's yards read as awkward): a failed or empty line shows nothing.
   const oneLiner = ai?.kind === "one_liner" && ai.status === "ready" && ai.body && "line" in ai.body ? ai.body.line : null;
+  if (SCORES_ONLY.has(g.league)) return <BoxScreen g={g} noData={noData} />;
   return (
     <main className="list">
       <Matchup g={g} />
@@ -160,6 +163,94 @@ function Detail({ g, ai, aiLoading }: { g: GameDetail; ai: AiText | null; aiLoad
 
       {g.screen === "D" && g.completed !== false && <RecapSections g={g} ai={ai} loading={aiLoading} />}
     </main>
+  );
+}
+
+/** NBA: the matchup, then (live and final) score by quarter, game leaders, both box scores and team stats.
+ * No line, bets, preview, recap or injuries: this league gets scores and box scores only. */
+function BoxScreen({ g, noData }: { g: GameDetail; noData: string }) {
+  return (
+    <main className="list">
+      <Matchup g={g} />
+      {g.screen === "C1" ? (
+        <p className="muted center">The box score starts at tip-off. Pull again then.</p>
+      ) : (
+        <>
+          <Linescore g={g} />
+          {g.leaders.rows.length > 0 && (
+            <Section title="Game leaders">
+              <Leaders g={g} rows={g.leaders.rows} />
+            </Section>
+          )}
+          {g.box ? (
+            (["away", "home"] as const).map((side) => {
+              const t = g.box?.[side];
+              return t ? <BoxTable key={side} g={g} side={side} t={t} /> : null;
+            })
+          ) : (
+            <Section title="Box score">
+              <p className="muted empty">{noData}</p>
+            </Section>
+          )}
+          <Section title="Team stats">
+            {g.team_stats.rows.length ? <StatsTable g={g} rows={g.team_stats.rows} /> : <p className="muted empty">{noData}</p>}
+          </Section>
+        </>
+      )}
+    </main>
+  );
+}
+
+/** One team's player box score. The table scrolls sideways on a phone; the player column stays put. */
+function BoxTable({ g, side, t }: { g: GameDetail; side: "home" | "away"; t: BoxSide }) {
+  const firstBench = t.players.findIndex((p) => !p.starter);
+  return (
+    <Section title={`${g[side].name} · box score`}>
+      <div className="box-scroll">
+        <table className="grid box">
+          <thead>
+            <tr>
+              <th>Player</th>
+              {t.columns.map((c) => (
+                <th key={c} className={c === "PTS" ? "pts" : undefined}>
+                  {c}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {t.players.map((p, i) => (
+              <tr key={p.id ?? i} className={i === firstBench ? "bench" : undefined}>
+                <th>
+                  {g.state === "in" && <span className={p.on_court ? "dot" : "dot off"} title={p.on_court ? "On the floor" : undefined} />}
+                  {p.name}
+                  {p.pos && <span className="pos">{p.pos}</span>}
+                </th>
+                {p.dnp ? (
+                  <td className="muted dnp" colSpan={t.columns.length}>
+                    Did not play · {p.dnp}
+                  </td>
+                ) : (
+                  p.stats.map((v, j) => (
+                    <td key={j} className={t.columns[j] === "PTS" ? "pts" : undefined}>
+                      {v}
+                    </td>
+                  ))
+                )}
+              </tr>
+            ))}
+            <tr className="totals">
+              <th>Team</th>
+              {t.columns.map((c, j) => (
+                <td key={c} className={c === "PTS" ? "pts" : undefined}>
+                  {t.totals[j] ?? ""}
+                </td>
+              ))}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </Section>
   );
 }
 

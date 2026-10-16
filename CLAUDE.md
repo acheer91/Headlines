@@ -27,9 +27,9 @@ bowl games are confirmed with the handoff's December checklist by Dec 12.
   1, 4, 5, 8, 9, 12, 15, 17, 18, 37, 151; every other id seen (20, 21, 24, 25, 27, 29, 30, 31, 32, 48, 177, 179) is FCS.
   Texas is `TEX`.
 
-## Phase 5b — NBA scores (built 2026-10-15 on branch `nba-scores`; scores only, not deployed)
-Scope (Adam, 2026-10-15): the NBA tab shows scores, nothing else. No lines or bet grading, no game page, no AI text, no
-workflows. EPL and MLS are still to do. ESPN's NBA feed has no weeks, so the board is one day.
+## Phase 5b — NBA scores and box scores (scores built 2026-10-15, PR #14, deployed the same day; box scores on `nba-box-scores`)
+Scope (Adam, 2026-10-15): the NBA tab shows scores and, since the box-score PR, a box score per game. No lines or bet grading,
+no AI text, no workflows. EPL and MLS are still to do. ESPN's NBA feed has no weeks, so the board is one day.
 - **API:** `GET /api/scoreboard/nba?date=YYYY-MM-DD` (no date = today as ESPN sees it: its `day.date`). `espn.DATE_LEAGUES`
   (`{"nba"}`) routes a league to `main._day_scoreboard`, which has the week board's pull, 30 s cache, stale and
   "unreadable games are a failed refresh" rules. A fetch is cached per requested date (`fetch_log.requested_date`, and
@@ -37,20 +37,30 @@ workflows. EPL and MLS are still to do. ESPN's NBA feed has no weeks, so the boa
   `day`, so season and season type come from each event (the parser already did that).
 - **A day's games** are read by their US Eastern start date (`db.games_for_day`), which is how ESPN groups them (checked
   on Oct 10-15: a 10 PM Eastern tip that falls on the next UTC day is still on its own day). `games.week` stays NULL.
-- **Scores only, in code:** `BETTING_LEAGUES` is `{"nfl","ncaaf"}`, so no line is parsed or stored even though ESPN sends
-  one. `games.page` returns nothing for a `DATE_LEAGUES` game (404 on `/api/games/{id}`). `schedules.LEAGUES` leaves
+- **No betting, in code:** `BETTING_LEAGUES` is `{"nfl","ncaaf"}`, so no line is parsed or stored even though ESPN sends
+  one. `games.page` skips grading and the football season stats for a `DATE_LEAGUES` game. `schedules.LEAGUES` leaves
   `DATE_LEAGUES` out, so ScheduleSync starts no GameWorkflow (about 1,200 games a season, nothing to grade) and the news
   pull skips NBA. `ENABLED_LEAGUES` (api and worker, compose) is `nfl,ncaaf,nba`.
 - **Backup scores:** the Yahoo NBA source already takes a day; the stale path uses it (`main._backup_overlay`, shared
   with the week board).
-- **Web:** the NBA tab is on. `Scoreboard.tsx` walks days (`?date=`, Prev / Next / Today); cards are not tappable and show
-  no line row (`GameCard.SCORES_ONLY`).
+- **Box score** (`api/app/nba_box.py`, `games._detail_box`, web `GamePage.BoxScreen`): a card opens the game page, which for
+  NBA is the matchup (tip time in PT, venue, records) before tip-off, then, live and final, the score by quarter, game
+  leaders (top scorer, rebounder and passer per team, computed from the box, ties shown as "+N tied"), both teams' player
+  box scores (ESPN's own columns MIN PTS FG 3PT FT REB AST TO STL BLK OREB DREB PF +/-, starters first, a "Did not play ·
+  reason" row, a Team totals row, a dot on the five on the floor in a live game; the table scrolls sideways with the
+  player column fixed) and team stats (`nba_box.TEAM_STATS`). It reuses the football summary cache (30 s while live, a
+  final fetched once and kept, the game's state and score move forward on a pull, `summary_behind` withholds a box the
+  summary has not caught up with); `db.get_summary_view(players=True)` is the only reader of ESPN's `boxscore.players`.
+  Same response keys as football (`box` is new), no `bets`, `line`, `injuries`, `one_liner`; the app asks for no AI text
+  (`GameCard.SCORES_ONLY`). Fixtures: `nba_summary_final/live/pre.json` (real, trimmed); tests `test_nba_box.py`.
+- **Web:** the NBA tab is on. `Scoreboard.tsx` walks days (`?date=`, Prev / Next / Today); a card opens its game page and
+  shows no line row (`GameCard.SCORES_ONLY`).
 - **Fixtures:** `tests/fixtures/nba_scoreboard_final.json` (Oct 13, five finals, one OT, one neutral site) and
   `nba_scoreboard_today.json` (Oct 15, two games with a DraftKings line that must be ignored), real ESPN, trimmed.
 - **Deploy:** `git pull && docker compose up -d --build` on the server (the api applies migration 012 at startup; the
   worker restarts with the new `ENABLED_LEAGUES`; no schedule changes, so no `schedules` rerun). Tuesday or Wednesday.
 - **Not covered:** the NBA All-Star Game (teams may not be home/away; it would show the "some games couldn't be updated"
-  banner), lines and grading (PRD: later), a game page, EPL and MLS.
+  banner), lines and grading (PRD: later), play-by-play, a pre-game preview or injuries, EPL and MLS.
 
 ## Phase 4 — AI text (Stage 2 built 2026-09-29 on branch `phase-4-ai-text`; deployed 2026-10-02, later work through 2026-10-06; merged to `main` as PR #11 on 2026-10-07; production runs `main`)
 Scope: previews (preview, edges, writers' picks), recaps and team summaries, the live one-liner, Home headlines.

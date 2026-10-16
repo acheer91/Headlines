@@ -268,22 +268,26 @@ def get_summary(conn: psycopg.Connection, game_id: int) -> dict | None:
     ).fetchone()
 
 
-def get_summary_view(conn: psycopg.Connection, game_id: int) -> dict | None:
+def get_summary_view(conn: psycopg.Connection, game_id: int, players: bool = False) -> dict | None:
     """The summary blocks the game screens read, without play-by-play, news, videos or the player box
     score. A final's payload is ~600 KB (mostly `drives.previous`); this is ~50 KB, so a D page reads
-    and decodes a tenth of it. Add a block here when a screen starts reading it."""
+    and decodes a tenth of it. Add a block here when a screen starts reading it. players=True adds the player
+    box score (the NBA screens: nba_box.players); football never reads it."""
     return conn.execute(
         """SELECT game_state, fetched_at,
                   jsonb_build_object(
                       'header', payload->'header',
-                      'boxscore', jsonb_build_object('teams', payload->'boxscore'->'teams'),
+                      'boxscore', CASE WHEN %s
+                                       THEN jsonb_build_object('teams', payload->'boxscore'->'teams',
+                                                               'players', payload->'boxscore'->'players')
+                                       ELSE jsonb_build_object('teams', payload->'boxscore'->'teams') END,
                       'leaders', payload->'leaders',
                       'injuries', payload->'injuries',
                       'pickcenter', payload->'pickcenter',
                       'gameInfo', jsonb_build_object('venue', payload->'gameInfo'->'venue'),
                       'drives', jsonb_build_object('current', payload->'drives'->'current')
                   ) AS payload
-           FROM game_summaries WHERE game_id = %s""", (game_id,)
+           FROM game_summaries WHERE game_id = %s""", (players, game_id)
     ).fetchone()
 
 

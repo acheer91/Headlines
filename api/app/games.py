@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from . import db, espn, grading, summary
+from . import db, espn, grading, nba_box, summary
 
 log = logging.getLogger(__name__)
 
@@ -279,10 +279,54 @@ def _bets_live(home_score, away_score, lines: dict[str, grading.Line], home: str
     return out
 
 
+def _detail_box(card: dict, stored: dict | None, *, stale: bool, error: str | None) -> dict:
+    """The NBA game screen: pre-game is the matchup alone; live and final add the score by quarter, team stats, game
+    leaders and the player box score (nba_box.py). No line, bets, injuries, AI text or one-liner. The same
+    keys as the football screens, so the app's types and its last-seen copy stay one shape."""
+    screen = SCREENS.get(card["state"], "C1")
+    p = stored["payload"] if stored else {}
+    t = summary.teams(p) if stored else {}
+    # ESPN's summary can trail the scoreboard: a pre-game summary (no box score) for a game that just tipped off, or
+    # a live one for a game that just ended. Withhold the box score until the summary catches up.
+    behind = stored is not None and _ORDER.get(stored["game_state"], 0) < _ORDER.get(card["state"], 0)
+    game_p = {} if behind or screen == "C1" else p
+    box = nba_box.players(game_p) if game_p else None
+    out = dict(card)
+    out.update({
+        "screen": screen,
+        "stale": stale,
+        "error": error if stale else None,
+        "summary_updated_at": stored["fetched_at"].isoformat() if stored else None,
+        "venue": summary.venue(p) or card.get("venue"),
+        "header": {
+            side: {k: (t.get(side) or {}).get(k) for k in ("record", "venue_record", "linescores", "possession")}
+            for side in ("home", "away")
+        },
+        "situation": None,
+        "live": None,
+        "team_stats": {"kind": "game", "rows": nba_box.team_stats(game_p) if game_p else []},
+        "leaders": {"kind": "game", "rows": nba_box.leaders(box)},
+        "box": box,
+        "time_valid": card.get("time_valid", True),
+        "injuries": None,
+        "one_liner": None,
+        "bets": None,
+        "placeholders": [],
+        "summary_available": stored is not None,
+        "summary_behind": behind,
+    })
+    for side in ("home", "away"):
+        out["header"][side]["linescores"] = (out["header"][side]["linescores"] or []) if not behind else []
+        out["header"][side]["possession"] = False
+    return out
+
+
 def detail(conn, card: dict, stored: dict | None, *, stale: bool, error: str | None,
            team_season: dict[str, dict] | None = None, live_extra: dict | None = None) -> dict:
     """One response per screen, parsed from the stored summary on read. live_extra (the drives, scoring plays and
     win probability the stored view leaves out, db.get_summary_live) adds "live", the one-liner's play-by-play."""
+    if card["league"] in espn.DATE_LEAGUES:
+        return _detail_box(card, stored, stale=stale, error=error)
     screen = SCREENS.get(card["state"], "C1")
     p = stored["payload"] if stored else {}
     home, away = card["home"]["abbr"], card["away"]["abbr"]
@@ -393,19 +437,20 @@ def page(conn, game_id: int, *, base_url: str = espn.BASE, favorites: dict[str, 
     adds the play-by-play to a live game's payload: "live"."""
     favorites = favorites or {}
     row = db.game_by_id(conn, game_id)
-    if not row or row["league"] in espn.DATE_LEAGUES:   # scores-only leagues (NBA) have no game screens yet
+    if not row:
         return None
+    box_league = row["league"] in espn.DATE_LEAGUES   # NBA: a box score, no season stats, no lines, no grading
     # C1's team season stats (ranks, INTs leader) are fetched in parallel with the summary.
-    team_jobs = start_team_season(conn, row, base_url=base_url) if row["state"] == "pre" else []
-    stored = db.get_summary_view(conn, game_id)
+    team_jobs = start_team_season(conn, row, base_url=base_url) if row["state"] == "pre" and not box_league else []
+    stored = db.get_summary_view(conn, game_id, players=box_league)
     stale, error = False, None
     if needs_refresh(row, stored):
         ok, error = refresh_summary(conn, row, base_url=base_url)
         stale = not ok
-        stored = db.get_summary_view(conn, game_id)
+        stored = db.get_summary_view(conn, game_id, players=box_league)
         row = db.game_by_id(conn, game_id)
     team_season = finish_team_season(conn, row, team_jobs) if team_jobs else None
-    if row["state"] == "post":
+    if row["state"] == "post" and not box_league:
         try:
             grade_game(conn, game_id)
         except Exception:  # noqa: BLE001 — show the page even if grading hit a bug

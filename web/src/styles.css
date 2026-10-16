@@ -96,6 +96,18 @@ button { font: inherit; color: inherit; }
 .grid { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 13.5px; }
 .grid th, .grid td { padding: 5px 4px; }
 .grid thead th { color: var(--muted); font-weight: 600; font-size: 12px; }
+.box-scroll { overflow-x: auto; margin: 0 -4px; }
+.box { width: max-content; min-width: 100%; font-size: 12.5px; }
+.box th, .box td { white-space: nowrap; text-align: right; padding: 5px 6px; }
+.box tbody th, .box thead th:first-child { position: sticky; left: 0; background: var(--surface); text-align: left; }
+.box tbody th { font-weight: 600; padding-right: 10px; }
+.box .pos { margin-left: 6px; font-weight: 400; color: var(--muted); font-size: 11px; }
+.box .dot { display: inline-block; margin-right: 6px; vertical-align: middle; }
+.box .dot.off { visibility: hidden; }
+.box .pts { font-weight: 700; }
+.box .dnp { text-align: left; font-size: 12px; }
+.box tr.bench > * { border-top: 1px solid var(--border); }
+.box tr.totals > * { border-top: 2px solid var(--border); font-weight: 700; }
 .linescore th:first-child { text-align: left; }
 .linescore td, .linescore thead th { text-align: center; }
 .linescore .total { font-weight: 700; }
