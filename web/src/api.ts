@@ -122,6 +122,22 @@ export type Bet = {
   graded_score?: string;
 };
 
+/** NBA player box score: ESPN's own columns, one row per player, starters first. */
+export type BoxPlayer = {
+  id: string | null;
+  name: string | null;
+  full_name: string | null;
+  pos: string | null;
+  jersey: string | null;
+  starter: boolean;
+  /** on the floor right now (live games) */
+  on_court: boolean;
+  /** ESPN's reason when the player did not play; no stats then */
+  dnp: string | null;
+  stats: string[];
+};
+export type BoxSide = { columns: string[]; keys: string[]; players: BoxPlayer[]; totals: string[] };
+
 export type GameDetail = GameCard & {
   screen: "C1" | "C2" | "D";
   stale: boolean;
@@ -135,6 +151,8 @@ export type GameDetail = GameCard & {
   team_stats: { kind: "season" | "game"; rows: SideRow<string>[] };
   leaders: { kind: "season" | "game"; rows: SideRow<Leader>[] };
   injuries: { home: Injury[]; away: Injury[] } | null;
+  /** NBA only: the player box score; null before tip-off */
+  box?: { home?: BoxSide; away?: BoxSide } | null;
   one_liner: string | null;
   bets: Bet[] | null;
   placeholders: string[];

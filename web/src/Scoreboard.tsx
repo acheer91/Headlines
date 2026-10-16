@@ -133,7 +133,7 @@ export function Scoreboard() {
 
       <main className="list">
         {data?.games.map((g) => (
-          <GameCardView key={g.id} g={g} onOpen={isDay ? undefined : () => nav(`/game/${g.id}`, { state: { card: g } })} />
+          <GameCardView key={g.id} g={g} onOpen={() => nav(`/game/${g.id}`, { state: { card: g } })} />
         ))}
         {data && data.games.length === 0 && <p className="muted center">{isDay ? "No games this day." : "No games this week."}</p>}
       </main>

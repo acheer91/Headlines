@@ -1,5 +1,5 @@
 """Phase 5b: NBA scores only. ESPN's NBA feed has no weeks, so the board is one day (`?date=YYYY-MM-DD`, none = today
-as ESPN sees it), read back by the game's US Eastern date. No lines, no grading, no game page, no workflows.
+as ESPN sees it), read back by the game's US Eastern date. No lines, no grading, no workflows; the game page is a box score (test_nba_box.py).
 
 Fixtures are ESPN's real NBA preseason scoreboards captured 2026-10-15 (Oct 13: five finals, one in overtime, one at a
 neutral site that ended after 10 PM Eastern; "today": two games not started, with a DraftKings line that must be ignored),
@@ -184,13 +184,6 @@ def test_bad_dates_are_rejected(nba_client):
 @needs_db
 def test_nba_off_unless_enabled(client):
     assert client.get("/api/scoreboard/nba").status_code == 404
-
-
-@needs_db
-def test_nba_game_has_no_game_page(nba_client):
-    nba_client.get("/api/scoreboard/nba?date=2026-10-13")
-    gid = _q("select id from games where league = 'nba' limit 1")[0][0]
-    assert nba_client.get(f"/api/games/{gid}").status_code == 404
 
 
 @needs_db
